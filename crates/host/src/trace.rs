@@ -24,20 +24,40 @@ const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
 const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-guest";
 const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli/release/jolt";
 
-pub fn elf_path() -> PathBuf {
-    PathBuf::from(GUEST_TARGET_DIR)
+/// Guest entry point variant: committed-input or trusted-advice delivery.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Variant {
+    Input,
+    Advice,
+}
+
+impl Variant {
+    pub fn func(self) -> &'static str {
+        match self {
+            Variant::Input => "validate_block",
+            Variant::Advice => "validate_block_advice",
+        }
+    }
+}
+
+pub fn elf_path(variant: Variant) -> PathBuf {
+    PathBuf::from(format!("{GUEST_TARGET_DIR}-{}", variant.func()))
         .join("riscv64imac-unknown-none-elf/release")
         .join("jeth-guest")
 }
 
 /// Compute the emulator memory config for a guest ELF (must mirror the guest's
-/// `#[jolt::provable]` attributes — see constants above).
-pub fn memory_config(elf: &[u8]) -> MemoryConfig {
+/// `#[jolt::provable]` attributes — see constants above / guest lib.rs).
+pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
     let (_, _, program_end, _) = tracer::decode(elf);
+    let (input_size, trusted_size) = match variant {
+        Variant::Input => (MAX_INPUT_SIZE, MAX_ADVICE_SIZE),
+        Variant::Advice => (MAX_ADVICE_SIZE, MAX_INPUT_SIZE),
+    };
     MemoryConfig {
-        max_input_size: MAX_INPUT_SIZE,
+        max_input_size: input_size,
         max_output_size: MAX_OUTPUT_SIZE,
-        max_trusted_advice_size: MAX_ADVICE_SIZE,
+        max_trusted_advice_size: trusted_size,
         max_untrusted_advice_size: MAX_ADVICE_SIZE,
         stack_size: STACK_SIZE,
         heap_size: HEAP_SIZE,
@@ -46,18 +66,20 @@ pub fn memory_config(elf: &[u8]) -> MemoryConfig {
 }
 
 /// Build with symbols preserved (JOLT_BACKTRACE=1 — metadata only, identical code).
-pub fn build_guest_with_symbols() -> Result<()> {
-    build_guest_inner(true)
+pub fn build_guest_with_symbols(variant: Variant) -> Result<()> {
+    build_guest_inner(variant, true)
 }
 
 /// Build the guest ELF via the `jolt` CLI (branch merge-1717-main build recipe:
 /// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.).
-pub fn build_guest() -> Result<()> {
-    build_guest_inner(false)
+pub fn build_guest(variant: Variant) -> Result<()> {
+    build_guest_inner(variant, false)
 }
 
-fn build_guest_inner(symbols: bool) -> Result<()> {
+fn build_guest_inner(variant: Variant, symbols: bool) -> Result<()> {
     let jolt_cli = std::env::var("JOLT_PATH").unwrap_or_else(|_| DEFAULT_JOLT_CLI.to_string());
+    let func = variant.func();
+    let target_dir = format!("{GUEST_TARGET_DIR}-{func}");
     let args = [
         "build",
         "-p",
@@ -71,16 +93,16 @@ fn build_guest_inner(symbols: bool) -> Result<()> {
         "--",
         "--release",
         "--target-dir",
-        GUEST_TARGET_DIR,
+        &target_dir,
         "--features",
         "guest",
     ];
-    println!("building guest: {jolt_cli} {}", args.join(" "));
+    println!("building guest ({func}): {jolt_cli} {}", args.join(" "));
     let start = Instant::now();
     let mut cmd = Command::new(&jolt_cli);
     cmd.args(args)
         .current_dir(GUEST_DIR)
-        .env("JOLT_FUNC_NAME", "validate_block");
+        .env("JOLT_FUNC_NAME", func);
     if symbols {
         cmd.env("JOLT_BACKTRACE", "1");
     }
@@ -97,36 +119,42 @@ fn build_guest_inner(symbols: bool) -> Result<()> {
     println!(
         "guest built in {:.1?} → {}",
         start.elapsed(),
-        elf_path().display()
+        elf_path(variant).display()
     );
     Ok(())
 }
 
-pub fn run(input_path: &str, skip_build: bool) -> Result<()> {
-    let elf_file = elf_path();
+pub fn run(input_path: &str, skip_build: bool, variant: Variant) -> Result<()> {
+    let elf_file = elf_path(variant);
     if !skip_build || !elf_file.exists() {
-        build_guest()?;
+        build_guest(variant)?;
     }
 
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
-    println!("guest ELF: {:.1} MB", elf.len() as f64 / 1e6);
-
-    let input_bytes = std::fs::read(input_path).context("reading input.bin")?;
     println!(
-        "input: {} ({:.1} MB)",
-        input_path,
-        input_bytes.len() as f64 / 1e6
+        "guest ELF: {:.1} MB ({})",
+        elf.len() as f64 / 1e6,
+        variant.func()
     );
-    if input_bytes.len() as u64 > MAX_INPUT_SIZE {
+
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
+    // The guest fn takes `&[u8]` — postcard-wrap the payload (varint len + bytes).
+    let wrapped = postcard::to_stdvec(&raw)?;
+    if wrapped.len() as u64 > MAX_INPUT_SIZE {
         bail!(
-            "input {} bytes exceeds guest max_input_size {}",
-            input_bytes.len(),
+            "input {} bytes exceeds guest size budget {}",
+            wrapped.len(),
             MAX_INPUT_SIZE
         );
     }
+    let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {
+        Variant::Input => (&wrapped, &[]),
+        Variant::Advice => (&[], &wrapped),
+    };
 
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
-    let memory_config = memory_config(&elf);
+    let memory_config = memory_config(&elf, variant);
 
     // Execute-only streaming pass: counts trace rows (real + virtual/inline
     // expansions — the prover-relevant "cycles") without materializing anything.
@@ -136,9 +164,9 @@ pub fn run(input_path: &str, skip_build: bool) -> Result<()> {
     let (trace_rows, device, _advice) = tracer::execute(
         &elf,
         Some(&elf_file),
-        &input_bytes,
+        input_stream,
         &[],
-        &[],
+        trusted_stream,
         &memory_config,
         None,
     );
@@ -170,6 +198,7 @@ pub fn run(input_path: &str, skip_build: bool) -> Result<()> {
     // Persist a machine-readable summary next to the input for report assembly.
     let summary = serde_json::json!({
         "input": input_path,
+        "variant": variant.func(),
         "elf_bytes": elf.len(),
         "trace_rows_total": trace_rows,
         "gas_used": result.gas_used,
@@ -179,7 +208,11 @@ pub fn run(input_path: &str, skip_build: bool) -> Result<()> {
         "effective_mhz": mhz,
         "guest_panicked": device.panic,
     });
-    let summary_path = std::path::Path::new(input_path).with_file_name("trace-summary.json");
+    let summary_name = match variant {
+        Variant::Input => "trace-summary.json",
+        Variant::Advice => "trace-summary-advice.json",
+    };
+    let summary_path = std::path::Path::new(input_path).with_file_name(summary_name);
     std::fs::write(&summary_path, serde_json::to_string_pretty(&summary)?)?;
     println!("summary → {}", summary_path.display());
 

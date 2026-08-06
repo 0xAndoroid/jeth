@@ -11,8 +11,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 pub fn run(input_path: &str, every: u64, top: usize) -> Result<()> {
-    crate::trace::build_guest_with_symbols()?;
-    let elf_file = crate::trace::elf_path();
+    let variant = crate::trace::Variant::Input;
+    crate::trace::build_guest_with_symbols(variant)?;
+    let elf_file = crate::trace::elf_path(variant);
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
 
     // Symbol table → sorted (addr, size, name).
@@ -35,8 +36,9 @@ pub fn run(input_path: &str, every: u64, top: usize) -> Result<()> {
     );
     println!("{} text symbols", symbols.len());
 
-    let input_bytes = std::fs::read(input_path).context("reading input.bin")?;
-    let memory_config = crate::trace::memory_config(&elf);
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let input_bytes = postcard::to_stdvec(&raw)?;
+    let memory_config = crate::trace::memory_config(&elf, variant);
 
     let mut emulator = tracer::create_emulator(
         &elf,

@@ -52,6 +52,9 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
+        /// Deliver the payload as TRUSTED ADVICE instead of committed input.
+        #[arg(long)]
+        advice: bool,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -92,7 +95,18 @@ fn main() -> Result<()> {
             out,
         } => fetch::run(block, latest_minus, rpc_list, &out).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
-        Command::Trace { input, skip_build } => trace::run(&input, skip_build),
+        Command::Trace {
+            input,
+            skip_build,
+            advice,
+        } => {
+            let variant = if advice {
+                trace::Variant::Advice
+            } else {
+                trace::Variant::Input
+            };
+            trace::run(&input, skip_build, variant)
+        }
         Command::Profile { input, every, top } => profile::run(&input, every, top),
         Command::Bench {
             latest_minus,
@@ -101,7 +115,7 @@ fn main() -> Result<()> {
             let input = fetch::run(None, latest_minus, rpc_list, "data")?;
             let input = input.to_string_lossy();
             run_native(&input)?;
-            trace::run(&input, false)
+            trace::run(&input, false, trace::Variant::Input)
         }
     }
 }
