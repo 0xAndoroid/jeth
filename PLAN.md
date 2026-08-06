@@ -186,7 +186,7 @@ Bootstrap fixture (M2 bring-up only): zeth's in-repo testdata witness for block 
 
 ### Tier 3 — self-hosted reth on Cherry Servers (approved fallback; spec)
 
-Only if Tiers 1–2 die. `CHERRY_API_TOKEN` is in `~/.pika/.agent.env` (rented there before).
+Only if Tiers 1–2 die. Requires a Cherry Servers account/API token.
 
 - **Hardware** (from Cherry's live plans API, 2026-08-06): Ryzen 9700X — 8c/96 GB/2×1 TB NVMe, **€189/mo** (~$221, US-Chicago stock) is sufficient; Ryzen 9950X — 16c/192 GB/2×1 TB NVMe/10 Gbps, €389/mo if we want headroom. Hourly billing available (~€16/day) — spin up, sync, bench, tear down. Avoid their spot tier (legacy Xeons, 2-min termination).
 - **Software:** reth **full node (pruned — archive NOT needed)** + Lighthouse with checkpoint sync (~1–2 min to head; ~250–350 GB incl. blobs). reth full ≈ 1.02 TB (measured at block 24.4M, Storage V2) — total fits 2 TB with ~30% slack.
