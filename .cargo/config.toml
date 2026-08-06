@@ -1,0 +1,3 @@
+# Keep build artifacts off the small internal disk (repo lives on ~, builds go to the Dev SSD).
+[build]
+target-dir = "/Volumes/Dev/cargo-target/jeth"

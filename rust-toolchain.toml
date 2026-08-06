@@ -1,0 +1,5 @@
+[toolchain]
+# Match Jolt's toolchain (merge-1717-main pins 1.95); riscv target for the guest.
+channel = "1.95"
+targets = ["riscv64imac-unknown-none-elf"]
+components = ["cargo", "rustc", "clippy", "rustfmt", "rust-src"]

@@ -1,3 +1,4 @@
 /target
 /data/
 *.bin.tmp
+/crates/guest/target

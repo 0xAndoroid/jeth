@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+# NOTE: crates/guest is deliberately NOT a workspace member — it is a standalone
+# package (own [workspace] table) built exclusively through the `jolt` CLI for
+# riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
+# from native host builds.
+members = ["crates/core", "crates/host"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+jeth-core = { path = "crates/core" }
+
+# stateless execution stack — zeth 0.3's proven pin set (PLAN.md §4)
+stateless = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e55612" }
+tries = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e55612" }
+
+# reth v2.1.0 (matches stateless rev 6e55612)
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-evm = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-primitives-traits = { version = "0.3", default-features = false }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+
+# alloy 2.x (matches reth v2.1.0 + stateless)
+alloy-consensus = { version = "2.0", default-features = false }
+alloy-eips = { version = "2.0", default-features = false }
+alloy-genesis = { version = "2.0", default-features = false }
+alloy-primitives = { version = "1.5", default-features = false }
+alloy-rlp = { version = "0.3.8", default-features = false }
+alloy-rpc-types-debug = { version = "2.0", default-features = false }
+
+# jolt (branch merge-1717-main @ af1c2aef5c, read-only worktree; path deps per PLAN.md D2)
+jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
+tracer = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/tracer" }
+jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/common" }
+jolt-program = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/crates/jolt-program" }
+
+# misc
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = "1.0"
+postcard = { version = "1.0.8", default-features = false, features = ["alloc"] }
+thiserror = { version = "2.0", default-features = false }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+ureq = { version = "2", features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+k256 = { version = "0.13", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "thin"

@@ -1,0 +1,41 @@
+[package]
+name = "jeth-guest"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone package (NOT part of the jeth workspace): built exclusively via the
+# `jolt` CLI for riscv64imac-unknown-none-elf with `--features guest`. Keeping it
+# out of the workspace isolates guest-only feature choices (alloy native-keccak)
+# from native host builds.
+[workspace]
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
+
+jeth-core = { path = "../core" }
+
+# `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM
+# KECCAK256 opcode, address derivation) to our `native_keccak256` shim → Jolt inline.
+alloy-primitives = { version = "1.5", default-features = false, features = ["native-keccak"] }
+
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "jeth-guest"
+path = "src/main.rs"
+test = false
+bench = false

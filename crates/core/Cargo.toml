@@ -1,0 +1,23 @@
+[package]
+name = "jeth-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+stateless.workspace = true
+
+reth-chainspec.workspace = true
+reth-ethereum-forks.workspace = true
+reth-ethereum-primitives = { workspace = true, features = ["serde"] }
+reth-evm.workspace = true
+reth-evm-ethereum.workspace = true
+reth-network-peers.workspace = true
+reth-primitives-traits.workspace = true
+
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-genesis.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+
+serde.workspace = true
