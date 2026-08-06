@@ -16,7 +16,7 @@ guest = []
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
 jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
 
-jeth-core = { path = "../core", features = ["secp-inline"] }
+jeth-core = { path = "../core", features = ["secp-inline", "guest-instrument"] }
 
 # `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM
 # KECCAK256 opcode, address derivation) to our `native_keccak256` shim → Jolt inline.
@@ -33,6 +33,11 @@ critical-section = "1.2"
 # See crates/alloc-o1. Patch applies to this (standalone) guest workspace only.
 [patch."https://github.com/LayerZero-Labs/ZeroOS.git"]
 zeroos-allocator-linked-list = { path = "../alloc-o1" }
+
+# Word-wise Stack::exchange (SWAP1-16 measured at 16.9% of trace rows via the
+# untyped byte-swap codegen). One-function patch; see crates/vendor/README.
+[patch.crates-io]
+revm-interpreter = { path = "../vendor/revm-interpreter" }
 
 [profile.release]
 opt-level = 3

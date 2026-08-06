@@ -2304,6 +2304,8 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rpc-types-debug",
+ "alloy-trie",
  "jolt-inlines-secp256k1",
  "reth-chainspec",
  "reth-ethereum-forks",
@@ -2312,9 +2314,12 @@ dependencies = [
  "reth-evm-ethereum",
  "reth-network-peers",
  "reth-primitives-traits",
+ "reth-trie-common",
+ "revm-bytecode",
  "serde",
  "stateless",
  "tries",
+ "zeth-mpt",
 ]
 
 [[package]]

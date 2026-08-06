@@ -12,7 +12,12 @@ extern crate alloc;
 mod chainspec;
 #[cfg(feature = "secp-inline")]
 mod crypto;
+#[cfg(feature = "guest-instrument")]
+mod instrument;
 mod recover;
+mod zeth_trie;
+
+pub use zeth_trie::set_trusted_digests;
 
 #[cfg(feature = "secp-inline")]
 pub use crypto::install_jolt_crypto;
@@ -34,7 +39,13 @@ pub use stateless::{
 /// exclusion proofs the reth sparse trie demands for absent-slot reads, while
 /// the zeth MPT resolves absence from the revealed partial trie directly
 /// (this is the trie zeth 0.3 runs in production on risc0).
-pub type Trie = tries::zeth::SparseState;
+/// (Vendored from `tries::zeth` with the trusted-digest extension — see
+/// `zeth_trie.rs`; behavior without trusted digests is identical.)
+#[cfg(not(feature = "guest-instrument"))]
+pub type Trie = zeth_trie::SparseState;
+/// Instrumented variant (markers + keccak checkpoints around reveal/root).
+#[cfg(feature = "guest-instrument")]
+pub type Trie = instrument::InstrumentedTrie;
 
 /// EVM config type used for both native and guest validation.
 pub type EthEvmConfig = reth_evm_ethereum::EthEvmConfig<ChainSpec, EthEvmFactory>;

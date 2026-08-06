@@ -17,6 +17,7 @@ const MAX_OUTPUT_SIZE: u64 = 4096;
 const HEAP_SIZE: u64 = 1610612736; // 1.5 GiB
 const STACK_SIZE: u64 = 33554432; // 32 MiB
 const MAX_ADVICE_SIZE: u64 = 4096; // jolt defaults (attrs unset)
+const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4194304; // 4 MiB (validate_block_trusted)
 
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
@@ -24,11 +25,16 @@ const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
 const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-guest";
 const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli/release/jolt";
 
-/// Guest entry point variant: committed-input or trusted-advice delivery.
+/// Guest entry point variant.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Variant {
+    /// Committed input (fully self-verifying — the headline configuration).
     Input,
+    /// Whole payload via trusted advice (prover-side commitment savings only).
     Advice,
+    /// Committed input + pre-computed witness digests via trusted advice
+    /// (reveal skips keccak; digest map is verifier-trusted — see RESULTS.md).
+    Trusted,
 }
 
 impl Variant {
@@ -36,6 +42,7 @@ impl Variant {
         match self {
             Variant::Input => "validate_block",
             Variant::Advice => "validate_block_advice",
+            Variant::Trusted => "validate_block_trusted",
         }
     }
 }
@@ -53,6 +60,7 @@ pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
     let (input_size, trusted_size) = match variant {
         Variant::Input => (MAX_INPUT_SIZE, MAX_ADVICE_SIZE),
         Variant::Advice => (MAX_ADVICE_SIZE, MAX_INPUT_SIZE),
+        Variant::Trusted => (MAX_INPUT_SIZE, TRUSTED_DIGEST_ADVICE_SIZE),
     };
     MemoryConfig {
         max_input_size: input_size,
@@ -124,6 +132,29 @@ fn build_guest_inner(variant: Variant, symbols: bool) -> Result<()> {
     Ok(())
 }
 
+/// Pre-compute witness-node digests + code hashes for the trusted variant.
+/// Blob: u32 LE state count | state digests | code hashes (32 B each).
+fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
+    let input: jeth_core::BlockInput =
+        postcard::from_bytes(input_bin).context("parsing input.bin for digest precompute")?;
+    let mut blob =
+        Vec::with_capacity(4 + 32 * (input.witness.state.len() + input.witness.codes.len()));
+    blob.extend_from_slice(&(input.witness.state.len() as u32).to_le_bytes());
+    for node in &input.witness.state {
+        blob.extend_from_slice(alloy_primitives::keccak256(node).as_slice());
+    }
+    for code in &input.witness.codes {
+        blob.extend_from_slice(alloy_primitives::keccak256(code).as_slice());
+    }
+    println!(
+        "digest blob: {} state + {} code digests ({} bytes)",
+        input.witness.state.len(),
+        input.witness.codes.len(),
+        blob.len()
+    );
+    Ok(blob)
+}
+
 pub fn run(input_path: &str, skip_build: bool, variant: Variant) -> Result<()> {
     let elf_file = elf_path(variant);
     if !skip_build || !elf_file.exists() {
@@ -148,9 +179,14 @@ pub fn run(input_path: &str, skip_build: bool, variant: Variant) -> Result<()> {
             MAX_INPUT_SIZE
         );
     }
+    let digest_blob = match variant {
+        Variant::Trusted => Some(postcard::to_stdvec(&digest_blob_for(&raw)?)?),
+        _ => None,
+    };
     let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {
         Variant::Input => (&wrapped, &[]),
         Variant::Advice => (&[], &wrapped),
+        Variant::Trusted => (&wrapped, digest_blob.as_deref().unwrap()),
     };
 
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
@@ -211,6 +247,7 @@ pub fn run(input_path: &str, skip_build: bool, variant: Variant) -> Result<()> {
     let summary_name = match variant {
         Variant::Input => "trace-summary.json",
         Variant::Advice => "trace-summary-advice.json",
+        Variant::Trusted => "trace-summary-trusted.json",
     };
     let summary_path = std::path::Path::new(input_path).with_file_name(summary_name);
     std::fs::write(&summary_path, serde_json::to_string_pretty(&summary)?)?;

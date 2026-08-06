@@ -1649,6 +1649,8 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rpc-types-debug",
+ "alloy-trie",
  "jolt-inlines-secp256k1",
  "reth-chainspec",
  "reth-ethereum-forks",
@@ -1657,9 +1659,12 @@ dependencies = [
  "reth-evm-ethereum",
  "reth-network-peers",
  "reth-primitives-traits",
+ "reth-trie-common",
+ "revm-bytecode",
  "serde",
  "stateless",
  "tries",
+ "zeth-mpt",
 ]
 
 [[package]]
@@ -2794,8 +2799,6 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "35.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ece9f41b69658c15d748288a4dbdfc06a63f3ce93d983af440de3f1631dce6a"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",

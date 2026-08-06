@@ -55,6 +55,10 @@ enum Command {
         /// Deliver the payload as TRUSTED ADVICE instead of committed input.
         #[arg(long)]
         advice: bool,
+        /// Supply pre-computed witness digests as trusted advice (reveal skips
+        /// keccak; digest map is verifier-trusted — see RESULTS.md caveat).
+        #[arg(long)]
+        trusted_digests: bool,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -70,6 +74,9 @@ enum Command {
         /// this substring (one-level caller profile).
         #[arg(long)]
         callers_of: Option<String>,
+        /// Exact trace-row attribution (real + virtual/inline rows) per symbol.
+        #[arg(long)]
+        rows: bool,
     },
     /// End-to-end: fetch a fresh block, validate natively, trace in the guest.
     Bench {
@@ -103,11 +110,12 @@ fn main() -> Result<()> {
             input,
             skip_build,
             advice,
+            trusted_digests,
         } => {
-            let variant = if advice {
-                trace::Variant::Advice
-            } else {
-                trace::Variant::Input
+            let variant = match (advice, trusted_digests) {
+                (_, true) => trace::Variant::Trusted,
+                (true, _) => trace::Variant::Advice,
+                _ => trace::Variant::Input,
             };
             trace::run(&input, skip_build, variant)
         }
@@ -116,7 +124,8 @@ fn main() -> Result<()> {
             every,
             top,
             callers_of,
-        } => profile::run(&input, every, top, callers_of),
+            rows,
+        } => profile::run(&input, every, top, callers_of, rows),
         Command::Bench {
             latest_minus,
             rpc_list,

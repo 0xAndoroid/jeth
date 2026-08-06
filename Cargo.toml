@@ -16,6 +16,7 @@ jeth-core = { path = "crates/core" }
 # stateless execution stack — zeth 0.3's proven pin set (PLAN.md §4)
 stateless = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e55612" }
 tries = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e55612" }
+zeth-mpt = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e55612" }
 
 # reth v2.1.0 (matches stateless rev 6e55612)
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
@@ -34,6 +35,8 @@ alloy-genesis = { version = "2.0", default-features = false }
 alloy-primitives = { version = "1.5", default-features = false }
 alloy-rlp = { version = "0.3.8", default-features = false }
 alloy-rpc-types-debug = { version = "2.0", default-features = false }
+alloy-trie = { version = "0.9", default-features = false }
+revm-bytecode = { version = "10.0.0", default-features = false }
 
 # jolt (branch merge-1717-main @ af1c2aef5c, read-only worktree; path deps per PLAN.md D2)
 jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }

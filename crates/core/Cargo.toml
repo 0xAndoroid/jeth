@@ -7,11 +7,20 @@ edition.workspace = true
 # Verify tx signatures with the Jolt secp256k1 inline (guest builds only; native
 # builds keep alloy/k256). The inline SDK panics if called on a non-RISC-V target.
 secp-inline = ["dep:jolt-inlines-secp256k1"]
+# Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
+# the binary must provide the jeth_phase_start/end extern hooks).
+guest-instrument = []
 
 [dependencies]
 stateless.workspace = true
 tries.workspace = true
+zeth-mpt.workspace = true
 jolt-inlines-secp256k1 = { workspace = true, optional = true }
+
+alloy-rpc-types-debug.workspace = true
+alloy-trie.workspace = true
+reth-trie-common.workspace = true
+revm-bytecode.workspace = true
 
 reth-chainspec.workspace = true
 reth-ethereum-forks.workspace = true

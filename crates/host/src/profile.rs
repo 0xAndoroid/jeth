@@ -10,7 +10,13 @@ use object::{Object, ObjectSymbol};
 use std::collections::HashMap;
 use std::time::Instant;
 
-pub fn run(input_path: &str, every: u64, top: usize, callers_of: Option<String>) -> Result<()> {
+pub fn run(
+    input_path: &str,
+    every: u64,
+    top: usize,
+    callers_of: Option<String>,
+    rows: bool,
+) -> Result<()> {
     let variant = crate::trace::Variant::Input;
     crate::trace::build_guest_with_symbols(variant)?;
     let elf_file = crate::trace::elf_path(variant);
@@ -70,34 +76,54 @@ pub fn run(input_path: &str, every: u64, top: usize, callers_of: Option<String>)
         (*addr, *addr + *size)
     });
 
-    println!("profiling (sampling every {every} ticks)...");
+    println!("profiling (sampling every {every} ticks; rows={rows})...");
     let start = Instant::now();
     let mut samples: HashMap<usize, u64> = HashMap::new();
     let mut prev_pc: u64 = 0;
     let mut ticks: u64 = 0;
-    loop {
-        let pc = emulator.get_cpu().read_pc();
-        if pc == prev_pc {
-            break;
-        }
-        if ticks.is_multiple_of(every) {
-            match target_range {
-                None => *samples.entry(lookup(pc, &symbols)).or_default() += 1,
-                Some((lo, hi)) if pc >= lo && pc < hi => {
-                    let ra = emulator.get_cpu().read_register(1) as u64;
-                    *samples.entry(lookup(ra, &symbols)).or_default() += 1;
-                }
-                Some(_) => {}
+    if rows {
+        // Exact TRACE-ROW attribution: every tick's row delta (1 real row +
+        // virtual-sequence/inline expansion rows) is charged to the executing
+        // symbol. Slower than sampling but exact — this is where prover cycles
+        // actually go, inline expansions included.
+        let mut prev_rows = emulator.get_cpu().trace_len as u64;
+        loop {
+            let pc = emulator.get_cpu().read_pc();
+            if pc == prev_pc {
+                break;
             }
+            emulator.tick(None);
+            let now_rows = emulator.get_cpu().trace_len as u64;
+            *samples.entry(lookup(pc, &symbols)).or_default() += now_rows - prev_rows;
+            prev_rows = now_rows;
+            prev_pc = pc;
+            ticks += 1;
         }
-        emulator.tick(None);
-        prev_pc = pc;
-        ticks += 1;
+    } else {
+        loop {
+            let pc = emulator.get_cpu().read_pc();
+            if pc == prev_pc {
+                break;
+            }
+            if ticks.is_multiple_of(every) {
+                match target_range {
+                    None => *samples.entry(lookup(pc, &symbols)).or_default() += 1,
+                    Some((lo, hi)) if pc >= lo && pc < hi => {
+                        let ra = emulator.get_cpu().read_register(1) as u64;
+                        *samples.entry(lookup(ra, &symbols)).or_default() += 1;
+                    }
+                    Some(_) => {}
+                }
+            }
+            emulator.tick(None);
+            prev_pc = pc;
+            ticks += 1;
+        }
     }
-    let rows = emulator.get_cpu().trace_len;
+    let total_rows = emulator.get_cpu().trace_len;
     let wall = start.elapsed();
     println!(
-        "done: {ticks} real instrs, {rows} trace rows in {wall:.1?} ({:.1} MHz)",
+        "done: {ticks} real instrs, {total_rows} trace rows in {wall:.1?} ({:.1} MHz)",
         ticks as f64 / wall.as_secs_f64() / 1e6
     );
 
@@ -105,7 +131,12 @@ pub fn run(input_path: &str, every: u64, top: usize, callers_of: Option<String>)
     let mut ranked: Vec<(usize, u64)> = samples.into_iter().collect();
     ranked.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
 
-    println!("\n=== top {top} symbols by sampled real-instruction share ===");
+    let unit = if rows {
+        "exact trace-row"
+    } else {
+        "sampled real-instruction"
+    };
+    println!("\n=== top {top} symbols by {unit} share ===");
     for (sym_idx, n) in ranked.iter().take(top) {
         let name = if *sym_idx == usize::MAX {
             "<unknown>"
