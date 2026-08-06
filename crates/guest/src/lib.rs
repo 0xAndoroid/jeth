@@ -13,6 +13,9 @@ use jeth_core::{BlockInput, ValidationResult};
 
 /// Shared body: deserialize (measured), verify signatures, validate statelessly.
 fn run_validation(bytes: &[u8]) -> ValidationResult {
+    // Route the EVM ecrecover precompile through the secp256k1 inline.
+    jeth_core::install_jolt_crypto();
+
     jolt::start_cycle_tracking("deserialize");
     let input: BlockInput = jolt::postcard::from_bytes(bytes).expect("input deserialization");
     jolt::end_cycle_tracking("deserialize");

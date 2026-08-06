@@ -66,6 +66,10 @@ enum Command {
         /// Show top N symbols.
         #[arg(long, default_value_t = 40)]
         top: usize,
+        /// Bucket return addresses while PC is inside the first symbol matching
+        /// this substring (one-level caller profile).
+        #[arg(long)]
+        callers_of: Option<String>,
     },
     /// End-to-end: fetch a fresh block, validate natively, trace in the guest.
     Bench {
@@ -107,7 +111,12 @@ fn main() -> Result<()> {
             };
             trace::run(&input, skip_build, variant)
         }
-        Command::Profile { input, every, top } => profile::run(&input, every, top),
+        Command::Profile {
+            input,
+            every,
+            top,
+            callers_of,
+        } => profile::run(&input, every, top, callers_of),
         Command::Bench {
             latest_minus,
             rpc_list,

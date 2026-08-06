@@ -10,7 +10,12 @@
 extern crate alloc;
 
 mod chainspec;
+#[cfg(feature = "secp-inline")]
+mod crypto;
 mod recover;
+
+#[cfg(feature = "secp-inline")]
+pub use crypto::install_jolt_crypto;
 
 use alloc::{sync::Arc, vec::Vec};
 use reth_ethereum_primitives::Block;

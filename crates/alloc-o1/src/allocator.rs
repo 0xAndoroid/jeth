@@ -46,9 +46,12 @@ pub(crate) fn alloc(layout: Layout) -> *mut u8 {
     unsafe {
         let a = &mut *ptr::addr_of_mut!(ARENA);
 
-        // Fast path: recycle from the class free list.
+        // Fast path: recycle from the class free list. In-place-grown blocks
+        // (see realloc) are only guaranteed to be aligned to their ORIGINAL
+        // class, so re-check the requested alignment before handing one out;
+        // on a mismatch fall through to the bump path (head stays put).
         let head = a.free[class];
-        if head != 0 {
+        if head != 0 && head & (layout.align() - 1) == 0 {
             a.free[class] = *(head as *const usize);
             return head as *mut u8;
         }
@@ -96,9 +99,33 @@ pub(crate) fn realloc(ptr_in: *mut u8, old_layout: Layout, new_size: usize) -> *
         return ptr::null_mut();
     };
 
-    // Same size class → the existing block already fits.
-    if class_of(new_layout) == class_of(old_layout) {
+    let old_class = class_of(old_layout);
+    let new_class = class_of(new_layout);
+    if new_class as usize >= NUM_CLASSES {
+        return ptr::null_mut();
+    }
+
+    // Same size class (or shrink) → the existing block already fits. Shrinks
+    // keep the larger footprint (the tail is orphaned when later freed into
+    // the smaller class) — a deliberate space-for-copies trade.
+    if new_class <= old_class {
         return ptr_in;
+    }
+
+    unsafe {
+        let a = &mut *ptr::addr_of_mut!(ARENA);
+        // In-place growth: if this block is the most recent bump allocation,
+        // extend the cursor instead of copying (Vec doubling hits this a lot).
+        let old_size = 1usize << (old_class + MIN_SHIFT);
+        let new_size_class = 1usize << (new_class + MIN_SHIFT);
+        let addr = ptr_in as usize;
+        if addr + old_size == a.cursor
+            && addr & (new_layout.align() - 1) == 0
+            && addr + new_size_class <= a.end
+        {
+            a.cursor = addr + new_size_class;
+            return ptr_in;
+        }
     }
 
     let new_ptr = alloc(new_layout);

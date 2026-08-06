@@ -10,7 +10,7 @@ use object::{Object, ObjectSymbol};
 use std::collections::HashMap;
 use std::time::Instant;
 
-pub fn run(input_path: &str, every: u64, top: usize) -> Result<()> {
+pub fn run(input_path: &str, every: u64, top: usize, callers_of: Option<String>) -> Result<()> {
     let variant = crate::trace::Variant::Input;
     crate::trace::build_guest_with_symbols(variant)?;
     let elf_file = crate::trace::elf_path(variant);
@@ -59,6 +59,17 @@ pub fn run(input_path: &str, every: u64, top: usize) -> Result<()> {
         }
     };
 
+    // --callers-of: restrict to samples whose PC is inside a matching symbol and
+    // bucket the RETURN ADDRESS (ra/x1) instead — a one-level caller profile.
+    let target_range: Option<(u64, u64)> = callers_of.as_deref().map(|needle| {
+        let (addr, size, name) = symbols
+            .iter()
+            .find(|(_, _, n)| n.contains(needle))
+            .unwrap_or_else(|| panic!("no symbol matching {needle:?}"));
+        println!("caller profile of {name} @ {addr:#x}+{size:#x}");
+        (*addr, *addr + *size)
+    });
+
     println!("profiling (sampling every {every} ticks)...");
     let start = Instant::now();
     let mut samples: HashMap<usize, u64> = HashMap::new();
@@ -70,7 +81,14 @@ pub fn run(input_path: &str, every: u64, top: usize) -> Result<()> {
             break;
         }
         if ticks.is_multiple_of(every) {
-            *samples.entry(lookup(pc, &symbols)).or_default() += 1;
+            match target_range {
+                None => *samples.entry(lookup(pc, &symbols)).or_default() += 1,
+                Some((lo, hi)) if pc >= lo && pc < hi => {
+                    let ra = emulator.get_cpu().read_register(1) as u64;
+                    *samples.entry(lookup(ra, &symbols)).or_default() += 1;
+                }
+                Some(_) => {}
+            }
         }
         emulator.tick(None);
         prev_pc = pc;
