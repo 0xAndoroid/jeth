@@ -16,7 +16,7 @@ guest = []
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
 jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
 
-jeth-core = { path = "../core" }
+jeth-core = { path = "../core", features = ["secp-inline"] }
 
 # `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM
 # KECCAK256 opcode, address derivation) to our `native_keccak256` shim → Jolt inline.

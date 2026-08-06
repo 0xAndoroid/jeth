@@ -10,6 +10,7 @@
 extern crate alloc;
 
 mod chainspec;
+mod recover;
 
 use alloc::{sync::Arc, vec::Vec};
 use reth_ethereum_primitives::Block;
@@ -85,14 +86,9 @@ pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, Stateless
 }
 
 /// Verify tx signatures against host-supplied pubkeys and derive senders
-/// (separable phase for cycle accounting).
-pub fn recover_block(
-    block: Block,
-    signers: Vec<UncompressedPublicKey>,
-) -> Result<reth_primitives_traits::RecoveredBlock<Block>, StatelessValidationError> {
-    let chain_spec = mainnet_spec();
-    stateless::recover_block_with_public_keys(block, signers, &chain_spec)
-}
+/// (separable phase for cycle accounting). Uses the Jolt secp256k1 inline when
+/// the `secp-inline` feature is on (guest builds), alloy/k256 otherwise.
+pub use recover::recover_block;
 
 /// Validate an already-recovered block (the non-signature phases).
 pub fn validate_recovered(

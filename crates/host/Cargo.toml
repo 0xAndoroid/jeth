@@ -32,6 +32,7 @@ tracing-subscriber.workspace = true
 tracer.workspace = true
 jolt-common.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 
 # profiler: guest ELF symbolization
 object = "0.36"

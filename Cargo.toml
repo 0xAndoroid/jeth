@@ -38,6 +38,7 @@ alloy-rpc-types-debug = { version = "2.0", default-features = false }
 # jolt (branch merge-1717-main @ af1c2aef5c, read-only worktree; path deps per PLAN.md D2)
 jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
 jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
+jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/secp256k1", default-features = false }
 tracer = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/tracer" }
 jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/common" }
 jolt-program = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/crates/jolt-program" }
