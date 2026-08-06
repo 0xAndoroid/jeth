@@ -24,6 +24,10 @@ alloy-primitives = { version = "1.5", default-features = false, features = ["nat
 
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 
+# once_cell(critical-section) inside reth-primitives-traits needs a provider on
+# bare metal; the Jolt guest is single-hart with no interrupts → no-op impl.
+critical-section = "1.2"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

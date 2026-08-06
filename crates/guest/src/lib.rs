@@ -47,3 +47,17 @@ pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: 
     let digest = jolt_inlines_keccak256::Keccak256::digest(data);
     core::ptr::copy_nonoverlapping(digest.as_ptr(), output, 32);
 }
+
+/// `once_cell`'s critical-section backend (via reth-primitives-traits) needs a
+/// [`critical_section::Impl`]. The Jolt guest is a single hart with no interrupts,
+/// so acquire/release are no-ops.
+#[cfg(feature = "guest")]
+mod cs {
+    struct SingleHartCriticalSection;
+    critical_section::set_impl!(SingleHartCriticalSection);
+
+    unsafe impl critical_section::Impl for SingleHartCriticalSection {
+        unsafe fn acquire() -> critical_section::RawRestoreState {}
+        unsafe fn release(_: critical_section::RawRestoreState) {}
+    }
+}

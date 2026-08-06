@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 stateless.workspace = true
+tries.workspace = true
 
 reth-chainspec.workspace = true
 reth-ethereum-forks.workspace = true

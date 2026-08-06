@@ -21,6 +21,15 @@ pub use stateless::{
     validation::StatelessValidationError, ExecutionWitness, UncompressedPublicKey,
 };
 
+/// Trie implementation used for witness reveal + state-root computation.
+///
+/// `tries::zeth::SparseState` (zeth-mpt backed) — NOT the default reth
+/// `StatelessSparseTrie`: geth/zeth-proxy witnesses don't carry the storage
+/// exclusion proofs the reth sparse trie demands for absent-slot reads, while
+/// the zeth MPT resolves absence from the revealed partial trie directly
+/// (this is the trie zeth 0.3 runs in production on risc0).
+pub type Trie = tries::zeth::SparseState;
+
 /// EVM config type used for both native and guest validation.
 pub type EthEvmConfig = reth_evm_ethereum::EthEvmConfig<ChainSpec, EthEvmFactory>;
 
@@ -61,7 +70,7 @@ pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, Stateless
     let chain_spec = Arc::new(mainnet_spec());
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
-    let output = stateless::stateless_validation(
+    let output = stateless::stateless_validation_with_trie::<Trie, _, _>(
         input.block,
         input.signers,
         input.witness,
@@ -93,8 +102,9 @@ pub fn validate_recovered(
     let chain_spec = Arc::new(mainnet_spec());
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
-    let output =
-        stateless::stateless_validation_recovered(recovered, witness, chain_spec, evm_config)?;
+    let output = stateless::stateless_validation_recovered_with_trie::<Trie, _, _>(
+        recovered, witness, chain_spec, evm_config,
+    )?;
 
     Ok(ValidationResult {
         block_hash: output.block_hash.0,
