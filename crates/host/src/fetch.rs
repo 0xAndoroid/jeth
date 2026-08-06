@@ -6,12 +6,13 @@ use jeth_core::{BlockInput, ExecutionWitness, UncompressedPublicKey};
 use reth_ethereum_primitives::{Block, TransactionSigned};
 use serde_json::{json, Value};
 
+/// Fetch block + witness + pubkeys; returns the path to the written input.bin.
 pub fn run(
     block: Option<u64>,
     latest_minus: u64,
     rpc_list: Option<Vec<String>>,
     out_root: &str,
-) -> Result<()> {
+) -> Result<std::path::PathBuf> {
     let endpoints =
         rpc_list.unwrap_or_else(|| DEFAULT_ENDPOINTS.iter().map(|s| s.to_string()).collect());
     let client = RpcClient::new(endpoints);
@@ -102,7 +103,7 @@ pub fn run(
         dir.display(),
         input_bytes.len() as f64 / 1e6
     );
-    Ok(())
+    Ok(dir.join("input.bin"))
 }
 
 fn recover_signers(txs: &[TransactionSigned]) -> Result<Vec<UncompressedPublicKey>> {

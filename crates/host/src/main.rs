@@ -64,6 +64,15 @@ enum Command {
         #[arg(long, default_value_t = 40)]
         top: usize,
     },
+    /// End-to-end: fetch a fresh block, validate natively, trace in the guest.
+    Bench {
+        /// How far behind head to target.
+        #[arg(long, default_value_t = 8)]
+        latest_minus: u64,
+        /// Comma-separated JSON-RPC endpoint list (ordered failover).
+        #[arg(long, value_delimiter = ',')]
+        rpc_list: Option<Vec<String>>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -81,10 +90,19 @@ fn main() -> Result<()> {
             latest_minus,
             rpc_list,
             out,
-        } => fetch::run(block, latest_minus, rpc_list, &out),
+        } => fetch::run(block, latest_minus, rpc_list, &out).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
         Command::Trace { input, skip_build } => trace::run(&input, skip_build),
         Command::Profile { input, every, top } => profile::run(&input, every, top),
+        Command::Bench {
+            latest_minus,
+            rpc_list,
+        } => {
+            let input = fetch::run(None, latest_minus, rpc_list, "data")?;
+            let input = input.to_string_lossy();
+            run_native(&input)?;
+            trace::run(&input, false)
+        }
     }
 }
 

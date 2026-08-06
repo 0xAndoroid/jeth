@@ -1,0 +1,29 @@
+{
+  "block_number": 25698189,
+  "block_rlp_bytes": 292676,
+  "endpoints": {
+    "block": "https://docs-demo.quiknode.pro/",
+    "witness": "https://docs-demo.quiknode.pro/"
+  },
+  "fetched_at": "unix:1786046849",
+  "gas_limit": 60000000,
+  "gas_used": 41932456,
+  "input_bin_bytes": 10718638,
+  "timestamp": 1786046735,
+  "tx_count": 415,
+  "tx_type_counts": {
+    "0": 40,
+    "2": 369,
+    "3": 1,
+    "4": 5
+  },
+  "withdrawals": 16,
+  "witness": {
+    "code_bytes": 4155968,
+    "codes": 462,
+    "headers": 1,
+    "keys": 3379,
+    "state_bytes": 6112280,
+    "state_nodes": 18025
+  }
+}
