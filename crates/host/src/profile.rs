@@ -84,8 +84,8 @@ pub fn run(
     if rows {
         // Exact TRACE-ROW attribution: every tick's row delta (1 real row +
         // virtual-sequence/inline expansion rows) is charged to the executing
-        // symbol. Slower than sampling but exact — this is where prover cycles
-        // actually go, inline expansions included.
+        // symbol — or, with --callers-of, to the RETURN ADDRESS while the PC
+        // is inside the target symbol. Slower than sampling but exact.
         let mut prev_rows = emulator.get_cpu().trace_len as u64;
         loop {
             let pc = emulator.get_cpu().read_pc();
@@ -94,7 +94,15 @@ pub fn run(
             }
             emulator.tick(None);
             let now_rows = emulator.get_cpu().trace_len as u64;
-            *samples.entry(lookup(pc, &symbols)).or_default() += now_rows - prev_rows;
+            let delta = now_rows - prev_rows;
+            match target_range {
+                None => *samples.entry(lookup(pc, &symbols)).or_default() += delta,
+                Some((lo, hi)) if pc >= lo && pc < hi => {
+                    let ra = emulator.get_cpu().read_register(1) as u64;
+                    *samples.entry(lookup(ra, &symbols)).or_default() += delta;
+                }
+                Some(_) => {}
+            }
             prev_rows = now_rows;
             prev_pc = pc;
             ticks += 1;
