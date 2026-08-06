@@ -1,0 +1,22 @@
+# Drop-in replacement for ZeroOS's `zeroos-allocator-linked-list`, applied via
+# [patch."https://github.com/LayerZero-Labs/ZeroOS.git"] in the GUEST workspace.
+#
+# Why: linked_list_allocator's first-fit search + free-list walk consumed 85.7%
+# of ALL guest cycles on a real block-validation workload (PC-sampled: 58.6%
+# allocate_first_fit + 27.1% deallocate). This crate provides O(1) alloc/dealloc:
+# power-of-two size-class free lists over a bump arena (single-hart, no locking).
+[package]
+name = "zeroos-allocator-linked-list"
+version = "0.1.0"
+edition = "2021"
+description = "O(1) segregated-recycling bump allocator (jeth replacement for ZeroOS linked-list allocator)"
+
+[workspace]
+
+[lib]
+name = "zeroos_allocator_linked_list"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+foundation = { package = "zeroos-foundation", git = "https://github.com/LayerZero-Labs/ZeroOS.git", rev = "3b132ce862ba6769a4261d151f69ff32c5f0dc30", features = ["memory"] }

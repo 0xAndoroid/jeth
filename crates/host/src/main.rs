@@ -6,6 +6,7 @@
 //! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
 
 mod fetch;
+mod profile;
 mod rpc;
 mod trace;
 
@@ -52,6 +53,17 @@ enum Command {
         #[arg(long)]
         skip_build: bool,
     },
+    /// PC-sampling profile of the guest run (symbol histogram).
+    Profile {
+        #[arg(long)]
+        input: String,
+        /// Sample every N ticks.
+        #[arg(long, default_value_t = 64)]
+        every: u64,
+        /// Show top N symbols.
+        #[arg(long, default_value_t = 40)]
+        top: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -72,6 +84,7 @@ fn main() -> Result<()> {
         } => fetch::run(block, latest_minus, rpc_list, &out),
         Command::RunNative { input } => run_native(&input),
         Command::Trace { input, skip_build } => trace::run(&input, skip_build),
+        Command::Profile { input, every, top } => profile::run(&input, every, top),
     }
 }
 

@@ -28,6 +28,12 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 # bare metal; the Jolt guest is single-hart with no interrupts → no-op impl.
 critical-section = "1.2"
 
+# Replace ZeroOS's linked_list_allocator (first-fit; measured 85.7% of ALL guest
+# cycles on block validation) with an O(1) segregated-recycling bump allocator.
+# See crates/alloc-o1. Patch applies to this (standalone) guest workspace only.
+[patch."https://github.com/LayerZero-Labs/ZeroOS.git"]
+zeroos-allocator-linked-list = { path = "../alloc-o1" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

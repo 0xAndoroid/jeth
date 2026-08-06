@@ -46,14 +46,19 @@ pub fn run(
         "endpoint returned wrong block"
     );
 
-    // 3. Execution witness.
-    let (mut witness_json, ep_wit) = client.call("debug_executionWitness", json!([tag]))?;
-    if witness_json.get("keys").is_none() {
-        // `keys` population varies by node and is unused by the sparse-trie path.
-        witness_json["keys"] = json!([]);
-    }
-    let witness: ExecutionWitness =
-        serde_json::from_value(witness_json.clone()).context("witness JSON → ExecutionWitness")?;
+    // 3. Execution witness. Shape varies by node (BlockPI emits `headers` as JSON
+    //    objects instead of RLP hex; `keys` population varies) — parse inside the
+    //    failover so a non-conforming endpoint falls through to the next.
+    let ((witness_json, witness), ep_wit) =
+        client.call_validated("debug_executionWitness", json!([tag]), |result| {
+            let mut witness_json = result.clone();
+            if witness_json.get("keys").is_none() {
+                witness_json["keys"] = json!([]);
+            }
+            let witness: ExecutionWitness = serde_json::from_value(witness_json.clone())
+                .context("witness JSON → ExecutionWitness")?;
+            Ok((witness_json, witness))
+        })?;
     let wit_stats = WitnessStats::of(&witness);
     println!(
         "witness via {ep_wit}: {} state nodes ({:.1} MB), {} codes ({:.1} MB), {} headers, {} keys",

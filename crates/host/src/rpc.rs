@@ -31,9 +31,24 @@ impl RpcClient {
     /// Call `method` on the first endpoint that answers with a `result`.
     /// Returns `(result, endpoint_used)`.
     pub fn call(&self, method: &str, params: Value) -> Result<(Value, String)> {
+        self.call_validated(method, params, |v| Ok(v.clone()))
+    }
+
+    /// Like [`Self::call`], but an endpoint only counts as successful if `validate`
+    /// accepts its result (e.g. witness shape varies by node implementation —
+    /// a parse failure should fail over to the next endpoint).
+    pub fn call_validated<T>(
+        &self,
+        method: &str,
+        params: Value,
+        validate: impl Fn(&Value) -> Result<T>,
+    ) -> Result<(T, String)> {
         let mut last_err = anyhow!("no endpoints configured");
         for endpoint in &self.endpoints {
-            match self.call_one(endpoint, method, &params) {
+            match self
+                .call_one(endpoint, method, &params)
+                .and_then(|v| validate(&v))
+            {
                 Ok(result) => return Ok((result, endpoint.clone())),
                 Err(e) => {
                     tracing::warn!("{method} failed on {endpoint}: {e:#}");
@@ -46,14 +61,24 @@ impl RpcClient {
 
     fn call_one(&self, endpoint: &str, method: &str, params: &Value) -> Result<Value> {
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-        let resp: Value = self
-            .agent
-            .post(endpoint)
-            .set("Content-Type", "application/json")
-            .send_json(body)
-            .with_context(|| format!("transport error on {endpoint}"))?
-            .into_json()
-            .context("invalid JSON response")?;
+        // Retry 429s with backoff (QuickNode's public demo endpoint is ~1 req/s).
+        let mut attempts = 0;
+        let resp: Value = loop {
+            attempts += 1;
+            match self
+                .agent
+                .post(endpoint)
+                .set("Content-Type", "application/json")
+                .send_json(body.clone())
+            {
+                Ok(resp) => break resp.into_json().context("invalid JSON response")?,
+                Err(ureq::Error::Status(429, _)) if attempts < 5 => {
+                    tracing::warn!("429 from {endpoint}, backing off {}s", 2 * attempts);
+                    std::thread::sleep(Duration::from_secs(2 * attempts));
+                }
+                Err(e) => return Err(e).with_context(|| format!("transport error on {endpoint}")),
+            }
+        };
 
         if let Some(err) = resp.get("error") {
             bail!("rpc error: {err}");

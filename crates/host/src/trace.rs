@@ -13,7 +13,7 @@ extern crate jolt_inlines_keccak256 as _;
 /// Must match the `#[jolt::provable(...)]` attributes in crates/guest/src/lib.rs.
 const MAX_INPUT_SIZE: u64 = 33554432; // 32 MiB
 const MAX_OUTPUT_SIZE: u64 = 4096;
-const HEAP_SIZE: u64 = 1073741824; // 1 GiB
+const HEAP_SIZE: u64 = 1610612736; // 1.5 GiB
 const STACK_SIZE: u64 = 33554432; // 32 MiB
 const MAX_ADVICE_SIZE: u64 = 4096; // jolt defaults (attrs unset)
 
@@ -29,9 +29,33 @@ pub fn elf_path() -> PathBuf {
         .join("jeth-guest")
 }
 
+/// Compute the emulator memory config for a guest ELF (must mirror the guest's
+/// `#[jolt::provable]` attributes — see constants above).
+pub fn memory_config(elf: &[u8]) -> MemoryConfig {
+    let (_, _, program_end, _) = tracer::decode(elf);
+    MemoryConfig {
+        max_input_size: MAX_INPUT_SIZE,
+        max_output_size: MAX_OUTPUT_SIZE,
+        max_trusted_advice_size: MAX_ADVICE_SIZE,
+        max_untrusted_advice_size: MAX_ADVICE_SIZE,
+        stack_size: STACK_SIZE,
+        heap_size: HEAP_SIZE,
+        program_size: Some(program_end - RAM_START_ADDRESS),
+    }
+}
+
+/// Build with symbols preserved (JOLT_BACKTRACE=1 — metadata only, identical code).
+pub fn build_guest_with_symbols() -> Result<()> {
+    build_guest_inner(true)
+}
+
 /// Build the guest ELF via the `jolt` CLI (branch merge-1717-main build recipe:
 /// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.).
 pub fn build_guest() -> Result<()> {
+    build_guest_inner(false)
+}
+
+fn build_guest_inner(symbols: bool) -> Result<()> {
     let jolt_cli = std::env::var("JOLT_PATH").unwrap_or_else(|_| DEFAULT_JOLT_CLI.to_string());
     let args = [
         "build",
@@ -42,7 +66,7 @@ pub fn build_guest() -> Result<()> {
         "--stack-size",
         "33554432",
         "--heap-size",
-        "1073741824",
+        "1610612736",
         "--",
         "--release",
         "--target-dir",
@@ -52,10 +76,14 @@ pub fn build_guest() -> Result<()> {
     ];
     println!("building guest: {jolt_cli} {}", args.join(" "));
     let start = Instant::now();
-    let output = Command::new(&jolt_cli)
-        .args(args)
+    let mut cmd = Command::new(&jolt_cli);
+    cmd.args(args)
         .current_dir(GUEST_DIR)
-        .env("JOLT_FUNC_NAME", "validate_block")
+        .env("JOLT_FUNC_NAME", "validate_block");
+    if symbols {
+        cmd.env("JOLT_BACKTRACE", "1");
+    }
+    let output = cmd
         .output()
         .with_context(|| format!("failed to run jolt CLI at {jolt_cli}"))?;
     if !output.status.success() {
@@ -97,16 +125,7 @@ pub fn run(input_path: &str, skip_build: bool) -> Result<()> {
     }
 
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
-    let (_, _, program_end, _) = tracer::decode(&elf);
-    let memory_config = MemoryConfig {
-        max_input_size: MAX_INPUT_SIZE,
-        max_output_size: MAX_OUTPUT_SIZE,
-        max_trusted_advice_size: MAX_ADVICE_SIZE,
-        max_untrusted_advice_size: MAX_ADVICE_SIZE,
-        stack_size: STACK_SIZE,
-        heap_size: HEAP_SIZE,
-        program_size: Some(program_end - RAM_START_ADDRESS),
-    };
+    let memory_config = memory_config(&elf);
 
     // Execute-only streaming pass: counts trace rows (real + virtual/inline
     // expansions — the prover-relevant "cycles") without materializing anything.
