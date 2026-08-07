@@ -9,7 +9,7 @@
 
 extern crate alloc;
 
-#[cfg(feature = "guest")]
+#[cfg(any(feature = "guest", test))]
 mod mem;
 
 use jeth_core::{BlockInput, ValidationResult};
