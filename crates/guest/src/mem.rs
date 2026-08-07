@@ -215,10 +215,32 @@ pub(crate) unsafe fn memset_impl(dst: *mut u8, val: i32, n: usize) -> *mut u8 {
 }
 
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
-    // Compare 8 bytes at a time regardless of alignment (gathered via aligned
-    // loads); byte-lexicographic order == big-endian order of the mismatching
-    // word. Sub-word accesses appear nowhere.
+    // Compare 8 bytes at a time; byte-lexicographic order == big-endian order
+    // of the mismatching word. Sub-word accesses appear nowhere.
     let mut i = 0usize;
+    // Co-aligned fast path (the common case: 32-byte hash equality between
+    // 8-aligned heap objects): one aligned load per side per word after a
+    // single partial head compare.
+    if n >= 8 && ((a as usize) & 7) == ((b as usize) & 7) {
+        let head = (8 - ((a as usize) & 7)) & 7;
+        if head > 0 {
+            let x = load_le_partial(a, head);
+            let y = load_le_partial(b, head);
+            if x != y {
+                let sh = (8 - head) * 8;
+                return if (x << sh).to_be() > (y << sh).to_be() { 1 } else { -1 };
+            }
+            i = head;
+        }
+        while n - i >= 8 {
+            let x = read_volatile(a.add(i) as *const u64);
+            let y = read_volatile(b.add(i) as *const u64);
+            if x != y {
+                return if x.to_be() > y.to_be() { 1 } else { -1 };
+            }
+            i += 8;
+        }
+    }
     while n - i >= 8 {
         let x = load_le_partial(a.add(i), 8);
         let y = load_le_partial(b.add(i), 8);
