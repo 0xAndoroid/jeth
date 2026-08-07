@@ -82,6 +82,73 @@ ecrecover, cheaper). Every guest output hash matched an independent native
 | 23.4M | 1.6% | memcmp + memset |
 | ~226M | 15.6% | everything else: interpreter arithmetic/push/dup, revm journal/state, trie logic, RLP, deserialize remainder |
 
+## Cycle-attribution deep dive (2026-08-06, `jeth txprofile` + `--split-markers`)
+
+Full report: `~/.pika/web/reports/jeth-cycle-attribution-2026-08.html`. New tooling:
+`jeth txprofile` (per-tx cycles × native receipts), `jeth profile --split-markers
+--json` (exact marker × symbol row matrix), `scripts/aggregate_profile.py`.
+
+**Phase × component matrix (25698189, self-verifying, 1,446M rows):**
+
+| phase | rows | top components |
+|---|---|---|
+| deserialize | 30.7M (2.1%) | postcard 4.4M + memcpy ~21M |
+| sig_verify | 103.2M (7.1%) | secp inline 78.7M, sig-hash keccak+RLP rest |
+| witness_reveal | 451.7M (31.2%) | keccak 273.3M, memcpy 66.8M, mpt 41.7M, analyze_legacy 39.8M, maps 16.8M |
+| execution | 587.3M (40.6%) | memcpy 129.4M, **mpt 72.5M**, handler 66.7M, keccak 53.6M, mstore/mload 51.0M, journal 37.3M, PUSH 24.9M, k256-7702 23.5M, ecrecover 22.9M, ark-bn254 15.5M |
+| post_root | 188.7M (13.0%) | keccak 102.0M, memcpy 56.4M, mpt 25.0M |
+| glue (block hash, tx-root merkle, consensus, bundle) | ~84.6M (5.9%) | keccak ~40M, memcpy ~26M |
+
+**Per-tx findings (whale question):** 25698189 has NO whale — top tx 6.4% of
+execution cycles, top-10 = 37.5%. But 25698070 (the 42.7 c/g outlier) DOES:
+**two EIP-7702 batch txs = 49% of execution cycles, 86% of that inside k256
+software ecrecover** — 396M rows (16.0% of the whole block) recovering
+authorization-list authorities. High-c/g "normal" txs (USDT/USDC transfers at
+380–580 c/g, 46–54k gas) are all first-touch **storage-trie materialization**:
+`RlpTrie::from_prehashed` decode/resolve storms — i.e. ~⅔ of the MPT cost hides
+in the execution phase, not the reveal marker.
+
+**Guest crypto audit:** ecrecover precompile + tx sigs = Jolt secp inline (good);
+**7702 authority recovery = k256 software** (alloy-eip7702 hardwired — the one
+big crypto gap, patchable like revm-interpreter); bn254 add/mul/pairing =
+arkworks software (15.5M for one pairing tx); KZG point-eval = ark-bls12-381
+(linked, not hit); modexp = aurora (1.6M); sha256/ripemd/blake2 = software
+compress (≤0.2M, negligible); keccak fully routed through the inline — no
+double-hashing found.
+
+**Jolt bigint inline audit:** `jolt-inlines-bigint` ships exactly one op —
+`bigint256_mul` (256×256→512, ~145 rows). ruint exposes no override hooks, so
+wiring needs a guest `[patch]` of ruint or the vendored revm-interpreter.
+Measured EVM 256-bit math surface: MUL 0.50M + EXP 0.32M + DIV 0.25M +
+`div_rem` 1.27M + `mul_mod` 0.21M ≈ **2.6M rows (0.18%) — not worth it** for
+EVM opcodes alone. The real 256-bit mul volume sits inside k256 (23–396M) and
+ark-bn254 (15.5M) field muls — better served by curve-level inlines.
+
+**R2 (lazy bytecode analysis) is measured DEAD:** geth witness codes ≈ executed
+codes (`analyze_legacy` rows bit-identical eager vs lazy), and the lazy variant
+REGRESSED +62.7M rows from outlined `IndexMap::get` in the digest-resolution hot
+path. `--guest-features lazy` kept as documentation. Replacement: R7
+advice-carried jump tables (−30–40M).
+
+**Updated lever ranking (self-verifying, 25698189):**
+
+| # | lever | saving | c/g | side |
+|---|---|---|---|---|
+| 1 | R4 keccak-f inline (3,383 → ~1.2k rows/perm; SP1-class ~500) | −308M … −408M | −7.4 … −9.7 | upstream |
+| 2 | R1 zero-copy/arena zeth-mpt (reveal + **exec materialization** + post_root) | −180 … −230M | −4.3 … −5.5 | app |
+| 3 | 7702 authority → secp inline (patch alloy-eip7702) | −18M here; **−330M / −5.7 c/g on 25698070**; kills c/g variance | −0.4 … −5.7 | app |
+| 4 | R5 memcpy/memmove inline (residual after R1) | −80 … −120M | −2 … −3 | upstream |
+| 5 | R3 interpreter fat (handler 66.7M + mem ops 51M + stack ops 36M) | −40 … −70M | −1 … −1.7 | app |
+| 6 | R7 advice jump tables (replaces dead R2) | −30 … −40M | −0.8 | app |
+| 7 | bn254 inline family | −10 … −14M (workload-dep) | −0.3 | upstream |
+| 8 | bigint256_mul for EVM arithmetic | −1 … −2M | −0.05 | skip |
+
+**Halving verdict (34.5 → ≤17.25):** achievable, but only with the upstream
+keccak-f rework. Conservative R4 (1.2k rows/perm) + R1 + R5 + R3 + 7702 + R7 ≈
+**16.5–17.5 c/g**; SP1-class keccak pushes ≈ **14–15**. App-side-only floor is
+~25–27 c/g — no path to 17 without R4. Same stack takes trusted-digests
+28.0 → **13–15 c/g**.
+
 ## Quartering plan — status and remainder
 
 Target set by user: ~10 c/g (≈420M rows for block 25698189). Achieved so far: 41.7 →
