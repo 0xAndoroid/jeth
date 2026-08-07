@@ -3754,7 +3754,6 @@ dependencies = [
 [[package]]
 name = "zeth-mpt"
 version = "0.1.0"
-source = "git+https://github.com/paradigmxyz/stateless.git?rev=6e55612#6e55612692421c60f1a5ed18617c0d247c28a5fe"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",

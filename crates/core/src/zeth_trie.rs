@@ -76,9 +76,10 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
 
     pub fn from_prehashed(
         root: B256,
-        rlp_by_digest: &B256IndexMap<impl AsRef<[u8]>>,
+        rlp_by_digest: &B256IndexMap<Bytes>,
     ) -> alloy_rlp::Result<Self> {
-        Ok(Self::new(CachedTrie::from_prehashed_nodes(
+        // jeth: zero-copy decode — leaf values reference the witness bytes.
+        Ok(Self::new(CachedTrie::from_prehashed_nodes_zc(
             root,
             rlp_by_digest,
         )?))

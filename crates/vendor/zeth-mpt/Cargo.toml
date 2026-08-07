@@ -1,0 +1,34 @@
+# jeth fork of paradigmxyz/stateless crates/zeth-mpt @ 6e55612 (Apache-2.0,
+# Copyright 2025 RISC Zero, Inc.). Applied via [patch] of the git dependency.
+#
+# Changes vs upstream (profile-driven, block 25698189):
+# - Node::Branch boxes its Children: sizeof(Node) 176 -> ~112 bytes. Every
+#   decode moves each node ~3x (decode return, Box::new, *self = node); the
+#   riscv64 byte/word copy storm for those moves measured as a large share of
+#   the 129M decode-driven memcpy rows.
+# - Zero-copy decode: leaf/branch values become Bytes::slice_ref views into the
+#   witness node bytes instead of allocated copies (resolve_digests path, the
+#   only decode path jeth exercises).
+# - serde/rkyv/orphan support dropped (unused by jeth).
+[package]
+name = "zeth-mpt"
+edition = "2021"
+version = "0.1.0"
+license = "Apache-2.0"
+
+# Standalone patch target (applied via [patch] in both the jeth workspace and
+# the guest workspace), like crates/vendor/revm-interpreter.
+[workspace]
+
+[dependencies]
+alloy-trie = { version = "0.9", default-features = false, features = ["ethereum"] }
+alloy-rlp = { version = "0.3.8", default-features = false }
+alloy-primitives = { version = "1.5", default-features = false, features = ["map-foldhash", "map-indexmap"] }
+arrayvec = { version = "0.7", default-features = false }
+
+# Inert feature names (upstream cfg_attr gates reference them; never enabled).
+[features]
+serde = []
+rkyv = []
+orphan = []
+rlp_serialize = []

@@ -65,3 +65,9 @@ k256 = { version = "0.13", default-features = false }
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# jeth fork of zeth-mpt (boxed branch children + zero-copy decode) — see
+# crates/vendor/zeth-mpt. Applies to jeth-core in this workspace; the guest
+# workspace carries the same patch.
+[patch."https://github.com/paradigmxyz/stateless.git"]
+zeth-mpt = { path = "crates/vendor/zeth-mpt" }

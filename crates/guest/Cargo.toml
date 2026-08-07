@@ -48,6 +48,13 @@ zeroos-allocator-linked-list = { path = "../alloc-o1" }
 revm-interpreter = { path = "../vendor/revm-interpreter" }
 alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 
+# zeth-mpt fork: boxed branch children + zero-copy decode (Bytes::slice_ref
+# views into witness node bytes) — decode-driven struct moves + value copies
+# measured ~190M rows across reveal/execution/post_root. Same patch in the
+# root workspace so the native gate runs identical trie code.
+[patch."https://github.com/paradigmxyz/stateless.git"]
+zeth-mpt = { path = "../vendor/zeth-mpt" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"
