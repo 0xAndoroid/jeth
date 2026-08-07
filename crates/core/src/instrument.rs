@@ -21,9 +21,31 @@ fn phase_end(label: &'static str) {
     unsafe { jeth_phase_end(label.as_ptr(), label.len()) }
 }
 
+/// Marker with a non-`'static` label (per-tx markers reuse a stack buffer; the
+/// tracer copies the label at start and keys the active marker by pointer).
+pub(crate) fn phase_start_dyn(label: &str) {
+    unsafe { jeth_phase_start(label.as_ptr(), label.len()) }
+}
+pub(crate) fn phase_end_dyn(label: &str) {
+    unsafe { jeth_phase_end(label.as_ptr(), label.len()) }
+}
+
 /// [`crate::zeth_trie::SparseState`] with phase hooks around reveal and root calc.
 #[derive(Debug)]
 pub struct InstrumentedTrie(crate::zeth_trie::SparseState);
+
+impl InstrumentedTrie {
+    /// [`crate::zeth_trie::SparseState::new_with_codes`] with reveal markers.
+    pub fn new_with_codes(
+        witness: &ExecutionWitness,
+        pre_state_root: B256,
+    ) -> Result<(Self, crate::validation::CodeMap), StatelessTrieError> {
+        phase_start("witness_reveal");
+        let result = crate::zeth_trie::SparseState::new_with_codes(witness, pre_state_root);
+        phase_end("witness_reveal");
+        result.map(|(inner, codes)| (Self(inner), codes))
+    }
+}
 
 impl StatelessTrie for InstrumentedTrie {
     fn new(

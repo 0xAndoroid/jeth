@@ -10,6 +10,11 @@ secp-inline = ["dep:jolt-inlines-secp256k1"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []
+# Cycle marker around every transaction (drives `jeth txprofile`).
+pertx-markers = ["guest-instrument"]
+# Defer bytecode analysis to first execution instead of analyzing every witness
+# code up front (upstream stateless HEAD behavior).
+lazy-analysis = []
 
 [dependencies]
 stateless.workspace = true
@@ -23,12 +28,16 @@ reth-trie-common.workspace = true
 revm-bytecode.workspace = true
 
 reth-chainspec.workspace = true
+reth-consensus.workspace = true
+reth-ethereum-consensus.workspace = true
 reth-ethereum-forks.workspace = true
 reth-ethereum-primitives = { workspace = true, features = ["serde"] }
 reth-evm.workspace = true
 reth-evm-ethereum.workspace = true
 reth-network-peers.workspace = true
 reth-primitives-traits.workspace = true
+revm-database-interface.workspace = true
+revm-state.workspace = true
 
 alloy-consensus.workspace = true
 alloy-eips.workspace = true

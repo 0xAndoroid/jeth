@@ -2308,6 +2308,8 @@ dependencies = [
  "alloy-trie",
  "jolt-inlines-secp256k1",
  "reth-chainspec",
+ "reth-consensus",
+ "reth-ethereum-consensus",
  "reth-ethereum-forks",
  "reth-ethereum-primitives",
  "reth-evm",
@@ -2316,6 +2318,8 @@ dependencies = [
  "reth-primitives-traits",
  "reth-trie-common",
  "revm-bytecode",
+ "revm-database-interface",
+ "revm-state",
  "serde",
  "stateless",
  "tries",
@@ -2338,6 +2342,7 @@ dependencies = [
  "k256",
  "object 0.36.7",
  "postcard",
+ "regex-lite",
  "reth-ethereum-primitives",
  "reth-primitives-traits",
  "rustc-demangle",
@@ -3204,6 +3209,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"

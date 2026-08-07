@@ -15,6 +15,7 @@ mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
 mod recover;
+pub mod validation;
 mod zeth_trie;
 
 pub use zeth_trie::set_trusted_digests;
@@ -107,6 +108,11 @@ pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, Stateless
 pub use recover::recover_block;
 
 /// Validate an already-recovered block (the non-signature phases).
+///
+/// Runs jeth's vendored validation loop ([`validation::validate_recovered_pertx`])
+/// — behaviorally identical to upstream `stateless` 6e55612 (the native gate
+/// cross-checks it on every bench), with optional per-tx cycle markers and lazy
+/// bytecode analysis.
 pub fn validate_recovered(
     recovered: reth_primitives_traits::RecoveredBlock<Block>,
     witness: ExecutionWitness,
@@ -114,13 +120,11 @@ pub fn validate_recovered(
     let chain_spec = Arc::new(mainnet_spec());
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
-    let output = stateless::stateless_validation_recovered_with_trie::<Trie, _, _>(
-        recovered, witness, chain_spec, evm_config,
-    )?;
+    let output = validation::validate_recovered_pertx(recovered, witness, chain_spec, evm_config)?;
 
     Ok(ValidationResult {
         block_hash: output.block_hash.0,
-        gas_used: output.execution_output.result.gas_used,
+        gas_used: output.gas_used,
     })
 }
 

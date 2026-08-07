@@ -151,6 +151,76 @@ impl SparseState {
     }
 }
 
+impl SparseState {
+    /// Like [`StatelessTrie::new`] but returns a [`crate::validation::CodeMap`]
+    /// (raw bytes when `lazy-analysis` is enabled) instead of eagerly analyzed
+    /// [`Bytecode`] — used by the vendored per-tx validation path.
+    pub fn new_with_codes(
+        witness: &ExecutionWitness,
+        pre_state_root: B256,
+    ) -> Result<(Self, crate::validation::CodeMap), StatelessTrieError> {
+        let trusted = take_trusted_digests().filter(|(state_digests, code_hashes)| {
+            state_digests.len() == witness.state.len() && code_hashes.len() == witness.codes.len()
+        });
+
+        let rlp_by_digest: B256IndexMap<_> = match trusted {
+            Some((state_digests, _)) => state_digests
+                .iter()
+                .zip(witness.state.iter())
+                .map(|(digest, rlp)| (B256::from(*digest), rlp.clone()))
+                .collect(),
+            None => witness
+                .state
+                .iter()
+                .map(|rlp| (keccak256(rlp), rlp.clone()))
+                .collect(),
+        };
+
+        let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
+            .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
+
+        // hash all the supplied bytecode (or adopt trusted hashes); analysis is
+        // deferred per the CodeMap policy.
+        let codes = crate::validation::CodeMap::build(match trusted {
+            Some((_, code_hashes)) => itertools_either::Either::Left(
+                code_hashes
+                    .iter()
+                    .zip(witness.codes.iter())
+                    .map(|(hash, code)| (B256::from(*hash), code)),
+            ),
+            None => itertools_either::Either::Right(
+                witness.codes.iter().map(|code| (keccak256(code), code)),
+            ),
+        });
+
+        Ok((
+            Self {
+                state,
+                storages: RefCell::new(B256IndexMap::default()),
+                rlp_by_digest,
+            },
+            codes,
+        ))
+    }
+}
+
+/// Minimal local `Either` iterator (avoids an itertools dependency).
+mod itertools_either {
+    pub enum Either<L, R> {
+        Left(L),
+        Right(R),
+    }
+    impl<T, L: Iterator<Item = T>, R: Iterator<Item = T>> Iterator for Either<L, R> {
+        type Item = T;
+        fn next(&mut self) -> Option<T> {
+            match self {
+                Either::Left(l) => l.next(),
+                Either::Right(r) => r.next(),
+            }
+        }
+    }
+}
+
 impl StatelessTrie for SparseState {
     /// Initialize the stateless trie using the `ExecutionWitness`.
     fn new(

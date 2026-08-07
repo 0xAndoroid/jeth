@@ -9,6 +9,7 @@ mod fetch;
 mod profile;
 mod rpc;
 mod trace;
+mod txprofile;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -59,6 +60,10 @@ enum Command {
         /// keccak; digest map is verifier-trusted — see RESULTS.md caveat).
         #[arg(long)]
         trusted_digests: bool,
+        /// Extra guest cargo features (comma-separated), e.g. `lazy` for
+        /// deferred bytecode analysis. Each set builds into its own target dir.
+        #[arg(long, value_delimiter = ',', default_value = "")]
+        guest_features: Vec<String>,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -77,6 +82,27 @@ enum Command {
         /// Exact trace-row attribution (real + virtual/inline rows) per symbol.
         #[arg(long)]
         rows: bool,
+        /// With --rows: attribute rows per (marker, symbol) — phase AND per-tx
+        /// spans (builds the guest with the pertx feature).
+        #[arg(long)]
+        split_markers: bool,
+        /// With --split-markers: write the full marker × symbol matrix here.
+        #[arg(long)]
+        json: Option<String>,
+        /// Extra guest cargo features (comma-separated), e.g. `lazy`.
+        #[arg(long, value_delimiter = ',', default_value = "")]
+        guest_features: Vec<String>,
+    },
+    /// Per-transaction cycle attribution (guest built with per-tx markers).
+    Txprofile {
+        #[arg(long)]
+        input: String,
+        /// Show top N transactions.
+        #[arg(long, default_value_t = 30)]
+        top: usize,
+        /// Skip rebuilding the guest ELF if it already exists.
+        #[arg(long)]
+        skip_build: bool,
     },
     /// End-to-end: fetch a fresh block, validate natively, trace in the guest.
     Bench {
@@ -111,13 +137,19 @@ fn main() -> Result<()> {
             skip_build,
             advice,
             trusted_digests,
+            guest_features,
         } => {
             let variant = match (advice, trusted_digests) {
                 (_, true) => trace::Variant::Trusted,
                 (true, _) => trace::Variant::Advice,
                 _ => trace::Variant::Input,
             };
-            trace::run(&input, skip_build, variant)
+            let features: Vec<&str> = guest_features
+                .iter()
+                .filter(|f| !f.is_empty())
+                .map(|f| f.as_str())
+                .collect();
+            trace::run(&input, skip_build, variant, &features)
         }
         Command::Profile {
             input,
@@ -125,7 +157,31 @@ fn main() -> Result<()> {
             top,
             callers_of,
             rows,
-        } => profile::run(&input, every, top, callers_of, rows),
+            split_markers,
+            json,
+            guest_features,
+        } => {
+            let features: Vec<&str> = guest_features
+                .iter()
+                .filter(|f| !f.is_empty())
+                .map(|f| f.as_str())
+                .collect();
+            profile::run(
+                &input,
+                every,
+                top,
+                callers_of,
+                rows,
+                split_markers,
+                json,
+                &features,
+            )
+        }
+        Command::Txprofile {
+            input,
+            top,
+            skip_build,
+        } => txprofile::run(&input, top, skip_build),
         Command::Bench {
             latest_minus,
             rpc_list,
@@ -133,7 +189,7 @@ fn main() -> Result<()> {
             let input = fetch::run(None, latest_minus, rpc_list, "data")?;
             let input = input.to_string_lossy();
             run_native(&input)?;
-            trace::run(&input, false, trace::Variant::Input)
+            trace::run(&input, false, trace::Variant::Input, &[])
         }
     }
 }

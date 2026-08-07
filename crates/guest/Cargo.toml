@@ -11,6 +11,10 @@ edition = "2021"
 
 [features]
 guest = []
+# Per-transaction cycle markers (drives `jeth txprofile`).
+pertx = ["jeth-core/pertx-markers"]
+# Defer bytecode analysis to first execution (A/B measurement for R2).
+lazy = ["jeth-core/lazy-analysis"]
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }

@@ -47,8 +47,11 @@ impl Variant {
     }
 }
 
-pub fn elf_path(variant: Variant) -> PathBuf {
-    PathBuf::from(format!("{GUEST_TARGET_DIR}-{}", variant.func()))
+/// ELF path for a build with extra guest features (each feature set gets its
+/// own target dir so switching configurations doesn't thrash rebuilds).
+pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
+    let suffix: String = extra_features.iter().map(|f| format!("-{f}")).collect();
+    PathBuf::from(format!("{GUEST_TARGET_DIR}-{}{suffix}", variant.func()))
         .join("riscv64imac-unknown-none-elf/release")
         .join("jeth-guest")
 }
@@ -73,21 +76,28 @@ pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
     }
 }
 
-/// Build with symbols preserved (JOLT_BACKTRACE=1 — metadata only, identical code).
-pub fn build_guest_with_symbols(variant: Variant) -> Result<()> {
-    build_guest_inner(variant, true)
+/// Build with symbols preserved (JOLT_BACKTRACE=1 — metadata only, identical
+/// code), plus optional extra guest features.
+pub fn build_guest_symbols_features(variant: Variant, extra_features: &[&str]) -> Result<()> {
+    build_guest_inner(variant, true, extra_features)
 }
 
 /// Build the guest ELF via the `jolt` CLI (branch merge-1717-main build recipe:
-/// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.).
-pub fn build_guest(variant: Variant) -> Result<()> {
-    build_guest_inner(variant, false)
+/// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.)
+/// with extra guest cargo features (e.g. `pertx` for per-tx markers).
+pub fn build_guest_features(variant: Variant, extra_features: &[&str]) -> Result<()> {
+    build_guest_inner(variant, false, extra_features)
 }
 
-fn build_guest_inner(variant: Variant, symbols: bool) -> Result<()> {
+fn build_guest_inner(variant: Variant, symbols: bool, extra_features: &[&str]) -> Result<()> {
     let jolt_cli = std::env::var("JOLT_PATH").unwrap_or_else(|_| DEFAULT_JOLT_CLI.to_string());
     let func = variant.func();
-    let target_dir = format!("{GUEST_TARGET_DIR}-{func}");
+    let suffix: String = extra_features.iter().map(|f| format!("-{f}")).collect();
+    let target_dir = format!("{GUEST_TARGET_DIR}-{func}{suffix}");
+    let features: String = core::iter::once("guest")
+        .chain(extra_features.iter().copied())
+        .collect::<Vec<_>>()
+        .join(",");
     let args = [
         "build",
         "-p",
@@ -103,7 +113,7 @@ fn build_guest_inner(variant: Variant, symbols: bool) -> Result<()> {
         "--target-dir",
         &target_dir,
         "--features",
-        "guest",
+        &features,
     ];
     println!("building guest ({func}): {jolt_cli} {}", args.join(" "));
     let start = Instant::now();
@@ -127,7 +137,7 @@ fn build_guest_inner(variant: Variant, symbols: bool) -> Result<()> {
     println!(
         "guest built in {:.1?} → {}",
         start.elapsed(),
-        elf_path(variant).display()
+        elf_path_with(variant, extra_features).display()
     );
     Ok(())
 }
@@ -155,10 +165,15 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
     Ok(blob)
 }
 
-pub fn run(input_path: &str, skip_build: bool, variant: Variant) -> Result<()> {
-    let elf_file = elf_path(variant);
+pub fn run(
+    input_path: &str,
+    skip_build: bool,
+    variant: Variant,
+    extra_features: &[&str],
+) -> Result<()> {
+    let elf_file = elf_path_with(variant, extra_features);
     if !skip_build || !elf_file.exists() {
-        build_guest(variant)?;
+        build_guest_features(variant, extra_features)?;
     }
 
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;

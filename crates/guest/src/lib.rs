@@ -155,8 +155,12 @@ pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: 
 
 /// Phase hooks for jeth-core's instrumented trie: forward to jolt cycle markers
 /// and checkpoint the keccak counters. Label pointers are 'static (marker keys).
+///
+/// `#[inline(never)]`: the profiler's `--split-markers` mode tracks the active
+/// marker by watching these functions' entry PCs — LTO must not inline them.
 #[cfg(feature = "guest")]
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn jeth_phase_start(ptr: *const u8, len: usize) {
     let label = core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len));
     keccak_stats(label);
@@ -165,6 +169,7 @@ pub unsafe extern "C" fn jeth_phase_start(ptr: *const u8, len: usize) {
 
 #[cfg(feature = "guest")]
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn jeth_phase_end(ptr: *const u8, len: usize) {
     let label = core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len));
     jolt::end_cycle_tracking(label);

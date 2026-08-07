@@ -20,6 +20,8 @@ zeth-mpt = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e5561
 
 # reth v2.1.0 (matches stateless rev 6e55612)
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
+reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
 reth-evm = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.1.0", default-features = false }
@@ -37,6 +39,8 @@ alloy-rlp = { version = "0.3.8", default-features = false }
 alloy-rpc-types-debug = { version = "2.0", default-features = false }
 alloy-trie = { version = "0.9", default-features = false }
 revm-bytecode = { version = "10.0.0", default-features = false }
+revm-database-interface = { version = "11.0.1", default-features = false }
+revm-state = { version = "11.0.1", default-features = false }
 
 # jolt (branch merge-1717-main @ af1c2aef5c, read-only worktree; path deps per PLAN.md D2)
 jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
