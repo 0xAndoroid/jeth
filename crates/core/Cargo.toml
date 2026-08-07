@@ -6,7 +6,9 @@ edition.workspace = true
 [features]
 # Verify tx signatures with the Jolt secp256k1 inline (guest builds only; native
 # builds keep alloy/k256). The inline SDK panics if called on a non-RISC-V target.
-secp-inline = ["dep:jolt-inlines-secp256k1"]
+# Also installs the alloy-consensus pluggable crypto backend so EIP-7702
+# authority recovery (via alloy-evm's TxEnv conversion) hits the inline too.
+secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []

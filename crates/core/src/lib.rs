@@ -21,7 +21,7 @@ mod zeth_trie;
 pub use zeth_trie::set_trusted_digests;
 
 #[cfg(feature = "secp-inline")]
-pub use crypto::install_jolt_crypto;
+pub use crypto::{install_jolt_crypto, inline_ecrecover};
 
 use alloc::{sync::Arc, vec::Vec};
 use reth_ethereum_primitives::Block;

@@ -57,7 +57,7 @@ fn verify_and_compute_sender(
 
     #[cfg(feature = "secp-inline")]
     {
-        inline_verify(&vk.0, sig, sig_hash)
+        inline_verify_pubkey(&vk.0, sig, sig_hash)
     }
     #[cfg(not(feature = "secp-inline"))]
     {
@@ -74,7 +74,7 @@ fn verify_and_compute_sender(
 /// pubkey coordinates canonical, point on curve and not at infinity, then checks
 /// `r == x(u1·G + u2·Q) mod n`. Any failure → `SignerRecovery` (guest panics).
 #[cfg(feature = "secp-inline")]
-fn inline_verify(
+pub(crate) fn inline_verify_pubkey(
     vk: &[u8; 65],
     sig: &alloy_primitives::Signature,
     sig_hash: alloy_primitives::B256,

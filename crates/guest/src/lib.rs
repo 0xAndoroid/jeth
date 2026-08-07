@@ -176,6 +176,29 @@ pub unsafe extern "C" fn jeth_phase_end(ptr: *const u8, len: usize) {
     keccak_stats(label);
 }
 
+/// Hook for the vendored alloy-eip7702: EIP-7702 authority recovery through the
+/// Jolt secp256k1 inline (same routine as the ecrecover precompile override).
+/// Returns 1 and writes keccak(pubkey) to `out` (32 bytes) on success, 0 on
+/// recovery failure.
+#[cfg(feature = "guest")]
+#[no_mangle]
+pub unsafe extern "C" fn jeth_ecrecover_prehash(
+    sig: *const u8,
+    recid: u8,
+    msg: *const u8,
+    out: *mut u8,
+) -> u8 {
+    let sig: &[u8; 64] = &*(sig as *const [u8; 64]);
+    let msg: &[u8; 32] = &*(msg as *const [u8; 32]);
+    match jeth_core::inline_ecrecover(sig, recid, msg) {
+        Some(hash) => {
+            core::ptr::copy_nonoverlapping(hash.as_ptr(), out, 32);
+            1
+        }
+        None => 0,
+    }
+}
+
 /// `once_cell`'s critical-section backend (via reth-primitives-traits) needs a
 /// [`critical_section::Impl`]. The Jolt guest is a single hart with no interrupts,
 /// so acquire/release are no-ops.

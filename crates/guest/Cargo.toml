@@ -40,8 +40,13 @@ zeroos-allocator-linked-list = { path = "../alloc-o1" }
 
 # Word-wise Stack::exchange (SWAP1-16 measured at 16.9% of trace rows via the
 # untyped byte-swap codegen). One-function patch; see crates/vendor/README.
+#
+# alloy-eip7702: EIP-7702 authority recovery routed through the Jolt secp256k1
+# inline via the guest's jeth_ecrecover_prehash hook (software k256 measured at
+# ~1.5M rows/authorization — 16% of block 25698070; the inline is ~230k).
 [patch.crates-io]
 revm-interpreter = { path = "../vendor/revm-interpreter" }
+alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 
 [profile.release]
 opt-level = 3

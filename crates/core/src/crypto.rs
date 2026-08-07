@@ -39,9 +39,59 @@ const SQRT_EXP: [u64; 4] = [
     0x3FFFFFFFFFFFFFFF,
 ];
 
-/// Install the Jolt-accelerated crypto provider (call once at guest start).
+/// Install the Jolt-accelerated crypto providers (call once at guest start):
+/// revm's `Crypto` (ecrecover precompile) AND alloy-consensus's pluggable
+/// `CryptoProvider` backend — the latter covers EIP-7702 authority recovery
+/// (alloy-evm's `TxEnv` conversion calls
+/// `alloy_consensus::crypto::secp256k1::recover_signer` per authorization;
+/// software k256 measured ~1.5M rows/authorization vs ~230k inline — 16% of
+/// block 25698070).
 pub fn install_jolt_crypto() -> bool {
-    reth_evm::revm::precompile::install_crypto(JoltCrypto)
+    let consensus_ok = alloy_consensus::crypto::backend::install_default_provider(
+        alloc::sync::Arc::new(JoltCryptoProvider),
+    )
+    .is_ok();
+    reth_evm::revm::precompile::install_crypto(JoltCrypto) && consensus_ok
+}
+
+/// alloy-consensus pluggable crypto backend routing signature recovery through
+/// the Jolt secp256k1 inline.
+///
+/// Parity notes vs the k256 compile-time backend it replaces:
+/// - `recover_from_prehash` recovers with the given (r, s, recid) directly;
+///   [`inline_ecrecover`] normalizes high-s and flips the recovery parity —
+///   an identity transformation (Q = r⁻¹(sR − zG) is invariant under
+///   (s, R) → (n−s, −R)), so accept/reject sets and outputs coincide.
+/// - v ∈ {2,3} (x-reduced r) is handled identically (r + n, reject ≥ p).
+#[derive(Debug)]
+struct JoltCryptoProvider;
+
+impl alloy_consensus::crypto::backend::CryptoProvider for JoltCryptoProvider {
+    fn recover_signer_unchecked(
+        &self,
+        sig: &[u8; 65],
+        msg: &[u8; 32],
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        let sig64: &[u8; 64] = sig[..64].try_into().unwrap();
+        inline_ecrecover(sig64, sig[64], msg)
+            .map(|hash| alloy_primitives::Address::from_slice(&hash[12..]))
+            .ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+    }
+
+    fn verify_and_compute_signer_unchecked(
+        &self,
+        pubkey: &[u8; 65],
+        sig: &[u8; 64],
+        msg: &[u8; 32],
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        let signature = alloy_primitives::Signature::new(
+            U256::from_be_slice(&sig[..32]),
+            U256::from_be_slice(&sig[32..]),
+            false, // parity is irrelevant for verification against a known key
+        );
+        crate::recover::inline_verify_pubkey(pubkey, &signature, B256::from_slice(msg))
+            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())
+    }
 }
 
 #[derive(Debug)]
@@ -59,7 +109,11 @@ impl Crypto for JoltCrypto {
     }
 }
 
-fn inline_ecrecover(sig: &[u8; 64], mut recid: u8, msg: &[u8; 32]) -> Option<[u8; 32]> {
+/// Recover `keccak(pubkey)` from a prehash signature via the Jolt secp256k1
+/// inline — k256 backend semantics exactly (see module docs). Public so the
+/// guest binary can expose it to the vendored alloy-eip7702 (EIP-7702
+/// authority recovery) through an `extern "C"` hook.
+pub fn inline_ecrecover(sig: &[u8; 64], mut recid: u8, msg: &[u8; 32]) -> Option<[u8; 32]> {
     // Parse r, s — canonical (< n) and nonzero, like k256's Signature::from_slice.
     let r_int = U256::from_be_slice(&sig[..32]);
     let mut s_int = U256::from_be_slice(&sig[32..]);
