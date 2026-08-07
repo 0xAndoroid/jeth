@@ -1,9 +1,11 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
-**Headline (after the optimization campaign): recent mainnet blocks validate inside the
-Jolt RV64IMAC guest at 34.5–42.7 cycles/gas fully self-verifying, 28.0–36.9 cycles/gas
-with trusted-advice witness digests — down from 62–85 at v1 (2.0–2.4× fewer rows), and
-from 513 before the allocator fix (12–15× total).**
+**Headline (after optimization campaign 2, 2026-08-06 late): recent mainnet blocks
+validate inside the Jolt RV64IMAC guest at 30.7–33.0 cycles/gas fully self-verifying,
+24.3–26.5 cycles/gas with trusted-advice witness digests — down from 34.5–42.7 / 28.0–36.9
+at the campaign-1 checkpoint, 62–85 at v1, and 513 before the allocator fix (~16× total).
+Cross-block variance collapsed (worst block 42.7 → 33.0): the outlier was two EIP-7702
+batch txs recovering ~260 authorities through software k256.**
 
 Run date: 2026-08-06. First published Jolt-zkVM full-EVM-block numbers. All runs on an
 Apple M4 (10-core, 16 GB), tracer = Jolt branch `merge-1717-main` @ `af1c2aef5c`,
@@ -17,15 +19,18 @@ signatures verified in-guest against host-recovered pubkeys (soundness-equivalen
 ecrecover, cheaper). Every guest output hash matched an independent native
 `stateless_validation` run bit-for-bit on every block and every configuration.
 
-## Current numbers (5 recent mainnet blocks, 2026-08-06)
+## Current numbers (5 recent mainnet blocks, 2026-08-06 late)
 
 | block | gas used | txs | **self-verifying c/g** | rows | **trusted-digests c/g** | rows |
 |---|---|---|---|---|---|---|
-| 25698189 | 41,932,456 | 415 | **34.49** | 1,446.3M | **27.97** | 1,172.8M |
-| 25697951 | 43,118,232 | 331 | 36.21 | 1,561.4M | 30.42 | 1,311.4M |
-| 25698026 | 31,842,749 | 483 | 37.14 | 1,182.7M | 30.12 | 959.2M |
-| 25698070 | 57,999,343 | 1312 | 42.69 | 2,476.3M | 36.93 | 2,142.1M |
-| 25698208 | 56,690,935 | 1291 | 36.19 | 2,051.7M | 30.68 | 1,739.5M |
+| 25698189 | 41,932,456 | 415 | **30.74** | 1,289.1M | **24.26** | 1,017.3M |
+| 25697951 | 43,118,232 | 331 | 31.87 | 1,374.3M | 26.11 | 1,125.7M |
+| 25698026 | 31,842,749 | 483 | 33.02 | 1,051.6M | 26.04 | 829.2M |
+| 25698070 | 57,999,343 | 1312 | 32.29 | 1,872.5M | 26.53 | 1,538.9M |
+| 25698208 | 56,690,935 | 1291 | 31.99 | 1,813.5M | 26.50 | 1,502.1M |
+
+Campaign-1 checkpoint for comparison: 34.49 / 36.21 / 37.14 / 42.69 / 36.19 self;
+27.97 / 30.42 / 30.12 / 36.93 / 30.68 trusted.
 
 - **Self-verifying** (`jeth trace`): everything proven from committed input alone — the
   headline configuration.
@@ -55,6 +60,26 @@ ecrecover, cheaper). Every guest output hash matched an independent native
 | + trusted-digest reveal (opt-in) | reveal keccak (81,198 perms) skipped via advice | 1,173M | **28.0** |
 
 \* v0 extrapolated from the 58M-gas block ratio; the allocator finding was measured there (29.76B → 4.94B).
+
+## Campaign 2 ladder (2026-08-06 late, block 25698189 self-verifying)
+
+| step | mechanism | rows | c/g |
+|---|---|---|---|
+| campaign-1 checkpoint | | 1,446.3M | 34.49 |
+| + EIP-7702 authority → secp inline | alloy-consensus `crypto-backend` CryptoProvider + vendored alloy-eip7702 [patch]; software k256 was ~1.5M rows/authorization | 1,423.2M | 33.94 |
+| + zero-copy MPT decode (vendored zeth-mpt fork) | leaf values = `Bytes::slice_ref` views into witness bytes | 1,422.3M | 33.92 |
+| + **word-RMW mem overrides** | boundary bytes via ld+mask+sd instead of byte loops (`sb` ≈ 12 rows in Jolt); memcpy family 276M → ~140M | 1,288.7M | 30.73 |
+| whale block 25698070 (same steps compound) | 7702 −386.9M, memcpy −217M | 2,476.3M → 1,872.5M | 42.69 → **32.29** |
+
+**Negative results, measured and reverted (kept in git history / stash):**
+- `Box<Children>` node-shrink: +142M rows. Index-arena rewrite (u32 ids, parallel
+  cache vec, 17/17 tests pass): +155M rows. Both foundered on the same misread:
+  the "decode memcpy storm" was never move volume — it was the old override's
+  ~140-row per-call byte-loop alignment overhead (~196 rows/call average over
+  1.41M calls). Smaller-but-more copies made it worse; fixing the override fixed
+  it everywhere. Arena kept in `git stash` for a post-R5 world.
+- Lazy bytecode analysis (R2): analyze_legacy rows bit-identical (witness codes
+  ≈ executed codes); +62.7M from outlined `IndexMap::get`. Dead.
 
 **The two structural insights of the campaign:**
 1. **Jolt expands every sub-word (byte/half) memory access into a multi-row virtual
@@ -149,6 +174,21 @@ keccak-f rework. Conservative R4 (1.2k rows/perm) + R1 + R5 + R3 + 7702 + R7 ≈
 ~25–27 c/g — no path to 17 without R4. Same stack takes trusted-digests
 28.0 → **13–15 c/g**.
 
+## Advice leverage (untrusted runtime advice — "prover computes, guest verifies")
+
+Survey of where Jolt's untrusted-advice machinery (`#[jolt::advice]` two-pass:
+compute_advice build writes the tape, proving build reads it via ~1-row
+`AdviceReader` loads + `check_advice!` VirtualAssertEQ) can shave rows without
+changing the proof statement. Measured against block 25698189 post-campaign-2:
+
+| candidate | verdict | why |
+|---|---|---|
+| RLP/MPT structure advice (node boundaries, field offsets) | **not exploitable** | verifying a claimed RLP header at an offset = reading the same header bytes the parser reads; the actual decode cost was alignment overhead (fixed by word-RMW) + per-child recursion, not scanning. Zero-copy + override supersede. |
+| Trie-traversal / storage-slot position advice | **not exploitable** | a Merkle lookup's verification IS the root-anchored walk; `get` is already ~free post-reveal, and reveal work is witness-bounded. Advising positions saves the compare-free walk but still pays node decode + hash — the actual costs. |
+| Verify-by-multiply for U256 division | **not worth it** | Jolt's hardware DIV/REM is already advice-backed (division virtual sequence). Out-of-line `div_rem` = 1.27M rows (0.1%), mostly MULMOD's 512÷256 reduction; advice (q,r) + 256×256 mul check ≈ half of ~1M. Skip. |
+| Advice-carried jump tables (R7) | **exploitable — next up** | `analyze_legacy` = 39.7M rows (3.1%). Sound WITHOUT in-guest verification: a wrong table bit either never influences execution or diverges a consensus-checked output (receipts/gas/state root) → panic → no proof. Needs the two-pass harness in trace.rs (compute_advice ELF + tape plumbing); est −35–40M, ~1 day incl. harness. |
+| keccak via advice | **impossible by construction** | verification = recomputation for a hash. The trusted-digests variant is the honest version of this trade (verifier-attested digests), already shipped. |
+
 ## Quartering plan — status and remainder
 
 Target set by user: ~10 c/g (≈420M rows for block 25698189). Achieved so far: 41.7 →
@@ -158,7 +198,7 @@ mem overrides, trusted-digest reveal. Ranked remainder:
 | # | item | est. saving (self) | effort | mechanism / notes |
 |---|---|---|---|---|
 | R1 | Zero-copy / nibble-packed zeth-mpt fork | −180–220M (−4–5 c/g) | days | Nodes reference witness `Bytes` ranges instead of owned copies; nibble paths packed 2/byte and manipulated word-wise; encode into reused arena buffers. Attacks the 129M decode-memcpy + 66M decode + 41M encode + drops. |
-| R2 | Lazy bytecode analysis | −25–40M (−0.8 c/g) | hours | Defer `analyze_legacy` to first execution per code (upstream stateless HEAD does this; needs witness_db fork since the map type is fixed by the trait). |
+| R2 | ~~Lazy bytecode analysis~~ | **measured dead** | — | witness codes ≈ executed codes (analyze rows bit-identical); +62.7M regression. Replaced by R7. |
 | R3 | revm interpreter fat | −50–70M (−1.5 c/g) | days | Remaining push/dup/mload/mstore + dispatch + gas-accounting paths; same typed-copy discipline as the SWAP fix. Diminishing returns. |
 | R4 | **Jolt-level: cheaper keccak-f inline** | −280–340M self / −60–90M trusted (−7–8 c/g) | upstream | 3,383 rows/perm today. A tighter virtual sequence or lookup-table-native keccak (SP1/risc0 precompiles land ≪1k row-equivalents) is the single biggest remaining lever. Benefits every Jolt EVM/storage workload. |
 | R5 | Jolt-level: memcpy/memmove inline | −120–180M (−3–4 c/g) | upstream | Word-streaming copy instruction; kills residual memcpy + the copy halves of decode/encode. |
