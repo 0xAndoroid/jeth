@@ -5312,6 +5312,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-trie",
  "arrayvec",
+ "jolt-sdk",
 ]
 
 [[package]]

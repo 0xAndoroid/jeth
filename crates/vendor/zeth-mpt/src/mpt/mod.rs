@@ -16,6 +16,8 @@
 
 use alloc::vec::Vec;
 use alloy_primitives::{keccak256, map::B256IndexMap, Bytes, B256};
+#[allow(unused_imports)]
+use alloc::vec;
 use alloy_trie::Nibbles;
 use children::Children;
 use core::{cmp::PartialEq, fmt::Debug};
@@ -23,6 +25,7 @@ use memoize::{Cache, NoCache};
 use nibbles::NibbleSlice;
 use node::Node;
 
+mod advice;
 mod children;
 
 mod memoize;
@@ -350,7 +353,10 @@ impl CachedTrie {
     #[inline]
     pub fn hash(&mut self) -> B256 {
         *self.hash.get_or_insert_with(|| {
-            self.inner.memoize();
+            // Phase 3a: dirty nodes encode into one reused scratch buffer
+            // (single-pass, sealed length advice) instead of per-node Vecs.
+            let mut scratch = alloc::vec![0u8; rlp::MAX_NODE_ENCODING];
+            self.inner.memoize_arena(&mut scratch);
             self.inner.hash()
         })
     }

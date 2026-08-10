@@ -22,7 +22,7 @@ premeasure = ["zeth-mpt/premeasure"]
 # Advice two-pass, pass-1 build: #[cfg] resolves in the DEFINING crate, so the
 # feature lives here and the guest forwards it. Pass-1 ELF runs advice bodies
 # and writes the tape; the proven ELF reads it (crates/core/src/advice.rs).
-compute_advice = []
+compute_advice = ["zeth-mpt/compute_advice"]
 
 [dependencies]
 stateless.workspace = true

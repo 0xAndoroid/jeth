@@ -28,9 +28,16 @@ arrayvec = { version = "0.7", default-features = false }
 
 # Inert feature names (upstream cfg_attr gates reference them; never enabled).
 [features]
+# Advice two-pass, pass-1 build (arena-encoder length advice — Phase 3a).
+# The cfg resolves in the defining crate; jeth-core forwards it.
+compute_advice = []
 # §8.1 pre-measurement counters (native runs only; never in guest builds).
 premeasure = []
 serde = []
 rkyv = []
 orphan = []
 rlp_serialize = []
+
+# Advice tape IO intrinsics; riscv64-only (native builds never touch jolt-sdk).
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk", default-features = false }

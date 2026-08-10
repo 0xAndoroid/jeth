@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{
+    advice::{advice_assert_eq, advice_u64},
     children::{Children, Entry},
     memoize::Memoization,
     node::Node,
@@ -26,6 +27,53 @@ use core::fmt;
 
 /// The length in bytes of an RLP-encoded digest, i.e. hash length + 1 byte for the RLP header.
 const DIGEST_RLP_LENGTH: usize = 1 + B256::len_bytes();
+
+/// Scratch capacity for the arena encoder — a branch is ≤ 3 + 17×33 = 564 B,
+/// leaves ≤ path 34 + value item ≈ 150 B; 1 KiB leaves ample margin. The
+/// capacity assert turns a (dishonest) oversized claim into a refusal.
+pub(super) const MAX_NODE_ENCODING: usize = 1024;
+
+/// Write an RLP list header for `payload_len` at `buf[0..]`; returns its size.
+/// Mirrors `alloy_rlp::Header::encode` for lists (payloads here ≤ 1 KiB).
+#[inline(always)]
+fn write_list_header(buf: &mut [u8], payload_len: usize) -> usize {
+    if payload_len < 56 {
+        buf[0] = 0xc0 + payload_len as u8;
+        1
+    } else if payload_len < 256 {
+        buf[0] = 0xf8;
+        buf[1] = payload_len as u8;
+        2
+    } else {
+        buf[0] = 0xf9;
+        buf[1] = (payload_len >> 8) as u8;
+        buf[2] = payload_len as u8;
+        3
+    }
+}
+
+/// Append `bytes` as an RLP string item (canonical: single bytes < 0x80 are
+/// their own encoding). Mirrors `alloy_rlp`'s `[u8]` Encodable.
+#[inline(always)]
+fn write_str_item(buf: &mut [u8], cursor: &mut usize, bytes: &[u8]) {
+    let len = bytes.len();
+    if len == 1 && bytes[0] < 0x80 {
+        buf[*cursor] = bytes[0];
+        *cursor += 1;
+        return;
+    }
+    if len < 56 {
+        buf[*cursor] = 0x80 + len as u8;
+        *cursor += 1;
+    } else {
+        debug_assert!(len < 256);
+        buf[*cursor] = 0xb8;
+        buf[*cursor + 1] = len as u8;
+        *cursor += 2;
+    }
+    buf[*cursor..*cursor + len].copy_from_slice(bytes);
+    *cursor += len;
+}
 
 /// jeth (advice-trie): digest→bytes resolution callback for trie hydration.
 ///
@@ -93,6 +141,7 @@ impl<M: Memoization> Node<M> {
     }
 
     /// Memoize the hash of every sub-trie.
+    #[allow(dead_code)] // superseded by memoize_arena (kept for upstream parity)
     pub(super) fn memoize(&mut self) {
         // early termination for already memoized nodes or Null/Digest
         match self {
@@ -115,6 +164,96 @@ impl<M: Memoization> Node<M> {
         match self {
             Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => {
                 cache.set(RlpNode::from_rlp(rlp));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// jeth (advice-trie Phase 3a): [`Self::memoize`] with dirty nodes encoded
+    /// into one reused scratch buffer — single pass, no per-node `Vec`, no
+    /// dyn-`BufMut` dispatch. The payload length is UNTRUSTED ADVICE written
+    /// ahead of the header and sealed by `cursor_delta == claimed` right after
+    /// the parts are written, BEFORE the bytes are hashed / consumed by the
+    /// parent (L2: every advice value is locally verified). The capacity
+    /// assert closes the overstated-length gap; slice indexing bounds-panics
+    /// close the understated one (both = refusal, no proof).
+    pub(super) fn memoize_arena(&mut self, scratch: &mut [u8]) {
+        // early termination for already memoized nodes or Null/Digest
+        match self {
+            Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache)
+                if cache.get().is_some() =>
+            {
+                return;
+            }
+            Node::Null | Node::Digest(_) => return,
+            _ => {}
+        }
+        match self {
+            Node::Extension(_, child, _) => child.memoize_arena(scratch),
+            Node::Branch(children, _) => children.memoize_arena(scratch),
+            _ => {}
+        }
+
+        let claimed = advice_u64!(self.encoded_payload_length() as u64) as usize;
+        assert!(claimed + 3 <= MAX_NODE_ENCODING, "MPT: node encoding too large");
+        let header_len = write_list_header(scratch, claimed);
+        let mut cursor = header_len;
+        match &*self {
+            Node::Leaf(prefix, value, _) => {
+                let path = encode_path_leaf(prefix, true);
+                write_str_item(scratch, &mut cursor, &path);
+                write_str_item(scratch, &mut cursor, value);
+            }
+            Node::Extension(prefix, child, _) => {
+                let path = encode_path_leaf(prefix, false);
+                write_str_item(scratch, &mut cursor, &path);
+                write_child_ref(scratch, &mut cursor, child);
+            }
+            Node::Branch(children, _) => {
+                for child in children.iter() {
+                    match child {
+                        Some(node) => write_child_ref(scratch, &mut cursor, node),
+                        None => {
+                            scratch[cursor] = EMPTY_STRING_CODE;
+                            cursor += 1;
+                        }
+                    }
+                }
+                // EMPTY_STRING_CODE for the missing branch value
+                scratch[cursor] = EMPTY_STRING_CODE;
+                cursor += 1;
+            }
+            _ => unreachable!(),
+        }
+        // seal the claimed length before the bytes are consumed
+        advice_assert_eq!((cursor - header_len) as u64, claimed as u64);
+        let rlp_node = RlpNode::from_rlp(&scratch[..cursor]);
+        self.cache_set(rlp_node);
+    }
+
+    /// Exact RLP payload length of this node (children must be memoized —
+    /// guaranteed by the post-order arena walk). Pass-1 / native only: the
+    /// proven pass reads this value from the advice tape.
+    #[allow(dead_code)] // proven riscv64 ELF reads the tape instead
+    fn encoded_payload_length(&self) -> usize {
+        match self {
+            Node::Leaf(prefix, value, _) => {
+                let path = encode_path_leaf(prefix, true);
+                str_item_length(&path) + str_item_length(value)
+            }
+            Node::Extension(prefix, child, _) => {
+                let path = encode_path_leaf(prefix, false);
+                str_item_length(&path) + NodeRef::from_node(child).length()
+            }
+            Node::Branch(children, _) => {
+                let mut payload_length = 1; // EMPTY_STRING_CODE value slot
+                for child in children.iter() {
+                    payload_length += match child {
+                        Some(node) => NodeRef::from_node(node).length(),
+                        None => 1,
+                    };
+                }
+                payload_length
             }
             _ => unreachable!(),
         }
@@ -409,6 +548,53 @@ pub(super) fn decode_node_zc_exact<M: Memoization>(source: &Bytes) -> alloy_rlp:
         return Err(alloy_rlp::Error::UnexpectedLength);
     }
     Ok(node)
+}
+
+/// Append a child reference (post-order-memoized: cached / digest / null).
+/// Mirrors `NodeRef::encode` without the dyn-`BufMut` dispatch.
+#[inline(always)]
+fn write_child_ref<M: Memoization>(buf: &mut [u8], cursor: &mut usize, node: &Node<M>) {
+    match NodeRef::from_node(node) {
+        NodeRef::Empty => {
+            buf[*cursor] = EMPTY_STRING_CODE;
+            *cursor += 1;
+        }
+        NodeRef::Digest(digest) => {
+            buf[*cursor] = 0xa0;
+            buf[*cursor + 1..*cursor + 33].copy_from_slice(digest.as_slice());
+            *cursor += 33;
+        }
+        NodeRef::Cached(rlp_node) => {
+            let bytes = rlp_node.0.as_slice();
+            buf[*cursor..*cursor + bytes.len()].copy_from_slice(bytes);
+            *cursor += bytes.len();
+        }
+        // cold: unmemoized non-digest child (unreachable after the post-order
+        // walk, kept for NodeRef semantic parity)
+        NodeRef::Rlp(rlp) => {
+            if rlp.len() >= B256::len_bytes() {
+                buf[*cursor] = 0xa0;
+                buf[*cursor + 1..*cursor + 33].copy_from_slice(keccak256(&rlp).as_slice());
+                *cursor += 33;
+            } else {
+                buf[*cursor..*cursor + rlp.len()].copy_from_slice(&rlp);
+                *cursor += rlp.len();
+            }
+        }
+    }
+}
+
+/// RLP string-item length of `bytes` (mirrors alloy's `[u8]::length`).
+#[inline(always)]
+fn str_item_length(bytes: &[u8]) -> usize {
+    let len = bytes.len();
+    if len == 1 && bytes[0] < 0x80 {
+        1
+    } else if len < 56 {
+        1 + len
+    } else {
+        2 + len
+    }
 }
 
 /// An RLP-encoded node.

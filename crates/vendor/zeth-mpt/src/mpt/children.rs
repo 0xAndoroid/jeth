@@ -179,8 +179,18 @@ impl<M> Children<M> {
 
 impl<M: Memoization> Children<M> {
     #[inline]
+    #[allow(dead_code)] // superseded by memoize_arena (kept for upstream parity)
     pub(super) fn memoize(&mut self) {
         self.0.iter_mut().flatten().for_each(|child| child.memoize())
+    }
+
+    /// jeth (advice-trie Phase 3a): [`Self::memoize`] through the reused
+    /// arena scratch buffer.
+    pub(super) fn memoize_arena(&mut self, scratch: &mut [u8]) {
+        self.0
+            .iter_mut()
+            .flatten()
+            .for_each(|child| child.memoize_arena(scratch))
     }
 }
 
