@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+pub mod advice;
 mod chainspec;
 #[cfg(feature = "secp-inline")]
 mod crypto;

@@ -32,6 +32,10 @@ fn keccak_stats(_label: &str) {}
 
 /// Shared body: deserialize (measured), verify signatures, validate statelessly.
 fn run_validation(bytes: &[u8]) -> ValidationResult {
+    // Advice-tape alignment sentinel: panics immediately on a missing tape or
+    // mismatched compute/proven ELF pair (~6 rows).
+    jeth_core::advice::advice_smoke();
+
     // Route the EVM ecrecover precompile through the secp256k1 inline.
     jeth_core::install_jolt_crypto();
 

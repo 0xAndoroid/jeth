@@ -15,6 +15,9 @@ guest = []
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
 lazy = ["jeth-core/lazy-analysis"]
+# Advice two-pass, pass-1 build (see jeth-core/compute_advice). The two builds
+# are different ELFs; trace.rs builds and runs both.
+compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
@@ -47,6 +50,10 @@ zeroos-allocator-linked-list = { path = "../alloc-o1" }
 [patch.crates-io]
 revm-interpreter = { path = "../vendor/revm-interpreter" }
 alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
+# Fixed foldhash seeds (design law L5): hashbrown iteration order must be
+# identical across the compute_advice/proven ELF pair — upstream seeds from
+# stack/fn/static addresses, which differ between two ELFs. Guest-only patch.
+foldhash = { path = "../vendor/foldhash" }
 
 # zeth-mpt fork: boxed branch children + zero-copy decode (Bytes::slice_ref
 # views into witness node bytes) — decode-driven struct moves + value copies

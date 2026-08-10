@@ -165,6 +165,56 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
     Ok(blob)
 }
 
+/// Build (unless `skip_build` and both ELFs exist) the proven + `compute_advice`
+/// ELF pair, run pass 1 (full emulation of the compute ELF — writes the advice
+/// tape; its rows never count), and return the tape positioned for reading.
+///
+/// Advice-trie two-pass (spec §6): jeth drives builds itself, so the SDK's
+/// automatic two-pass does not apply. The two builds are DIFFERENT ELFs with
+/// the same `JOLT_FUNC_NAME`; a forgotten tape panics the proven pass at the
+/// smoke sentinel.
+pub fn advice_pass1(
+    variant: Variant,
+    extra_features: &[&str],
+    skip_build: bool,
+    input_stream: &[u8],
+    trusted_stream: &[u8],
+) -> Result<tracer::AdviceTape> {
+    let compute_features: Vec<&str> = extra_features
+        .iter()
+        .copied()
+        .chain(["compute_advice"])
+        .collect();
+    let compute_elf_file = elf_path_with(variant, &compute_features);
+    if !skip_build || !compute_elf_file.exists() {
+        build_guest_features(variant, &compute_features)?;
+    }
+    let compute_elf = std::fs::read(&compute_elf_file).context("reading compute-advice ELF")?;
+    let memory_config = memory_config(&compute_elf, variant);
+
+    println!("advice pass 1 (compute_advice ELF, full emulation)...");
+    let start = Instant::now();
+    let (_, device, mut tape) = tracer::execute(
+        &compute_elf,
+        Some(&compute_elf_file),
+        input_stream,
+        &[],
+        trusted_stream,
+        &memory_config,
+        None,
+    );
+    if device.panic {
+        bail!("compute_advice pass PANICKED — advice bodies failed");
+    }
+    tape.reset_read_position();
+    println!(
+        "advice tape: {} bytes in {:.1?}",
+        tape.len(),
+        start.elapsed()
+    );
+    Ok(tape)
+}
+
 pub fn run(
     input_path: &str,
     skip_build: bool,
@@ -204,6 +254,15 @@ pub fn run(
         Variant::Trusted => (&wrapped, digest_blob.as_deref().unwrap()),
     };
 
+    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
+    let tape = advice_pass1(
+        variant,
+        extra_features,
+        skip_build,
+        input_stream,
+        trusted_stream,
+    )?;
+
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
     let memory_config = memory_config(&elf, variant);
 
@@ -219,7 +278,7 @@ pub fn run(
         &[],
         trusted_stream,
         &memory_config,
-        None,
+        Some(tape),
     );
     let wall = start.elapsed();
 

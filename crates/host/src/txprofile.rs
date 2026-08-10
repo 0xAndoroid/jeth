@@ -111,6 +111,9 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     let capture = Capture::default();
     let subscriber = tracing_subscriber::registry().with(capture.clone());
 
+    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
+    let tape = crate::trace::advice_pass1(variant, &features, skip_build, &wrapped, &[])?;
+
     println!("tracing with per-tx markers (execute-only streaming count)...");
     let start = Instant::now();
     let (trace_rows, device, _advice) = tracing::subscriber::with_default(subscriber, || {
@@ -121,7 +124,7 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
             &[],
             &[],
             &memory_config,
-            None,
+            Some(tape),
         )
     });
     let wall = start.elapsed();

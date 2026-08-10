@@ -228,7 +228,11 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
             let y = load_le_partial(b, head);
             if x != y {
                 let sh = (8 - head) * 8;
-                return if (x << sh).to_be() > (y << sh).to_be() { 1 } else { -1 };
+                return if (x << sh).to_be() > (y << sh).to_be() {
+                    1
+                } else {
+                    -1
+                };
             }
             i = head;
         }
@@ -335,7 +339,8 @@ mod tests {
             if n > 0 {
                 let flip = (xorshift(&mut rng) as usize) % n;
                 let mut other = expect;
-                other[doff + flip] = other[doff + flip].wrapping_add(1 + (xorshift(&mut rng) % 254) as u8);
+                other[doff + flip] =
+                    other[doff + flip].wrapping_add(1 + (xorshift(&mut rng) % 254) as u8);
                 let want = expect[doff..doff + n].cmp(&other[doff..doff + n]) as i32;
                 let got = unsafe { jmemcmp(dst.as_ptr().add(doff), other.as_ptr().add(doff), n) };
                 assert_eq!(got.signum(), want.signum(), "memcmp n={n} flip={flip}");
