@@ -1,15 +1,20 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
-**Headline (after optimization campaign 2, 2026-08-06 late): recent mainnet blocks
-validate inside the Jolt RV64IMAC guest at 30.7–33.0 cycles/gas fully self-verifying,
-24.3–26.5 cycles/gas with trusted-advice witness digests — down from 34.5–42.7 / 28.0–36.9
-at the campaign-1 checkpoint, 62–85 at v1, and 513 before the allocator fix (~16× total).
-Cross-block variance collapsed (worst block 42.7 → 33.0): the outlier was two EIP-7702
-batch txs recovering ~260 authorities through software k256.**
+**Headline (after optimization campaign 3 — advice-trie, 2026-08-10): recent mainnet
+blocks validate inside the Jolt RV64IMAC guest at 28.9–31.2 cycles/gas fully
+self-verifying, 22.3–24.8 cycles/gas with trusted-advice witness digests — down from
+30.7–33.0 / 24.3–26.5 after campaign 2, 34.5–42.7 at campaign 1, 62–85 at v1, and 513
+before the allocator fix. Campaign 3 replaces the eager `rlp_by_digest`-map MPT
+pipeline with untrusted runtime advice: advice-indexed digest resolution, byte-walk
+storage reads over raw witness RLP, on-demand post-root materialization, and a
+sealed-length arena encoder (all advice locally verified in-guest; trust model
+unchanged).**
 
-Run date: 2026-08-06. First published Jolt-zkVM full-EVM-block numbers. All runs on an
+Run date: 2026-08-10. First published Jolt-zkVM full-EVM-block numbers. All runs on an
 Apple M4 (10-core, 16 GB), tracer = Jolt branch `merge-1717-main` @ `af1c2aef5c`,
-execute-only streaming counts (no trace materialization, no proving).
+execute-only streaming counts (no trace materialization, no proving). Traces are
+two-pass since campaign 3: a `compute_advice` ELF populates the byte-FIFO advice tape
+(rows never counted), then the proven ELF consumes it.
 
 The guest does the complete state-transition check, not tx replay: ancestor-header chain
 verification, pre-state witness reveal against the parent state root (MPT), full tx
@@ -19,18 +24,19 @@ signatures verified in-guest against host-recovered pubkeys (soundness-equivalen
 ecrecover, cheaper). Every guest output hash matched an independent native
 `stateless_validation` run bit-for-bit on every block and every configuration.
 
-## Current numbers (5 recent mainnet blocks, 2026-08-06 late)
+## Current numbers (5 recent mainnet blocks, 2026-08-10)
 
 | block | gas used | txs | **self-verifying c/g** | rows | **trusted-digests c/g** | rows |
 |---|---|---|---|---|---|---|
-| 25698189 | 41,932,456 | 415 | **30.74** | 1,289.1M | **24.26** | 1,017.3M |
-| 25697951 | 43,118,232 | 331 | 31.87 | 1,374.3M | 26.11 | 1,125.7M |
-| 25698026 | 31,842,749 | 483 | 33.02 | 1,051.6M | 26.04 | 829.2M |
-| 25698070 | 57,999,343 | 1312 | 32.29 | 1,872.5M | 26.53 | 1,538.9M |
-| 25698208 | 56,690,935 | 1291 | 31.99 | 1,813.5M | 26.50 | 1,502.1M |
+| 25698189 | 41,932,456 | 415 | **28.87** | 1,210.4M | **22.26** | 933.5M |
+| 25697951 | 43,118,232 | 331 | 30.26 | 1,304.6M | 24.39 | 1,051.5M |
+| 25698026 | 31,842,749 | 483 | 31.17 | 992.6M | 24.06 | 766.2M |
+| 25698070 | 57,999,343 | 1312 | 30.45 | 1,766.3M | 24.59 | 1,426.5M |
+| 25698208 | 56,690,935 | 1291 | 30.36 | 1,721.4M | 24.76 | 1,403.7M |
 
-Campaign-1 checkpoint for comparison: 34.49 / 36.21 / 37.14 / 42.69 / 36.19 self;
-27.97 / 30.42 / 30.12 / 36.93 / 30.68 trusted.
+Campaign-2 checkpoint for comparison: 30.74 / 31.87 / 33.02 / 32.29 / 31.99 self
+(1,289.1M / 1,374.3M / 1,051.6M / 1,872.5M / 1,813.5M rows); 24.26 / 26.11 / 26.04 /
+26.53 / 26.50 trusted. Campaign-1: 34.49 / 36.21 / 37.14 / 42.69 / 36.19 self.
 
 - **Self-verifying** (`jeth trace`): everything proven from committed input alone — the
   headline configuration.
@@ -80,6 +86,49 @@ Campaign-1 checkpoint for comparison: 34.49 / 36.21 / 37.14 / 42.69 / 36.19 self
   it everywhere. Arena kept in `git stash` for a post-R5 world.
 - Lazy bytecode analysis (R2): analyze_legacy rows bit-identical (witness codes
   ≈ executed codes); +62.7M from outlined `IndexMap::get`. Dead.
+
+## Campaign 3 ladder — advice-first lazy trie (2026-08-10, block 25698189 self-verifying)
+
+Implements the ADVICE-TRIE spec (R1 × Jolt runtime advice, pinned `af1c2aef5c`):
+prover-computed hints on a byte-FIFO tape, every value verified in-guest at its
+consumption site (`ADVICE_LD` = 1 row; `check_advice_eq!` = 1 row). Proof statement,
+witness format, and trust model unchanged. §8.1 pre-measurements re-verified before
+implementation: witness 18,025 nodes (exact), probes 175,341 (spec ~178k), miss ratio
+8.7:1 (spec 9:1), dirty nodes 10,616 = 58.9% (spec 8.6–12k).
+
+| step | mechanism | rows | c/g |
+|---|---|---|---|
+| campaign-2 checkpoint (re-baselined bit-exact) | | 1,289.1M | 30.74 |
+| + Phase 0: two-pass advice infra | compute_advice ELF pair + tape threading; foldhash pinned to fixed seeds (L5: identical hashbrown iteration across the ELF pair); tape-alignment sentinel | 1,288.9M | 30.74 |
+| + Phase 1a: advice resolver | `rlp_by_digest` map deleted — prover advises the witness slot, guest verifies `keccak(witness[i]) == digest` against an 8-aligned memo ([u64;4] + bitmap); misses = 1 row (was ~90–320 of IndexMap traffic) | 1,261.5M | 30.08 |
+| + Phase 1b: storage-trie laziness | `storage()` byte-walks raw witness RLP (advice per level, INV-W6 decode-parity validation memoized per entry, inline children in place); tries exist only for written accounts, hydrated on demand at post-root (`insert_with`/`remove_with` resolve stubs mid-mutation, incl. collapse siblings); DET-1/2 sorted post-root iteration | 1,218.4M | 29.06 |
+| + Phase 3a: sealed arena encoder | dirty nodes encode into one reused scratch buffer — no per-node `Vec`, no dyn-`BufMut`; payload length = untrusted advice sealed by `cursor_delta == claimed` before any parent consumes the bytes | **1,210.4M** | **28.87** |
+
+Battery: self −59…−106M/block (write-heavy blocks save most — bigger witnesses and
+dirty sets); trusted −63…−112M (22.26 on the flagship). keccak perm totals never
+exceeded baseline (141,300 ≤ 141,301 — L1: advice relocates hashing build-time →
+first-touch, never multiplies it). Native gate bit-identical on every block and
+variant; tape volume is exact (probes + walk steps + dirty-length words + sentinel).
+
+**Negative result, measured and reverted (in-tree commit `87a52ff`):** Phase 2
+(state-trie laziness — account byte-walks from `pre_state_root`, lazy state trie).
+Battery vs 1b: +1.2M / −0.7M / +5.9M / **+26.5M / +27.8M** on the write-heavy pair;
+trusted +1.1M. geth witnesses are exactly the touched set, so the never-dirty state
+share is 20–30% on read-heavy blocks and vanishes on write-heavy ones (78–80% dirty):
+per-call walk re-authentication plus one-node-at-a-time post-root `resolve_stub`
+loses to the single-pass eager build through the resolver. The eager storage-trie
+build had no such offset (its nodes were majority never-dirty) — laziness pays for
+storage, not for the state trie. Phase 3b (build-plan linear loop) not attempted: its
+substrate is the spec §2 flat-arena node repr, which campaign 2 measured at +155M
+(pre-word-RMW; stash) — the remaining ~70–85M decode-side pool is the re-test target
+if that gamble is ever taken.
+
+Spec scorecard: Phase 1a beat its band (−27.5M vs −18…−25M); 1b landed −43M against a
+"bulk" label that assumed the arena repr; 3a under band (−8M vs −28…−40M — post
+word-RMW there was less alloc/dispatch fat than assumed); composite −78.7M on the
+flagship vs the spec's −240…−320M target — the gap is exactly the unbuilt arena repr
+and the reverted state laziness. App-side self-verifying floor now reads ~27–28.5 c/g
+without the arena-repr gamble (was estimated 25–27 with it).
 
 **The two structural insights of the campaign:**
 1. **Jolt expands every sub-word (byte/half) memory access into a multi-row virtual
