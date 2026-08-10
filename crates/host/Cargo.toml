@@ -7,6 +7,10 @@ edition.workspace = true
 name = "jeth"
 path = "src/main.rs"
 
+[features]
+# §8.1 pre-measurement report after run-native (see jeth-core/premeasure).
+premeasure = ["jeth-core/premeasure"]
+
 [dependencies]
 jeth-core.workspace = true
 

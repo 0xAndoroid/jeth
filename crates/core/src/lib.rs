@@ -14,6 +14,8 @@ mod chainspec;
 mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
+#[cfg(feature = "premeasure")]
+pub mod premeasure;
 mod recover;
 pub mod validation;
 mod zeth_trie;
@@ -21,7 +23,7 @@ mod zeth_trie;
 pub use zeth_trie::set_trusted_digests;
 
 #[cfg(feature = "secp-inline")]
-pub use crypto::{install_jolt_crypto, inline_ecrecover};
+pub use crypto::{inline_ecrecover, install_jolt_crypto};
 
 use alloc::{sync::Arc, vec::Vec};
 use reth_ethereum_primitives::Block;

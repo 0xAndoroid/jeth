@@ -179,6 +179,8 @@ impl SparseState {
 
         let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::STATE_BUILD.record();
 
         // hash all the supplied bytecode (or adopt trusted hashes); analysis is
         // deferred per the CodeMap policy.
@@ -250,6 +252,8 @@ impl StatelessTrie for SparseState {
         // construct the state trie from the witness data and the given state root
         let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::STATE_BUILD.record();
 
         // hash all the supplied bytecode (or adopt trusted hashes)
         let bytecode = match trusted {
@@ -310,6 +314,8 @@ impl StatelessTrie for SparseState {
 
     /// Computes the new state root from the HashedPostState.
     fn calculate_state_root(&mut self, state: HashedPostState) -> Result<B256, StatelessTrieError> {
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::EXEC_END.record();
         let mut removed_accounts = Vec::new();
         for (hashed_address, account) in state.accounts {
             // nonexisting accounts must be removed from the state
@@ -358,6 +364,11 @@ impl StatelessTrie for SparseState {
             .iter()
             .for_each(|hashed_address| self.remove_account(hashed_address));
 
-        Ok(self.state.hash())
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::PRE_STATE_HASH.record();
+        let root = self.state.hash();
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::POST_ROOT.record();
+        Ok(root)
     }
 }

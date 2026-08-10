@@ -207,6 +207,8 @@ fn run_native(input_path: &str) -> Result<()> {
     let number = input.block.header.number;
     let header_gas = input.block.header.gas_used;
     let txs = input.block.body.transactions.len();
+    #[cfg(feature = "premeasure")]
+    let witness_nodes = input.witness.state.len();
     println!("block {number}: {txs} txs, {header_gas} gas (header)");
 
     let start = Instant::now();
@@ -219,5 +221,39 @@ fn run_native(input_path: &str) -> Result<()> {
         alloy_primitives::hex::encode(result.block_hash),
         result.gas_used,
     );
+    #[cfg(feature = "premeasure")]
+    {
+        use jeth_core::premeasure as pm;
+        let [sb, ee, ph, pr] = [
+            pm::STATE_BUILD.get(),
+            pm::EXEC_END.get(),
+            pm::PRE_STATE_HASH.get(),
+            pm::POST_ROOT.get(),
+        ];
+        let d = |a: [u64; 4], b: [u64; 4]| [b[0] - a[0], b[1] - a[1], b[2] - a[2], b[3] - a[3]];
+        let (exec, post_storage, state_hash) = (d(sb, ee), d(ee, ph), d(ph, pr));
+        println!("premeasure: witness_state_nodes={witness_nodes}");
+        println!(
+            "  state_build:         probes={} hits={} decodes={} memo={}",
+            sb[0], sb[1], sb[2], sb[3]
+        );
+        println!(
+            "  exec storage builds: probes={} hits={} decodes={} memo={}",
+            exec[0], exec[1], exec[2], exec[3]
+        );
+        println!(
+            "  post_root storage:   probes={} hits={} decodes={} dirty_storage_nodes={}",
+            post_storage[0], post_storage[1], post_storage[2], post_storage[3]
+        );
+        println!("  post_root state:     dirty_state_nodes={}", state_hash[3]);
+        println!(
+            "  TOTALS: probes={} hits={} decodes={} dirty_nodes={} dirty/witness={:.1}%",
+            pr[0],
+            pr[1],
+            pr[2],
+            pr[3],
+            100.0 * pr[3] as f64 / witness_nodes as f64
+        );
+    }
     Ok(())
 }

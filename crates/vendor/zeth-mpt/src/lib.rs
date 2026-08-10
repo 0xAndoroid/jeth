@@ -25,4 +25,6 @@ mod mpt;
 
 #[cfg(feature = "orphan")]
 pub use mpt::orphan;
+#[cfg(feature = "premeasure")]
+pub use mpt::premeasure;
 pub use mpt::{CachedTrie, Trie, EMPTY_ROOT_HASH};

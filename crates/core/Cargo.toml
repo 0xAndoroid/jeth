@@ -17,6 +17,8 @@ pertx-markers = ["guest-instrument"]
 # Defer bytecode analysis to first execution instead of analyzing every witness
 # code up front (upstream stateless HEAD behavior).
 lazy-analysis = []
+# §8.1 pre-measurement counters + phase snapshots (native runs only).
+premeasure = ["zeth-mpt/premeasure"]
 
 [dependencies]
 stateless.workspace = true

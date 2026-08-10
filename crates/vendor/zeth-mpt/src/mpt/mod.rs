@@ -30,6 +30,8 @@ mod nibbles;
 mod node;
 #[cfg(feature = "orphan")]
 pub mod orphan;
+#[cfg(feature = "premeasure")]
+pub mod premeasure;
 #[cfg(feature = "rkyv")]
 mod rkyv;
 mod rlp;

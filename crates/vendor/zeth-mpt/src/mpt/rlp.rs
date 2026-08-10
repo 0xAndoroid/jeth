@@ -98,6 +98,8 @@ impl<M: Memoization> Node<M> {
             Node::Branch(children, _) => children.memoize(),
             _ => {} // no children to memoize for Leaf, Null, or Digest
         }
+        #[cfg(feature = "premeasure")]
+        super::premeasure::count(&super::premeasure::MEMO_ENCODES);
         let rlp = self.rlp_encoded();
         match self {
             Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => {
@@ -203,10 +205,16 @@ impl<M: Memoization> Node<M> {
                 }
             }
             Node::Digest(digest) => {
+                #[cfg(feature = "premeasure")]
+                super::premeasure::count(&super::premeasure::PROBES);
                 if let Some(bytes) = rlp_by_digest.get(digest) {
+                    #[cfg(feature = "premeasure")]
+                    super::premeasure::count(&super::premeasure::HITS);
                     let mut node: Node<M> = alloy_rlp::decode_exact(bytes.as_ref())?;
                     // do not try to replace a node by a digest
                     if !matches!(node, Node::Digest(_)) {
+                        #[cfg(feature = "premeasure")]
+                        super::premeasure::count(&super::premeasure::DECODES);
                         node.cache_set(RlpNode::from_digest(digest));
                         *self = node;
                         self.resolve_digests(rlp_by_digest)?;
@@ -241,10 +249,16 @@ impl<M: Memoization> Node<M> {
                 }
             }
             Node::Digest(digest) => {
+                #[cfg(feature = "premeasure")]
+                super::premeasure::count(&super::premeasure::PROBES);
                 if let Some(bytes) = rlp_by_digest.get(digest) {
+                    #[cfg(feature = "premeasure")]
+                    super::premeasure::count(&super::premeasure::HITS);
                     let mut node: Node<M> = decode_node_zc_exact(bytes)?;
                     // do not try to replace a node by a digest
                     if !matches!(node, Node::Digest(_)) {
+                        #[cfg(feature = "premeasure")]
+                        super::premeasure::count(&super::premeasure::DECODES);
                         node.cache_set(RlpNode::from_digest(digest));
                         *self = node;
                         self.resolve_digests_zc(rlp_by_digest)?;

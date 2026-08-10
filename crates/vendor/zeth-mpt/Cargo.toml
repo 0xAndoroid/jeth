@@ -28,6 +28,8 @@ arrayvec = { version = "0.7", default-features = false }
 
 # Inert feature names (upstream cfg_attr gates reference them; never enabled).
 [features]
+# §8.1 pre-measurement counters (native runs only; never in guest builds).
+premeasure = []
 serde = []
 rkyv = []
 orphan = []
