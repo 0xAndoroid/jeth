@@ -47,10 +47,11 @@ pub fn set_trusted_digests(state: &'static [[u8; 32]], codes: &'static [[u8; 32]
 fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> {
     unsafe { TRUSTED_DIGESTS.take() }
 }
+use crate::resolver::WitnessResolver;
 use alloy_primitives::{
     keccak256,
     map::{indexmap::map::Entry, B256IndexMap},
-    Address, Bytes, B256, KECCAK256_EMPTY, U256,
+    Address, B256, KECCAK256_EMPTY, U256,
 };
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_trie::{TrieAccount, EMPTY_ROOT_HASH};
@@ -74,15 +75,10 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
         }
     }
 
-    pub fn from_prehashed(
-        root: B256,
-        rlp_by_digest: &B256IndexMap<Bytes>,
-    ) -> alloy_rlp::Result<Self> {
-        // jeth: zero-copy decode — leaf values reference the witness bytes.
-        Ok(Self::new(CachedTrie::from_prehashed_nodes_zc(
-            root,
-            rlp_by_digest,
-        )?))
+    pub fn from_resolver(root: B256, resolver: &mut WitnessResolver) -> alloy_rlp::Result<Self> {
+        // jeth: zero-copy decode — leaf values reference the witness bytes;
+        // digests resolve through the advice-indexed resolver (no map).
+        Ok(Self::new(CachedTrie::from_resolver_zc(root, resolver)?))
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> alloy_rlp::Result<Option<T>> {
@@ -111,8 +107,10 @@ pub struct SparseState {
     /// storage MPTs sorted by the hashed address of their account
     storages: RefCell<B256IndexMap<RlpTrie<U256>>>,
 
-    /// all relevant MPT nodes by their Keccak hash
-    rlp_by_digest: B256IndexMap<Bytes>,
+    /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
+    /// RefCell: `account()` is `&self` on the trait but resolves lazily-built
+    /// storage tries — same interior-mutability pattern as `storages`.
+    resolver: RefCell<WitnessResolver>,
 }
 
 impl SparseState {
@@ -144,7 +142,10 @@ impl SparseState {
                     .state
                     .get(hashed_address)?
                     .map_or(EMPTY_ROOT_HASH, |a| a.storage_root);
-                entry.insert(RlpTrie::from_prehashed(storage_root, &self.rlp_by_digest)?)
+                entry.insert(RlpTrie::from_resolver(
+                    storage_root,
+                    self.resolver.get_mut(),
+                )?)
             }
         };
 
@@ -164,20 +165,9 @@ impl SparseState {
             state_digests.len() == witness.state.len() && code_hashes.len() == witness.codes.len()
         });
 
-        let rlp_by_digest: B256IndexMap<_> = match trusted {
-            Some((state_digests, _)) => state_digests
-                .iter()
-                .zip(witness.state.iter())
-                .map(|(digest, rlp)| (B256::from(*digest), rlp.clone()))
-                .collect(),
-            None => witness
-                .state
-                .iter()
-                .map(|rlp| (keccak256(rlp), rlp.clone()))
-                .collect(),
-        };
+        let mut resolver = WitnessResolver::new(&witness.state, trusted.map(|(s, _)| s));
 
-        let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
+        let state = RlpTrie::from_resolver(pre_state_root, &mut resolver)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
         #[cfg(feature = "premeasure")]
         crate::premeasure::STATE_BUILD.record();
@@ -200,7 +190,7 @@ impl SparseState {
             Self {
                 state,
                 storages: RefCell::new(B256IndexMap::default()),
-                rlp_by_digest,
+                resolver: RefCell::new(resolver),
             },
             codes,
         ))
@@ -234,23 +224,13 @@ impl StatelessTrie for SparseState {
             state_digests.len() == witness.state.len() && code_hashes.len() == witness.codes.len()
         });
 
-        // first, obtain a digest for every RLP node: keccak them (self-verifying)
-        // or adopt the trusted-advice digests (see module docs for soundness).
-        let rlp_by_digest: B256IndexMap<_> = match trusted {
-            Some((state_digests, _)) => state_digests
-                .iter()
-                .zip(witness.state.iter())
-                .map(|(digest, rlp)| (B256::from(*digest), rlp.clone()))
-                .collect(),
-            None => witness
-                .state
-                .iter()
-                .map(|rlp| (keccak256(rlp), rlp.clone()))
-                .collect(),
-        };
+        // digest resolution goes through the advice-indexed resolver: no map
+        // build — self-verifying mode keccaks each witness entry at first
+        // resolve (memoized), trusted mode seeds the memo from the blob.
+        let mut resolver = WitnessResolver::new(&witness.state, trusted.map(|(s, _)| s));
 
         // construct the state trie from the witness data and the given state root
-        let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
+        let state = RlpTrie::from_resolver(pre_state_root, &mut resolver)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
         #[cfg(feature = "premeasure")]
         crate::premeasure::STATE_BUILD.record();
@@ -273,7 +253,7 @@ impl StatelessTrie for SparseState {
             Self {
                 state,
                 storages: RefCell::new(B256IndexMap::default()),
-                rlp_by_digest,
+                resolver: RefCell::new(resolver),
             },
             bytecode,
         ))
@@ -289,9 +269,9 @@ impl StatelessTrie for SparseState {
                 // otherwise construct it from the witness data and the account's storage root
                 match self.storages.borrow_mut().entry(hashed_address) {
                     Entry::Vacant(entry) => {
-                        entry.insert(RlpTrie::from_prehashed(
+                        entry.insert(RlpTrie::from_resolver(
                             account.storage_root,
-                            &self.rlp_by_digest,
+                            &mut self.resolver.borrow_mut(),
                         )?);
                     }
                     Entry::Occupied(_) => {}
@@ -317,7 +297,12 @@ impl StatelessTrie for SparseState {
         #[cfg(feature = "premeasure")]
         crate::premeasure::EXEC_END.record();
         let mut removed_accounts = Vec::new();
-        for (hashed_address, account) in state.accounts {
+        // DET-1 (L5): `state.accounts` is a foldhash HashMap — advice calls
+        // (on-demand storage-trie builds) must never be sequenced under
+        // unsorted map iteration. Sorting also pins the perm order.
+        let mut accounts: Vec<_> = state.accounts.into_iter().collect();
+        accounts.sort_unstable_by_key(|(hashed_address, _)| *hashed_address);
+        for (hashed_address, account) in accounts {
             // nonexisting accounts must be removed from the state
             let Some(account) = account else {
                 removed_accounts.push(hashed_address);
@@ -334,14 +319,18 @@ impl StatelessTrie for SparseState {
                         self.storage_trie_mut(hashed_address).unwrap()
                     };
 
+                    // DET-2 (L5): sort storage updates by hashed slot.
+                    let mut slots: Vec<_> = storage.storage.iter().collect();
+                    slots.sort_unstable_by_key(|(hashed_key, _)| *hashed_key);
                     // apply all state modifications
-                    for (hashed_key, value) in &storage.storage {
+                    for &(hashed_key, value) in &slots {
                         if !value.is_zero() {
                             storage_trie.insert(hashed_key, *value);
                         }
                     }
                     // removals must happen last, otherwise unresolved orphans might still exist
-                    for (hashed_key, value) in &storage.storage {
+                    // (DET-3: insert-before-remove preserved)
+                    for &(hashed_key, value) in &slots {
                         if value.is_zero() {
                             storage_trie.remove(hashed_key);
                         }

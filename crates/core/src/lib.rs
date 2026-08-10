@@ -18,6 +18,7 @@ mod instrument;
 #[cfg(feature = "premeasure")]
 pub mod premeasure;
 mod recover;
+mod resolver;
 pub mod validation;
 mod zeth_trie;
 

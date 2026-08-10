@@ -39,6 +39,7 @@ mod rlp;
 mod serde;
 
 pub use alloy_trie::EMPTY_ROOT_HASH;
+pub use rlp::DigestResolver;
 
 /// A sparse Merkle Patricia trie storing byte values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -207,15 +208,15 @@ impl Trie {
         Ok(trie)
     }
 
-    /// jeth fork: zero-copy variant of [`Self::from_prehashed_nodes`] — leaf
-    /// values reference the witness node `Bytes` instead of being copied.
+    /// jeth (advice-trie): build from a root digest, resolving nodes through a
+    /// [`DigestResolver`] (zero-copy decode). Replaces the prehashed-map path.
     #[inline]
-    pub fn from_prehashed_nodes_zc(
+    pub fn from_resolver_zc(
         root: B256,
-        rlp_by_digest: &B256IndexMap<Bytes>,
+        resolver: &mut impl DigestResolver,
     ) -> alloy_rlp::Result<Self> {
         let mut trie = Self::from_digest(root);
-        trie.0.resolve_digests_zc(rlp_by_digest)?;
+        trie.0.resolve_with(resolver)?;
         Ok(trie)
     }
 }
@@ -395,15 +396,16 @@ impl CachedTrie {
         Ok(trie)
     }
 
-    /// jeth fork: zero-copy variant of [`Self::from_prehashed_nodes`] — leaf
-    /// values reference the witness node `Bytes` instead of being copied.
+    /// jeth (advice-trie): build from a root digest, resolving nodes through a
+    /// [`DigestResolver`] (zero-copy decode). Replaces the prehashed-map path.
+    /// `EMPTY_ROOT_HASH` short-circuits to the empty trie — no resolver call.
     #[inline]
-    pub fn from_prehashed_nodes_zc(
+    pub fn from_resolver_zc(
         root: B256,
-        rlp_by_digest: &B256IndexMap<Bytes>,
+        resolver: &mut impl DigestResolver,
     ) -> alloy_rlp::Result<Self> {
         let mut trie = Self::from_digest(root);
-        trie.inner.resolve_digests_zc(rlp_by_digest)?;
+        trie.inner.resolve_with(resolver)?;
         Ok(trie)
     }
 }

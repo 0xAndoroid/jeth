@@ -27,6 +27,17 @@ use core::fmt;
 /// The length in bytes of an RLP-encoded digest, i.e. hash length + 1 byte for the RLP header.
 const DIGEST_RLP_LENGTH: usize = 1 + B256::len_bytes();
 
+/// jeth (advice-trie): digest→bytes resolution callback for trie hydration.
+///
+/// Contract: a `Some(bytes)` return MUST be authenticated by the implementor —
+/// `keccak256(bytes) == *digest` — before the bytes are handed out (the trie
+/// decodes them as the node with that digest). `None` = "not available":
+/// the node stays an unresolved [`Node::Digest`] stub.
+pub trait DigestResolver {
+    fn resolve(&mut self, digest: &B256) -> Option<Bytes>;
+}
+
+
 impl<M: Memoization> Node<M> {
     /// Returns the hash of the node.
     #[inline]
@@ -226,17 +237,20 @@ impl<M: Memoization> Node<M> {
         Ok(())
     }
 
-    /// jeth fork: like [`Self::resolve_digests`], but the map is concretely
-    /// [`Bytes`] so decoded leaf values become zero-copy [`Bytes::slice_ref`]
-    /// views into the node bytes (upstream allocates + copies every value).
-    pub(super) fn resolve_digests_zc(
-        &mut self,
-        rlp_by_digest: &B256IndexMap<Bytes>,
-    ) -> alloy_rlp::Result<()> {
+    /// jeth (advice-trie): like [`Self::resolve_digests`], but digest→bytes
+    /// resolution goes through a [`DigestResolver`] callback instead of a
+    /// prebuilt map. The resolver must return AUTHENTICATED bytes
+    /// (`keccak(bytes) == digest`) or `None` to leave the digest stub in
+    /// place (L3: an untouched stub contributes its parent-sourced digest to
+    /// encodes bit-identically; content access panics).
+    ///
+    /// Decoding is the zero-copy variant: leaf values become
+    /// [`Bytes::slice_ref`] views into the resolved node bytes.
+    pub(super) fn resolve_with<R: DigestResolver>(&mut self, r: &mut R) -> alloy_rlp::Result<()> {
         match self {
             Node::Null | Node::Leaf(..) => {}
             Node::Extension(_, child, _) => {
-                child.resolve_digests_zc(rlp_by_digest)?;
+                child.resolve_with(r)?;
                 if !matches!(**child, Node::Branch(..) | Node::Digest(..)) {
                     return Err(alloy_rlp::Error::Custom("extension node with invalid child"));
                 }
@@ -244,24 +258,24 @@ impl<M: Memoization> Node<M> {
             Node::Branch(children, _) => {
                 for entry in children.entries() {
                     if let Entry::Occupied(mut entry) = entry {
-                        entry.get_mut().resolve_digests_zc(rlp_by_digest)?;
+                        entry.get_mut().resolve_with(r)?;
                     }
                 }
             }
             Node::Digest(digest) => {
                 #[cfg(feature = "premeasure")]
                 super::premeasure::count(&super::premeasure::PROBES);
-                if let Some(bytes) = rlp_by_digest.get(digest) {
+                if let Some(bytes) = r.resolve(digest) {
                     #[cfg(feature = "premeasure")]
                     super::premeasure::count(&super::premeasure::HITS);
-                    let mut node: Node<M> = decode_node_zc_exact(bytes)?;
+                    let mut node: Node<M> = decode_node_zc_exact(&bytes)?;
                     // do not try to replace a node by a digest
                     if !matches!(node, Node::Digest(_)) {
                         #[cfg(feature = "premeasure")]
                         super::premeasure::count(&super::premeasure::DECODES);
                         node.cache_set(RlpNode::from_digest(digest));
                         *self = node;
-                        self.resolve_digests_zc(rlp_by_digest)?;
+                        self.resolve_with(r)?;
                     }
                 }
             }
