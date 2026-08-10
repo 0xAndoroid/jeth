@@ -20,6 +20,7 @@ pub mod premeasure;
 mod recover;
 mod resolver;
 pub mod validation;
+mod walk;
 mod zeth_trie;
 
 pub use zeth_trie::set_trusted_digests;

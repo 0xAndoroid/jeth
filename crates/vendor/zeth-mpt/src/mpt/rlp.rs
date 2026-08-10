@@ -285,7 +285,7 @@ impl<M: Memoization> Node<M> {
     }
 
     #[inline]
-    fn cache_set(&mut self, rlp_node: RlpNode) {
+    pub(super) fn cache_set(&mut self, rlp_node: RlpNode) {
         match self {
             Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => {
                 cache.set(rlp_node)
@@ -402,7 +402,7 @@ fn decode_node_zc<M: Memoization>(source: &Bytes, buf: &mut &[u8]) -> alloy_rlp:
 }
 
 /// [`decode_node_zc`] over the whole buffer, mirroring `alloy_rlp::decode_exact`.
-fn decode_node_zc_exact<M: Memoization>(source: &Bytes) -> alloy_rlp::Result<Node<M>> {
+pub(super) fn decode_node_zc_exact<M: Memoization>(source: &Bytes) -> alloy_rlp::Result<Node<M>> {
     let mut buf = source.as_ref();
     let node = decode_node_zc(source, &mut buf)?;
     if !buf.is_empty() {
@@ -430,7 +430,7 @@ impl RlpNode {
     }
 
     #[inline]
-    fn from_digest(digest: &B256) -> Self {
+    pub(super) fn from_digest(digest: &B256) -> Self {
         Self(alloy_rlp::encode_fixed_size(digest))
     }
 

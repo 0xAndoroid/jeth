@@ -16,6 +16,7 @@ use super::{
     children::{Children, Entry},
     memoize::Memoization,
     nibbles::NibbleSlice,
+    rlp::DigestResolver,
 };
 use alloc::boxed::Box;
 use alloy_primitives::{Bytes, B256};
@@ -23,6 +24,17 @@ use alloy_trie::Nibbles;
 use core::mem;
 
 pub(super) type Child<M> = Box<Node<M>>;
+
+/// jeth (advice-trie): resolver that never resolves — plain `insert`/`remove`
+/// keep today's panic-on-stub contract by threading this.
+pub(super) struct Unresolvable;
+
+impl DigestResolver for Unresolvable {
+    #[inline]
+    fn resolve(&mut self, _digest: &alloy_primitives::B256) -> Option<Bytes> {
+        None
+    }
+}
 
 /// jeth fork note: `Branch` boxes its [`Children`] (upstream stores the 128-byte
 /// child array inline, making `size_of::<Node>()` ≈ 176). Every decoded node is
@@ -80,6 +92,14 @@ impl<M: Memoization> Node<M> {
 
     /// Inserts a key-value pair into the trie.
     pub(super) fn insert(&mut self, key: NibbleSlice, value: Bytes) {
+        self.insert_with(key, value, &mut Unresolvable)
+    }
+
+    /// jeth (advice-trie): like [`Self::insert`], but a [`Node::Digest`] on the
+    /// insertion path is resolved on demand through `r` (post-root lazy
+    /// materialization). A resolver miss panics — same witness-incompleteness
+    /// contract as the eager build (INV-W3).
+    pub(super) fn insert_with<R: DigestResolver>(&mut self, key: NibbleSlice, value: Bytes, r: &mut R) {
         assert!(!value.is_empty());
         match self {
             Node::Null => {
@@ -122,7 +142,7 @@ impl<M: Memoization> Node<M> {
             Node::Extension(prefix, child, cache) => {
                 let (common, key_rem, prefix_rem) = key.split_common_prefix(*prefix);
                 if common.len() == prefix.len() {
-                    child.insert(key_rem, value);
+                    child.insert_with(key_rem, value, r);
                     cache.clear();
                     return;
                 } else if common.len() == key.len() {
@@ -156,7 +176,7 @@ impl<M: Memoization> Node<M> {
             Node::Branch(children, cache) => match key.split_first() {
                 Some((nib, tail)) => match children.entry(nib) {
                     Entry::Occupied(mut entry) => {
-                        entry.get_mut().insert(tail, value);
+                        entry.get_mut().insert_with(tail, value, r);
                         cache.clear();
                     }
                     Entry::Vacant(entry) => {
@@ -166,12 +186,23 @@ impl<M: Memoization> Node<M> {
                 },
                 None => panic!("MPT: Value in branch"),
             },
-            Node::Digest(_) => panic!("MPT: Unresolved node access"),
+            Node::Digest(_) => {
+                self.resolve_stub(r);
+                self.insert_with(key, value, r);
+            }
         }
     }
 
     /// Removes a key-value pair from the trie.
     pub(super) fn remove(&mut self, key: NibbleSlice) -> bool {
+        self.remove_with(key, &mut Unresolvable)
+    }
+
+    /// jeth (advice-trie): like [`Self::remove`], but digest stubs on the
+    /// removal path — including the branch-collapse sibling — are resolved on
+    /// demand through `r`. A resolver miss panics (INV-W3); orphan-rule
+    /// semantics are otherwise byte-identical to [`Self::remove`].
+    pub(super) fn remove_with<R: DigestResolver>(&mut self, key: NibbleSlice, r: &mut R) -> bool {
         match self {
             Node::Null => false,
             Node::Leaf(prefix, ..) if prefix == key.as_nibbles() => {
@@ -180,7 +211,7 @@ impl<M: Memoization> Node<M> {
             }
             Node::Leaf(..) => false,
             Node::Extension(prefix, child, cache) => {
-                if !key.strip_prefix(prefix).is_some_and(|tail| child.remove(tail)) {
+                if !key.strip_prefix(prefix).is_some_and(|tail| child.remove_with(tail, r)) {
                     return false;
                 }
                 cache.clear();
@@ -205,7 +236,7 @@ impl<M: Memoization> Node<M> {
                 match key.split_first() {
                     Some((nib, tail)) => match children.entry(nib) {
                         Entry::Occupied(mut entry) => {
-                            if !entry.get_mut().remove(tail) {
+                            if !entry.get_mut().remove_with(tail, r) {
                                 return false;
                             }
                         }
@@ -215,7 +246,12 @@ impl<M: Memoization> Node<M> {
                 };
                 cache.clear();
 
-                if let Some((nib, only_child)) = children.take_single_child() {
+                if let Some((nib, mut only_child)) = children.take_single_child() {
+                    // jeth (advice-trie): the collapse sibling may be an
+                    // unresolved stub — resolve it on demand (today this is the
+                    // panic below; the witness contains collapse siblings by
+                    // construction, so honest proving succeeds).
+                    only_child.resolve_stub(r);
                     match *only_child {
                         // if the only child is a leaf, prepend the corresponding nib to it
                         Node::Leaf(extension, value, _) => {
@@ -234,13 +270,34 @@ impl<M: Memoization> Node<M> {
                             let prefix = Nibbles::from_nibbles_unchecked([nib]);
                             *self = Node::Extension(prefix, only_child, M::default());
                         }
-                        Node::Digest(_) => panic!("MPT: Unresolved node access"),
+                        Node::Digest(_) => unreachable!(), // resolve_stub above panics on miss
                         Node::Null => unreachable!(), // children does not contain any Node::Null
                     }
                 }
                 true
             }
-            Node::Digest(_) => panic!("MPT: Unresolved node access"),
+            Node::Digest(_) => {
+                self.resolve_stub(r);
+                self.remove_with(key, r)
+            }
+        }
+    }
+
+    /// jeth (advice-trie): resolve a [`Node::Digest`] in place through `r`.
+    /// Panics on a resolver miss ("MPT: Unresolved node access" — INV-W3) and
+    /// on the digest-for-digest refusal / malformed bytes (a malformed node on
+    /// a DIRTY path fails proving, matching the eager build's reveal error).
+    /// No-op on already-resolved nodes.
+    pub(super) fn resolve_stub<R: DigestResolver>(&mut self, r: &mut R) {
+        if let Node::Digest(digest) = self {
+            let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
+            let mut node: Node<M> =
+                super::rlp::decode_node_zc_exact(&bytes).expect("MPT: invalid witness node");
+            if matches!(node, Node::Digest(_)) {
+                panic!("MPT: Unresolved node access"); // digest-for-digest refusal
+            }
+            node.cache_set(super::rlp::RlpNode::from_digest(digest));
+            *self = node;
         }
     }
 

@@ -279,12 +279,36 @@ impl CachedTrie {
         self.hash = None;
     }
 
+    /// jeth (advice-trie): [`Self::insert`] with on-demand digest resolution —
+    /// stubs on the insertion path resolve through `r` (miss ⇒ panic, INV-W3).
+    #[inline]
+    pub fn insert_with(
+        &mut self,
+        key: impl AsRef<[u8]>,
+        value: impl Into<Bytes>,
+        r: &mut impl DigestResolver,
+    ) {
+        self.inner.insert_with(NibbleSlice::from(Nibbles::unpack(key)), value.into(), r);
+        self.hash = None;
+    }
+
     /// Removes a key-value pair from the trie.
     ///
     /// See [`Trie::remove`] for detailed documentation.
     #[inline]
     pub fn remove(&mut self, key: impl AsRef<[u8]>) -> bool {
         if !self.inner.remove(NibbleSlice::from(Nibbles::unpack(key))) {
+            return false;
+        }
+        self.hash = None;
+        true
+    }
+
+    /// jeth (advice-trie): [`Self::remove`] with on-demand digest resolution
+    /// (traversal stubs and the branch-collapse sibling; miss ⇒ panic, INV-W3).
+    #[inline]
+    pub fn remove_with(&mut self, key: impl AsRef<[u8]>, r: &mut impl DigestResolver) -> bool {
+        if !self.inner.remove_with(NibbleSlice::from(Nibbles::unpack(key)), r) {
             return false;
         }
         self.hash = None;

@@ -17,8 +17,10 @@
 //! panic), or claim absence (stub semantics). It cannot forge content.
 
 use crate::advice::{advice_assert_eq, advice_u64};
+use crate::walk::{self, NodeKind, Step};
 use alloc::vec::Vec;
-use alloy_primitives::{keccak256, Bytes, B256};
+use alloy_primitives::{keccak256, Bytes, B256, U256};
+use alloy_trie::EMPTY_ROOT_HASH;
 use zeth_mpt::DigestResolver;
 
 /// keccak(witness[i]) memo: 8-aligned `[u64; 4]` entries + presence bitmap —
@@ -30,6 +32,9 @@ pub struct WitnessResolver {
     witness: Vec<Bytes>,
     verified: Vec<[u64; 4]>,
     verified_set: Vec<u64>,
+    /// INV-W6 memo: 2-bit [`NodeKind`] per entry (0 = not yet validated).
+    /// Walked entries get a full `Node::decode`-parity scan exactly once.
+    kinds: Vec<u64>,
     /// Pass-1 / native digest→slot index. `BTreeMap` by the L5 seed-chain rule:
     /// a pass-1-only foldhash map would perturb the global per-hasher seed
     /// chain relative to the proven ELF. Never built in the proven ELF.
@@ -85,6 +90,7 @@ impl WitnessResolver {
             witness: witness_state.to_vec(),
             verified,
             verified_set,
+            kinds: alloc::vec![0u64; n.div_ceil(32)],
             #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
             index: witness_state
                 .iter()
@@ -128,6 +134,64 @@ impl WitnessResolver {
         advice_assert_eq!(have[1], want[1]);
         advice_assert_eq!(have[2], want[2]);
         advice_assert_eq!(have[3], want[3]);
+    }
+}
+
+impl WitnessResolver {
+    #[inline(always)]
+    fn kind(&self, i: usize) -> NodeKind {
+        NodeKind::from_bits(self.kinds[i >> 5] >> ((i & 31) * 2))
+    }
+
+    #[inline(always)]
+    fn set_kind(&mut self, i: usize, kind: NodeKind) {
+        self.kinds[i >> 5] |= (kind as u64) << ((i & 31) * 2);
+    }
+
+    /// Authenticate the witness entry advised for `digest` and ensure it has
+    /// passed the INV-W6 well-formedness scan. Returns the entry index.
+    /// Panics on a resolver miss — a walk the execution needs must resolve
+    /// (INV-W3, same witness-incompleteness contract as the eager build) —
+    /// and on malformed entries (refusal; see walk module docs).
+    #[inline]
+    fn authenticate_walk(&mut self, digest: &B256) -> usize {
+        let hint = advice_u64!(self.slot_impl(digest));
+        assert!(hint != 0, "MPT: unresolved node access");
+        let i = (hint - 1) as usize;
+        self.verify_slot(i, digest);
+        if self.kind(i) == NodeKind::Unvalidated {
+            let kind = walk::validate_entry(&self.witness[i]).expect("MPT: invalid witness node");
+            self.set_kind(i, kind);
+        }
+        i
+    }
+
+    /// §4.2 byte-walk storage read: `key` = keccak(slot), anchored at the
+    /// account's `storage_root`. Returns the decoded slot value; `Ok(None)` is
+    /// authenticated absence. Never materializes or mutates — the only side
+    /// effect is memoization.
+    pub(crate) fn walk_storage(
+        &mut self,
+        root: &B256,
+        key: &B256,
+    ) -> alloy_rlp::Result<Option<U256>> {
+        if *root == EMPTY_ROOT_HASH {
+            // Empty trie — no advice call (from_digest parity; keccak(0x80)
+            // is never a witness entry, so walking it would panic).
+            return Ok(None);
+        }
+        let mut digest = *root;
+        let mut depth = 0usize;
+        loop {
+            let i = self.authenticate_walk(&digest);
+            match walk::walk_entry(&self.witness[i], self.kind(i), key, &mut depth) {
+                Step::Digest(d) => digest = d,
+                Step::Absent => return Ok(None),
+                Step::Value(range) => {
+                    return alloy_rlp::decode_exact(&self.witness[i][range]).map(Some);
+                }
+            }
+        }
     }
 }
 
