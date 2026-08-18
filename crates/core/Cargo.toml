@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+std = []
 # Verify tx signatures with the Jolt secp256k1 inline (guest builds only; native
 # builds keep alloy/k256). The inline SDK panics if called on a non-RISC-V target.
 # Also installs the alloy-consensus pluggable crypto backend so EIP-7702
@@ -60,3 +61,6 @@ serde.workspace = true
 # directly (see src/advice.rs build matrix).
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/main-2026-09-04/jolt-sdk", default-features = false }
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["use-std"] }

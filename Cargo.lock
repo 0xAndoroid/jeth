@@ -2339,6 +2339,7 @@ dependencies = [
  "alloy-trie",
  "jolt-inlines-secp256k1",
  "jolt-sdk",
+ "postcard",
  "reth-chainspec",
  "reth-consensus",
  "reth-ethereum-consensus",

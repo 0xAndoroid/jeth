@@ -1,4 +1,4 @@
-//! `jeth fetch`: block RLP + execution witness + recovered pubkeys → postcard input.bin.
+//! `jeth fetch`: block RLP + execution witness + recovered pubkeys → JEF input.bin.
 
 use crate::rpc::{parse_hex_bytes, parse_quantity, RpcClient, DEFAULT_ENDPOINTS};
 use anyhow::{Context, Result};
@@ -75,17 +75,25 @@ pub fn run(
     let signers = recover_signers(&block.body.transactions)?;
     println!("recovered {} tx pubkeys", signers.len());
 
-    // 5. Assemble + serialize.
+    // 5. Assemble + encode.
     let input = BlockInput {
         block,
         signers,
         witness,
     };
-    let input_bytes = postcard::to_stdvec(&input)?;
+    let input_bytes = jeth_core::container::ContainerWriter::write(
+        &raw,
+        &input.signers,
+        &input.witness,
+        crate::trace::stream_start(crate::trace::Variant::Input),
+        0,
+    )
+    .map_err(anyhow::Error::msg)?;
 
     let dir = std::path::Path::new(out_root).join(target.to_string());
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("input.bin"), &input_bytes)?;
+    std::fs::write(dir.join("block.rlp"), &raw)?;
     std::fs::write(dir.join("witness.json"), serde_json::to_vec(&witness_json)?)?;
 
     let meta = meta_json(
@@ -106,7 +114,7 @@ pub fn run(
     Ok(dir.join("input.bin"))
 }
 
-fn recover_signers(txs: &[TransactionSigned]) -> Result<Vec<UncompressedPublicKey>> {
+pub(crate) fn recover_signers(txs: &[TransactionSigned]) -> Result<Vec<UncompressedPublicKey>> {
     txs.iter()
         .enumerate()
         .map(|(i, tx)| {
@@ -157,6 +165,7 @@ fn meta_json(
         *tx_type_counts.entry(tx.tx_type() as u8).or_default() += 1;
     }
     json!({
+        "format": 2,
         "block_number": block.header.number,
         "timestamp": block.header.timestamp,
         "gas_used": block.header.gas_used,

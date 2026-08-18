@@ -7,6 +7,7 @@
 
 mod fetch;
 mod profile;
+mod repack;
 mod rpc;
 mod trace;
 mod txprofile;
@@ -45,6 +46,12 @@ enum Command {
     RunNative {
         #[arg(long)]
         input: String,
+    },
+    /// Rebuild JEF input.bin from a cached block and witness.
+    Repack {
+        /// Cached block directory containing witness.json and block.rlp.
+        #[arg(long)]
+        dir: String,
     },
     /// Trace the guest over an input.bin on the Jolt RV64IMAC emulator (streaming count).
     Trace {
@@ -132,6 +139,7 @@ fn main() -> Result<()> {
             out,
         } => fetch::run(block, latest_minus, rpc_list, &out).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
+        Command::Repack { dir } => repack::run(&dir),
         Command::Trace {
             input,
             skip_build,
@@ -201,8 +209,8 @@ fn run_native(input_path: &str) -> Result<()> {
     println!("input: {} ({:.1} MB)", input_path, bytes.len() as f64 / 1e6);
 
     let start = Instant::now();
-    let input: jeth_core::BlockInput = postcard::from_bytes(&bytes)?;
-    println!("deserialized in {:.2?}", start.elapsed());
+    let input = trace::decode_input(&bytes)?;
+    println!("read JEF in {:.2?}", start.elapsed());
 
     let number = input.block.header.number;
     let header_gas = input.block.header.gas_used;

@@ -30,7 +30,7 @@ fn keccak_stats(label: &str) {
 #[cfg(not(feature = "guest"))]
 fn keccak_stats(_label: &str) {}
 
-/// Shared body: deserialize (measured), verify signatures, validate statelessly.
+/// Shared body: read JEF (measured), verify signatures, validate statelessly.
 fn run_validation(bytes: &[u8]) -> ValidationResult {
     // Advice-tape alignment sentinel: panics immediately on a missing tape or
     // mismatched compute/proven ELF pair (~6 rows).
@@ -40,7 +40,9 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
     jeth_core::install_jolt_crypto();
 
     jolt::start_cycle_tracking("deserialize");
-    let input: BlockInput = jolt::postcard::from_bytes(bytes).expect("input deserialization");
+    // The input region is immutable and remains mapped for the whole program.
+    let bytes: &'static [u8] = unsafe { core::mem::transmute(bytes) };
+    let input: BlockInput = jeth_core::decode_container(bytes).expect("JEF input");
     jolt::end_cycle_tracking("deserialize");
 
     let BlockInput {
@@ -66,8 +68,7 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
     result
 }
 
-/// Standard path: the postcard-encoded [`BlockInput`] arrives as committed input
-/// (borrowed zero-copy from the input region; deserialize measured in-guest).
+/// Standard path: JEF arrives as committed input, borrowed from the input region.
 #[jolt::provable(
     max_input_size = 33554432,   // 32 MiB
     max_output_size = 4096,      // 4 KiB
@@ -113,16 +114,20 @@ fn validate_block_advice(input: jolt::TrustedAdvice<&[u8]>) -> ValidationResult 
 )]
 fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> ValidationResult {
     let blob: &[u8] = *digests;
+    let pad_len = *blob.first().expect("digest alignment prefix") as usize;
+    assert!(pad_len <= 7, "digest alignment prefix");
+    let content = &blob[1 + pad_len..];
     assert!(
-        blob.len() >= 4 && (blob.len() - 4) % 32 == 0,
+        content.len() >= 4 && (content.len() - 4) % 32 == 0,
         "digest blob shape"
     );
-    let state_count = u32::from_le_bytes(blob[..4].try_into().unwrap()) as usize;
-    let entries = (blob.len() - 4) / 32;
+    assert_eq!(content.as_ptr() as usize % 4, 0, "digest count alignment");
+    assert_eq!(content[4..].as_ptr() as usize % 8, 0, "digest alignment");
+    let state_count = u32::from_le_bytes(content[..4].try_into().unwrap()) as usize;
+    let entries = (content.len() - 4) / 32;
     assert!(state_count <= entries, "digest blob count");
-    // [[u8; 32]] has align 1 — this cast is always valid.
     let all: &[[u8; 32]] =
-        unsafe { core::slice::from_raw_parts(blob[4..].as_ptr().cast(), entries) };
+        unsafe { core::slice::from_raw_parts(content[4..].as_ptr().cast(), entries) };
     let (state_digests, code_hashes) = all.split_at(state_count);
     // The advice region lives for the whole program run.
     let (state_digests, code_hashes): (&'static [[u8; 32]], &'static [[u8; 32]]) = unsafe {

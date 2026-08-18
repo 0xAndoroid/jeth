@@ -2,7 +2,7 @@
 //! execute-only streaming count (no trace materialization, no proving).
 
 use anyhow::{bail, Context, Result};
-use jolt_common::jolt_device::MemoryConfig;
+use jolt_common::jolt_device::{MemoryConfig, MemoryLayout};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -60,6 +60,10 @@ pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
 /// `#[jolt::provable]` attributes — see constants above / guest lib.rs).
 pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
     let (_, _, program_end, _) = tracer::decode(elf);
+    memory_config_for_program(program_end - RAM_START_ADDRESS, variant)
+}
+
+fn memory_config_for_program(program_size: u64, variant: Variant) -> MemoryConfig {
     let (input_size, trusted_size) = match variant {
         Variant::Input => (MAX_INPUT_SIZE, MAX_ADVICE_SIZE),
         Variant::Advice => (MAX_ADVICE_SIZE, MAX_INPUT_SIZE),
@@ -72,8 +76,27 @@ pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
         max_untrusted_advice_size: MAX_ADVICE_SIZE,
         stack_size: STACK_SIZE,
         heap_size: HEAP_SIZE,
-        program_size: Some(program_end - RAM_START_ADDRESS),
+        program_size: Some(program_size),
     }
+}
+
+/// Address at which the postcard stream for a function argument is mapped.
+pub fn stream_start(variant: Variant) -> u64 {
+    let layout = MemoryLayout::new(&memory_config_for_program(0, variant));
+    match variant {
+        Variant::Advice => layout.trusted_advice_start,
+        Variant::Input | Variant::Trusted => layout.input_start,
+    }
+}
+
+pub fn wrap_input(raw: &[u8]) -> Result<Vec<u8>> {
+    Ok(postcard::to_stdvec(&raw)?)
+}
+
+pub fn decode_input(raw: &[u8]) -> Result<jeth_core::BlockInput> {
+    let stream: &'static [u8] = Box::leak(wrap_input(raw)?.into_boxed_slice());
+    let bytes: &'static [u8] = postcard::from_bytes(stream).context("decoding JEF argument")?;
+    jeth_core::decode_container(bytes).map_err(anyhow::Error::msg)
 }
 
 /// Build with symbols preserved (JOLT_BACKTRACE=1 — metadata only, identical
@@ -145,24 +168,59 @@ fn build_guest_inner(variant: Variant, symbols: bool, extra_features: &[&str]) -
 /// Pre-compute witness-node digests + code hashes for the trusted variant.
 /// Blob: u32 LE state count | state digests | code hashes (32 B each).
 fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
-    let input: jeth_core::BlockInput =
-        postcard::from_bytes(input_bin).context("parsing input.bin for digest precompute")?;
-    let mut blob =
-        Vec::with_capacity(4 + 32 * (input.witness.state.len() + input.witness.codes.len()));
-    blob.extend_from_slice(&(input.witness.state.len() as u32).to_le_bytes());
-    for node in &input.witness.state {
+    let stream = wrap_input(input_bin)?;
+    let bytes: &[u8] = postcard::from_bytes(&stream).context("decoding JEF argument")?;
+    let input = jeth_core::container::ContainerReader::read(bytes).map_err(anyhow::Error::msg)?;
+    let mut blob = Vec::with_capacity(4 + 32 * (input.state.len() + input.codes.len()));
+    blob.extend_from_slice(&(input.state.len() as u32).to_le_bytes());
+    for node in &input.state {
         blob.extend_from_slice(alloy_primitives::keccak256(node).as_slice());
     }
-    for code in &input.witness.codes {
+    for code in &input.codes {
         blob.extend_from_slice(alloy_primitives::keccak256(code).as_slice());
     }
+    let blob = self_align(blob, stream_start(Variant::Trusted), 4)?;
     println!(
         "digest blob: {} state + {} code digests ({} bytes)",
-        input.witness.state.len(),
-        input.witness.codes.len(),
+        input.state.len(),
+        input.codes.len(),
         blob.len()
     );
     Ok(blob)
+}
+
+fn self_align(body: Vec<u8>, stream_start: u64, content_mod_8: usize) -> Result<Vec<u8>> {
+    let mut pad_len = 0usize;
+    for _ in 0..3 {
+        let payload_len = 1 + pad_len + body.len();
+        let varint_len = postcard_varint_len(payload_len);
+        let current = (stream_start as usize + varint_len + 1) % 8;
+        let next = (content_mod_8 + 8 - current) % 8;
+        if next == pad_len {
+            break;
+        }
+        pad_len = next;
+    }
+    let payload_len = 1 + pad_len + body.len();
+    let varint_len = postcard_varint_len(payload_len);
+    anyhow::ensure!(
+        (stream_start as usize + varint_len + 1 + pad_len) % 8 == content_mod_8,
+        "alignment prefix did not converge"
+    );
+    let mut output = Vec::with_capacity(payload_len);
+    output.push(pad_len as u8);
+    output.resize(1 + pad_len, 0);
+    output.extend_from_slice(&body);
+    Ok(output)
+}
+
+fn postcard_varint_len(mut value: usize) -> usize {
+    let mut len = 1;
+    while value >= 0x80 {
+        value >>= 7;
+        len += 1;
+    }
+    len
 }
 
 /// Build (unless `skip_build` and both ELFs exist) the proven + `compute_advice`
@@ -235,8 +293,8 @@ pub fn run(
 
     let raw = std::fs::read(input_path).context("reading input.bin")?;
     println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
-    // The guest fn takes `&[u8]` — postcard-wrap the payload (varint len + bytes).
-    let wrapped = postcard::to_stdvec(&raw)?;
+    // Jolt's generated entry point adds only the &[u8] argument length prefix.
+    let wrapped = wrap_input(&raw)?;
     if wrapped.len() as u64 > MAX_INPUT_SIZE {
         bail!(
             "input {} bytes exceeds guest size budget {}",
@@ -245,7 +303,7 @@ pub fn run(
         );
     }
     let digest_blob = match variant {
-        Variant::Trusted => Some(postcard::to_stdvec(&digest_blob_for(&raw)?)?),
+        Variant::Trusted => Some(wrap_input(&digest_blob_for(&raw)?)?),
         _ => None,
     };
     let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {

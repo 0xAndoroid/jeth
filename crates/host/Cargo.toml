@@ -12,7 +12,7 @@ path = "src/main.rs"
 premeasure = ["jeth-core/premeasure"]
 
 [dependencies]
-jeth-core.workspace = true
+jeth-core = { workspace = true, features = ["std"] }
 
 reth-ethereum-primitives = { workspace = true, features = ["std", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }

@@ -52,7 +52,7 @@ pub fn run(
     println!("{} text symbols", symbols.len());
 
     let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let input_bytes = postcard::to_stdvec(&raw)?;
+    let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.

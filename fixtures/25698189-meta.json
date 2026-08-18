@@ -6,9 +6,10 @@
     "witness": "https://docs-demo.quiknode.pro/"
   },
   "fetched_at": "unix:1786046849",
+  "format": 2,
   "gas_limit": 60000000,
   "gas_used": 41932456,
-  "input_bin_bytes": 10718638,
+  "input_bin_bytes": 10812732,
   "timestamp": 1786046735,
   "tx_count": 415,
   "tx_type_counts": {

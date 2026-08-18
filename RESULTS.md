@@ -1,16 +1,16 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
-**Headline (after optimization campaign 3 — advice-trie, 2026-08-10): recent mainnet
-blocks validate inside the Jolt RV64IMAC guest at 28.9–31.2 cycles/gas fully
-self-verifying, 22.3–24.8 cycles/gas with trusted-advice witness digests — down from
-30.7–33.0 / 24.3–26.5 after campaign 2, 34.5–42.7 at campaign 1, 62–85 at v1, and 513
-before the allocator fix. Campaign 3 replaces the eager `rlp_by_digest`-map MPT
+**Headline (after Workstream A — JEF zero-parse input, 2026-08-18): recent mainnet
+blocks validate inside the Jolt RV64IMAC guest at 28.2–30.5 cycles/gas fully
+self-verifying, 21.6–24.1 cycles/gas with trusted-advice witness digests — down from
+28.9–31.2 / 22.3–24.8 after campaign 3, 34.5–42.7 at campaign 1, 62–85 at v1, and
+513 before the allocator fix. Campaign 3 replaces the eager `rlp_by_digest`-map MPT
 pipeline with untrusted runtime advice: advice-indexed digest resolution, byte-walk
 storage reads over raw witness RLP, on-demand post-root materialization, and a
 sealed-length arena encoder (all advice locally verified in-guest; trust model
 unchanged).**
 
-Run date: 2026-08-10. First published Jolt-zkVM full-EVM-block numbers. All runs on an
+Run date: 2026-08-18. First published Jolt-zkVM full-EVM-block numbers. All runs on an
 Apple M4 (10-core, 16 GB), tracer = Jolt branch `merge-1717-main` @ `af1c2aef5c`,
 execute-only streaming counts (no trace materialization, no proving). Traces are
 two-pass since campaign 3: a `compute_advice` ELF populates the byte-FIFO advice tape
@@ -24,15 +24,21 @@ signatures verified in-guest against host-recovered pubkeys (soundness-equivalen
 ecrecover, cheaper). Every guest output hash matched an independent native
 `stateless_validation` run bit-for-bit on every block and every configuration.
 
-## Current numbers (5 recent mainnet blocks, 2026-08-10)
+## Current numbers (5 recent mainnet blocks, 2026-08-18)
 
 | block | gas used | txs | **self-verifying c/g** | rows | **trusted-digests c/g** | rows |
 |---|---|---|---|---|---|---|
-| 25698189 | 41,932,456 | 415 | **28.87** | 1,210.4M | **22.26** | 933.5M |
-| 25697951 | 43,118,232 | 331 | 30.26 | 1,304.6M | 24.39 | 1,051.5M |
-| 25698026 | 31,842,749 | 483 | 31.17 | 992.6M | 24.06 | 766.2M |
-| 25698070 | 57,999,343 | 1312 | 30.45 | 1,766.3M | 24.59 | 1,426.5M |
-| 25698208 | 56,690,935 | 1291 | 30.36 | 1,721.4M | 24.76 | 1,403.7M |
+| 25698189 | 41,932,456 | 415 | **28.19** | 1,182.1M | **21.57** | 904.5M |
+| 25697951 | 43,118,232 | 331 | 29.70 | 1,280.5M | 23.81 | 1,026.8M |
+| 25698026 | 31,842,749 | 483 | 30.49 | 970.9M | 23.36 | 743.8M |
+| 25698070 | 57,999,343 | 1312 | 29.80 | 1,728.3M | 23.92 | 1,387.5M |
+| 25698208 | 56,690,935 | 1291 | 29.73 | 1,685.5M | 24.11 | 1,366.9M |
+
+Workstream A replaced postcard materialization with JEF views into the input region.
+On block 25698189: self-verifying **1,210,437,507 → 1,182,112,096 rows**
+(−28,325,411; 28.87 → 28.19 c/g); trusted-digests **933,525,098 → 904,478,743**
+(−29,046,355; 22.26 → 21.57 c/g). The `deserialize` marker is 4,381,052 rows;
+keccak remains 141,300 permutations.
 
 Campaign-2 checkpoint for comparison: 30.74 / 31.87 / 33.02 / 32.29 / 31.99 self
 (1,289.1M / 1,374.3M / 1,051.6M / 1,872.5M / 1,813.5M rows); 24.26 / 26.11 / 26.04 /
@@ -309,8 +315,8 @@ not measurements.
 - **Patches (guest workspace only):** ZeroOS allocator → `crates/alloc-o1` (O(1)
   size-class; upstreamed as [jolt#1746](https://github.com/a16z/jolt/pull/1746));
   revm-interpreter 35.0.1 → `crates/vendor/revm-interpreter` (typed `Stack::exchange`).
-- **Guest:** no_std RV64IMAC, 32 MiB input / 1.5 GiB heap / 32 MiB stack; postcard
-  input `{block RLP, pubkeys, witness}`; word-wise memcpy/memset/memcmp overrides;
+- **Guest:** no_std RV64IMAC, 32 MiB input / 1.5 GiB heap / 32 MiB stack; JEF v1
+  input views over block RLP, pubkeys, and witness; word-wise memcpy/memset/memcmp overrides;
   no-op critical-section provider.
 - **Witnesses:** free hosted geth `debug_executionWitness` (QuickNode docs-demo; BlockPI
   serves JSON-object headers my fetcher skips), `zeth-rpc-proxy`→publicnode as Tier 2.
@@ -335,7 +341,7 @@ or point `JOLT_PATH` at any `jolt` binary from that branch.
 ## Notes & caveats
 
 - Tracing only; `max_trace_length` is enforced at prove time and irrelevant here.
-- `witness.keys` ignored (as in zeth/rsp); deserialize ≈ 30M rows (1.5–2%).
+- `witness.keys` omitted from JEF; the flagship deserialize marker is 4.38M rows.
 - sig-verify covers signature checks + sender derivation (EIP-2 low-s enforced); the
   ecrecover override mirrors revm/k256 edge semantics and is self-checked by the
   post-state-root assertion on every block.
