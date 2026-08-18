@@ -22,7 +22,6 @@ pub fn run(dir: &str) -> Result<()> {
     )
     .map_err(anyhow::Error::msg)?;
 
-    std::fs::write(dir.join("block.rlp"), &block_rlp)?;
     std::fs::write(dir.join("input.bin"), &input)?;
     update_meta(dir, input.len())?;
     println!(

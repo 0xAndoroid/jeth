@@ -80,13 +80,23 @@ fn memory_config_for_program(program_size: u64, variant: Variant) -> MemoryConfi
     }
 }
 
-/// Address at which the postcard stream for a function argument is mapped.
+/// Address at which the postcard stream for the first guest argument is mapped.
+///
+/// The JEF self-align prefix only depends on this address mod 8; every region
+/// start is 8-aligned by `MemoryLayout` construction, which is what lets one
+/// input.bin serve all three variants (Advice maps it at trusted_advice_start).
 pub fn stream_start(variant: Variant) -> u64 {
     let layout = MemoryLayout::new(&memory_config_for_program(0, variant));
     match variant {
         Variant::Advice => layout.trusted_advice_start,
         Variant::Input | Variant::Trusted => layout.input_start,
     }
+}
+
+/// Address at which the Trusted variant's digest blob (second argument,
+/// trusted advice) is mapped.
+fn digest_stream_start() -> u64 {
+    MemoryLayout::new(&memory_config_for_program(0, Variant::Trusted)).trusted_advice_start
 }
 
 pub fn wrap_input(raw: &[u8]) -> Result<Vec<u8>> {
@@ -179,7 +189,8 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
     for code in &input.codes {
         blob.extend_from_slice(alloy_primitives::keccak256(code).as_slice());
     }
-    let blob = self_align(blob, stream_start(Variant::Trusted), 4)?;
+    let blob = jeth_core::container::self_align(blob, digest_stream_start(), 4)
+        .map_err(anyhow::Error::msg)?;
     println!(
         "digest blob: {} state + {} code digests ({} bytes)",
         input.state.len(),
@@ -187,40 +198,6 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
         blob.len()
     );
     Ok(blob)
-}
-
-fn self_align(body: Vec<u8>, stream_start: u64, content_mod_8: usize) -> Result<Vec<u8>> {
-    let mut pad_len = 0usize;
-    for _ in 0..3 {
-        let payload_len = 1 + pad_len + body.len();
-        let varint_len = postcard_varint_len(payload_len);
-        let current = (stream_start as usize + varint_len + 1) % 8;
-        let next = (content_mod_8 + 8 - current) % 8;
-        if next == pad_len {
-            break;
-        }
-        pad_len = next;
-    }
-    let payload_len = 1 + pad_len + body.len();
-    let varint_len = postcard_varint_len(payload_len);
-    anyhow::ensure!(
-        (stream_start as usize + varint_len + 1 + pad_len) % 8 == content_mod_8,
-        "alignment prefix did not converge"
-    );
-    let mut output = Vec::with_capacity(payload_len);
-    output.push(pad_len as u8);
-    output.resize(1 + pad_len, 0);
-    output.extend_from_slice(&body);
-    Ok(output)
-}
-
-fn postcard_varint_len(mut value: usize) -> usize {
-    let mut len = 1;
-    while value >= 0x80 {
-        value >>= 7;
-        len += 1;
-    }
-    len
 }
 
 /// Build (unless `skip_build` and both ELFs exist) the proven + `compute_advice`
@@ -386,4 +363,21 @@ pub fn run(
     println!("summary → {}", summary_path.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The JEF self-align prefix is computed against one region start but the
+    /// same input.bin is mapped at a different region per variant. That only
+    /// works while every stream start is 8-aligned — pin it against jolt
+    /// MemoryLayout drift.
+    #[test]
+    fn all_stream_starts_are_8_aligned() {
+        for variant in [Variant::Input, Variant::Advice, Variant::Trusted] {
+            assert_eq!(stream_start(variant) % 8, 0);
+        }
+        assert_eq!(digest_stream_start() % 8, 0);
+    }
 }

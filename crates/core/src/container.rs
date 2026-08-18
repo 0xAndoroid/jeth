@@ -318,28 +318,42 @@ impl ContainerWriter {
             (library_id_lo >> 32) as u32,
         );
 
-        let mut pad_len = 0usize;
-        for _ in 0..3 {
-            let payload_len = 1 + pad_len + body.len();
-            let varint_len = postcard_varint_len(payload_len);
-            let next = (8 - ((stream_start as usize + varint_len + 1) % 8)) % 8;
-            if next == pad_len {
-                break;
-            }
-            pad_len = next;
-        }
+        self_align(body, stream_start, 0)
+    }
+}
+
+/// Prepend a `u8 pad_len | zero pad` prefix so the byte after it lands at
+/// `content_mod_8` (mod 8) once the payload is postcard-wrapped (varint length
+/// prefix) and mapped at `stream_start`. Fixpoint over the varint length, which
+/// itself depends on the padded payload length.
+#[cfg(feature = "std")]
+pub fn self_align(
+    body: Vec<u8>,
+    stream_start: u64,
+    content_mod_8: usize,
+) -> Result<Vec<u8>, ContainerError> {
+    let mut pad_len = 0usize;
+    for _ in 0..3 {
         let payload_len = 1 + pad_len + body.len();
         let varint_len = postcard_varint_len(payload_len);
-        if !(stream_start as usize + varint_len + 1 + pad_len).is_multiple_of(8) {
-            return Err(ContainerError::InvalidPadding);
+        let current = (stream_start as usize + varint_len + 1) % 8;
+        let next = (content_mod_8 + 8 - current) % 8;
+        if next == pad_len {
+            break;
         }
-
-        let mut output = Vec::with_capacity(payload_len);
-        output.push(pad_len as u8);
-        output.resize(1 + pad_len, 0);
-        output.extend_from_slice(&body);
-        Ok(output)
+        pad_len = next;
     }
+    let payload_len = 1 + pad_len + body.len();
+    let varint_len = postcard_varint_len(payload_len);
+    if (stream_start as usize + varint_len + 1 + pad_len) % 8 != content_mod_8 {
+        return Err(ContainerError::InvalidPadding);
+    }
+
+    let mut output = Vec::with_capacity(payload_len);
+    output.push(pad_len as u8);
+    output.resize(1 + pad_len, 0);
+    output.extend_from_slice(&body);
+    Ok(output)
 }
 
 #[cfg(feature = "std")]
