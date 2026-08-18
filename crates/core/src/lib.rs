@@ -11,6 +11,7 @@ extern crate alloc;
 
 pub mod advice;
 mod chainspec;
+pub mod code_library;
 pub mod container;
 #[cfg(feature = "secp-inline")]
 mod crypto;
@@ -69,6 +70,9 @@ pub fn from_container(
 /// Decode JEF bytes whose backing allocation outlives validation.
 pub fn decode_container(bytes: &'static [u8]) -> Result<BlockInput, container::ContainerError> {
     let view = container::ContainerReader::read(bytes)?;
+    if view.library_id_lo != code_library::LIBRARY_ID_LO {
+        return Err(container::ContainerError::InvalidLibrary);
+    }
     let (block, signers, witness) = from_container(view)?;
     Ok(BlockInput {
         block,
@@ -128,6 +132,8 @@ pub struct ValidationResult {
 /// or post-state root mismatch. The guest wrapper panics on error, which the
 /// tracer surfaces as a failed run.
 pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, StatelessValidationError> {
+    let mut input = input;
+    code_library::append_raw_codes(&mut input.witness.codes);
     let chain_spec = Arc::new(mainnet_spec());
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 

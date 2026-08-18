@@ -2378,6 +2378,7 @@ dependencies = [
  "regex-lite",
  "reth-ethereum-primitives",
  "reth-primitives-traits",
+ "revm-bytecode",
  "rustc-demangle",
  "serde",
  "serde_json",

@@ -12,6 +12,7 @@ pub fn run(
     latest_minus: u64,
     rpc_list: Option<Vec<String>>,
     out_root: &str,
+    library_manifest: &str,
 ) -> Result<std::path::PathBuf> {
     let endpoints =
         rpc_list.unwrap_or_else(|| DEFAULT_ENDPOINTS.iter().map(|s| s.to_string()).collect());
@@ -76,17 +77,19 @@ pub fn run(
     println!("recovered {} tx pubkeys", signers.len());
 
     // 5. Assemble + encode.
-    let input = BlockInput {
+    let mut input = BlockInput {
         block,
         signers,
         witness,
     };
+    let (library_id, coverage) =
+        crate::library::filter_witness(&mut input.witness, library_manifest)?;
     let input_bytes = jeth_core::container::ContainerWriter::write(
         &raw,
         &input.signers,
         &input.witness,
         crate::trace::stream_start(crate::trace::Variant::Input),
-        0,
+        u64::from_le_bytes(library_id[..8].try_into().unwrap()),
     )
     .map_err(anyhow::Error::msg)?;
 
@@ -103,6 +106,11 @@ pub fn run(
         &wit_stats,
         &ep_block,
         &ep_wit,
+        LibraryMeta {
+            manifest: library_manifest,
+            id: &library_id,
+            coverage,
+        },
     );
     std::fs::write(dir.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
 
@@ -159,6 +167,7 @@ fn meta_json(
     w: &WitnessStats,
     ep_block: &str,
     ep_witness: &str,
+    library: LibraryMeta<'_>,
 ) -> Value {
     let mut tx_type_counts = std::collections::BTreeMap::<u8, usize>::new();
     for tx in &block.body.transactions {
@@ -184,8 +193,19 @@ fn meta_json(
             "keys": w.key_count,
         },
         "endpoints": { "block": ep_block, "witness": ep_witness },
+        "code_library": {
+            "manifest": library.manifest,
+            "library_id": format!("0x{}", alloy_primitives::hex::encode(library.id)),
+            "coverage": library.coverage,
+        },
         "fetched_at": chrono_free_now(),
     })
+}
+
+struct LibraryMeta<'a> {
+    manifest: &'a str,
+    id: &'a [u8; 32],
+    coverage: crate::library::Coverage,
 }
 
 /// ISO-ish UTC timestamp without pulling chrono.

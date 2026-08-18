@@ -8,6 +8,8 @@ name = "jeth"
 path = "src/main.rs"
 
 [features]
+default = ["code-library"]
+code-library = ["jeth-core/code-library"]
 # §8.1 pre-measurement report after run-native (see jeth-core/premeasure).
 premeasure = ["jeth-core/premeasure"]
 
@@ -19,6 +21,7 @@ reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde", "k256"] }
 alloy-rlp.workspace = true
+revm-bytecode.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 serde = { workspace = true, features = ["std"] }

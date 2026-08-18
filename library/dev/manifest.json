@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "library_id": "0x226546fb8402b6c01bbf6d1a2ba8c66e9e4b32518d12d76e26e6dfe4528bad09",
+  "source_blocks": [
+    25697951,
+    25698026,
+    25698070,
+    25698208
+  ],
+  "entry_count": 907,
+  "original_code_bytes": 8331273,
+  "analyzed_code_bytes": 8338080,
+  "jump_table_bytes": 1044587,
+  "index_bytes": 58064,
+  "top_n": null
+}

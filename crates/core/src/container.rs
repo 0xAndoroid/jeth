@@ -38,6 +38,7 @@ pub enum ContainerError {
     InvalidLength,
     InvalidCount,
     InvalidBlockRlp,
+    InvalidLibrary,
     TooLarge,
 }
 
@@ -53,6 +54,7 @@ impl fmt::Display for ContainerError {
             Self::InvalidLength => "invalid JEF length",
             Self::InvalidCount => "invalid JEF count",
             Self::InvalidBlockRlp => "invalid block RLP",
+            Self::InvalidLibrary => "JEF code-library id does not match the guest",
             Self::TooLarge => "JEF input exceeds v1 limits",
         })
     }

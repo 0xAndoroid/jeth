@@ -239,6 +239,9 @@ impl CodeMap {
     }
 
     fn get(&self, code_hash: &B256) -> Result<Bytecode, WitnessDbError> {
+        if let Some(code) = crate::code_library::lookup(code_hash) {
+            return Ok(code);
+        }
         match self {
             CodeMap::Eager(map) => map.get(code_hash).cloned().ok_or_else(|| {
                 WitnessDbError::TrieWitness(format!("bytecode for {code_hash} not found"))

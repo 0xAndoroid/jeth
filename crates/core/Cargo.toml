@@ -5,6 +5,7 @@ edition.workspace = true
 
 [features]
 std = []
+code-library = []
 # Verify tx signatures with the Jolt secp256k1 inline (guest builds only; native
 # builds keep alloy/k256). The inline SDK panics if called on a non-RISC-V target.
 # Also installs the alloy-consensus pluggable crypto backend so EIP-7702

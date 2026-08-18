@@ -6,6 +6,7 @@
 //! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
 
 mod fetch;
+mod library;
 mod profile;
 mod repack;
 mod rpc;
@@ -41,6 +42,9 @@ enum Command {
         /// Output root directory.
         #[arg(long, default_value = "data")]
         out: String,
+        /// Embedded code-library manifest used to omit covered witness codes.
+        #[arg(long, default_value = library::DEFAULT_MANIFEST)]
+        library: String,
     },
     /// Natively validate an input.bin (geth-witness compatibility gate).
     RunNative {
@@ -52,6 +56,14 @@ enum Command {
         /// Cached block directory containing witness.json and block.rlp.
         #[arg(long)]
         dir: String,
+        /// Embedded code-library manifest used to omit covered witness codes.
+        #[arg(long, default_value = library::DEFAULT_MANIFEST)]
+        library: String,
+    },
+    /// Build program-image-committed contract code artifacts.
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommand,
     },
     /// Trace the guest over an input.bin on the Jolt RV64IMAC emulator (streaming count).
     Trace {
@@ -122,6 +134,19 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum LibraryCommand {
+    /// Build a deterministic library from cached block witness directories.
+    Build {
+        #[arg(long, required = true, value_delimiter = ',', num_args = 1..)]
+        blocks: Vec<String>,
+        #[arg(long)]
+        top_n: Option<usize>,
+        #[arg(long)]
+        out: String,
+    },
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -137,9 +162,13 @@ fn main() -> Result<()> {
             latest_minus,
             rpc_list,
             out,
-        } => fetch::run(block, latest_minus, rpc_list, &out).map(|_| ()),
+            library,
+        } => fetch::run(block, latest_minus, rpc_list, &out, &library).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
-        Command::Repack { dir } => repack::run(&dir),
+        Command::Repack { dir, library } => repack::run(&dir, &library),
+        Command::Library { command } => match command {
+            LibraryCommand::Build { blocks, top_n, out } => library::build(&blocks, top_n, &out),
+        },
         Command::Trace {
             input,
             skip_build,
@@ -194,7 +223,13 @@ fn main() -> Result<()> {
             latest_minus,
             rpc_list,
         } => {
-            let input = fetch::run(None, latest_minus, rpc_list, "data")?;
+            let input = fetch::run(
+                None,
+                latest_minus,
+                rpc_list,
+                "data",
+                library::DEFAULT_MANIFEST,
+            )?;
             let input = input.to_string_lossy();
             run_native(&input)?;
             trace::run(&input, false, trace::Variant::Input, &[])

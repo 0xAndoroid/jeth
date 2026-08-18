@@ -10,7 +10,7 @@ edition = "2021"
 [workspace]
 
 [features]
-guest = []
+guest = ["jeth-core/code-library"]
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
