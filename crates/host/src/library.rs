@@ -15,14 +15,14 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_MANIFEST: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../library/dev/manifest.json"
+    "/../../library/production/manifest.json"
 );
 
 #[derive(Clone)]
 struct Candidate {
     code: Bytes,
-    block_frequency: usize,
-    witness_occurrences: usize,
+    block_frequency: u64,
+    last_seen: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -56,6 +56,7 @@ struct Manifest {
     jump_table_bytes: usize,
     index_bytes: usize,
     top_n: Option<usize>,
+    ranking: &'static str,
 }
 
 pub struct LoadedLibrary {
@@ -160,22 +161,23 @@ pub fn build(block_dirs: &[String], top_n: Option<usize>, out: &str) -> Result<(
             let entry = candidates.entry(hash).or_insert_with(|| Candidate {
                 code: code.clone(),
                 block_frequency: 0,
-                witness_occurrences: 0,
+                last_seen: block.header.number,
             });
             anyhow::ensure!(entry.code == code, "code hash collision for {hash}");
-            entry.witness_occurrences += 1;
+            entry.last_seen = entry.last_seen.max(block.header.number);
             if seen.insert(hash) {
                 entry.block_frequency += 1;
             }
         }
     }
 
+    let oldest_block = *source_blocks.iter().min().unwrap();
+    let score = |candidate: &Candidate| {
+        candidate.block_frequency * (candidate.last_seen - oldest_block + 1)
+    };
     let mut selected: Vec<_> = candidates.into_iter().collect();
     selected.sort_by(|(hash_a, a), (hash_b, b)| {
-        b.block_frequency
-            .cmp(&a.block_frequency)
-            .then_with(|| b.witness_occurrences.cmp(&a.witness_occurrences))
-            .then_with(|| hash_a.cmp(hash_b))
+        score(b).cmp(&score(a)).then_with(|| hash_a.cmp(hash_b))
     });
     if let Some(limit) = top_n {
         selected.truncate(limit);
@@ -231,6 +233,8 @@ pub fn build(block_dirs: &[String], top_n: Option<usize>, out: &str) -> Result<(
         jump_table_bytes: jump_tables.len(),
         index_bytes: index.len(),
         top_n,
+        ranking:
+            "block_frequency * (last_seen_block - oldest_source_block + 1); hash ascending on ties",
     };
     let out = PathBuf::from(out);
     std::fs::create_dir_all(&out)?;

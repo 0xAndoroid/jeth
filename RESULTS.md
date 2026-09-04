@@ -349,3 +349,215 @@ or point `JOLT_PATH` at any `jolt` binary from that branch.
   pluggable like revm's; candidate for the same inline treatment.
 - The 5 blocks are contiguous-era (one busy afternoon, 31.8–58M gas, DEX-heavy);
   composition variance is visible (SWAP-heavy block 25698070 runs hottest per gas).
+
+## Campaign wave 1 — JEF + committed bytecode (2026-09-04)
+
+Gas-weighted self **26.045393 → 24.305792 c/g** (−1.739601, −6.68%); trusted **20.016668 → 19.145523 c/g** (−0.871145, −4.35%). No block regresses in either variant.
+
+### Provenance and gates
+
+- Baseline: `f419ad9`; Jolt `628713fd4`, read-only `main-2026-09-04` pin unchanged. Self means committed-input validation; trusted means verifier-trusted witness digests. Execute-only traces, not proofs. Rows include virtual instructions; only the proven pass counts.
+- Zero-parse merge: `d5471aa` (`3827001`). Only conflict: `crates/core/Cargo.toml`; kept the new Jolt SDK path plus JEF postcard dev dependency. Bytecode stack (`7bc0b96`) merged without conflicts.
+- Library: all four `library/dev` artifacts already committed; byte-identical to `7bc0b96`, not rebuilt. 907 entries, 8,338,080 analyzed-code bytes, 1,044,587 jump-table bytes, 58,064 index bytes. Sources: 25697951, 25698026, 25698070, 25698208. ID `0x226546fb8402b6c01bbf6d1a2ba8c66e9e4b32518d12d76e26e6dfe4528bad09`. No benchmark blocks used to build the library.
+- Native validation: 10/10 after JEF and 10/10 after library packing; hashes match wave 0. Final self/trusted traces: 20/20, same hashes and gas. Existing nextest suite: 5/5 (includes all 907 library hash/jump-table bindings). Self permutation reductions equal covered code permutations exactly; trusted permutation totals unchanged.
+- Detached both `input.bin` and `meta.json` symlinks before repack. Recovered missing `block.rlp` offline from each legacy postcard input’s first byte field; checked lengths against metadata, then native/guest hash parity. Witness symlinks remain read-only. All 50 advice-trie data SHA-256 hashes and mtimes unchanged; its git status clean.
+
+### Intermediate: zero-parse only
+
+| Block | Wave-0 self c/g | JEF self rows | JEF self c/g | Δ c/g | Deserialize rows | Self keccak perms (unchanged) |
+|---|---:|---:|---:|---:|---:|---:|
+| 25905781 | 26.218185 | 1,132,451,832 | 25.605395 | -0.612790 | 3,443,597 | 148,684 |
+| 25905786 | 22.266911 | 572,513,990 | 21.723949 | -0.542962 | 1,917,515 | 78,800 |
+| 25905788 | 29.364373 | 178,197,848 | 28.660207 | -0.704166 | 705,234 | 23,611 |
+
+Three-block plain mean: 25.949823 → 25.329850; gas-weighted: 25.116991 → 24.520765. Intermediate trusted traces were not requested/measured.
+
+### Full 10-block set: self
+
+| Block | Gas | Wave-0 rows | Wave-0 c/g | Wave-1 rows | Wave-1 c/g | Δ c/g |
+|---|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 1,159,553,732 | 26.218185 | 1,074,581,041 | 24.296903 | -1.921282 |
+| 25905782 | 47,065,991 | 1,281,959,982 | 27.237501 | 1,214,386,698 | 25.801787 | -1.435714 |
+| 25905783 | 25,320,107 | 644,919,056 | 25.470629 | 590,300,791 | 23.313519 | -2.157110 |
+| 25905784 | 19,039,352 | 500,722,899 | 26.299367 | 458,550,662 | 24.084363 | -2.215004 |
+| 25905785 | 47,351,982 | 1,176,016,187 | 24.835628 | 1,108,179,054 | 23.403013 | -1.432614 |
+| 25905786 | 26,354,048 | 586,823,238 | 22.266911 | 539,362,998 | 20.466040 | -1.800871 |
+| 25905787 | 27,961,947 | 750,018,059 | 26.822812 | 698,878,917 | 24.993929 | -1.828883 |
+| 25905788 | 6,217,605 | 182,576,075 | 29.364373 | 169,045,610 | 27.188220 | -2.176154 |
+| 25905789 | 44,608,380 | 1,233,757,844 | 27.657535 | 1,168,484,347 | 26.194279 | -1.463256 |
+| 25905790 | 32,881,199 | 844,945,431 | 25.696917 | 781,062,263 | 23.754069 | -1.942848 |
+| Plain mean | — | — | 26.186986 | — | 24.349612 | -1.837374 |
+| Gas-weighted mean | — | — | 26.045393 | — | 24.305792 | -1.739601 |
+
+### Full 10-block set: trusted
+
+| Block | Gas | Wave-0 rows | Wave-0 c/g | Wave-1 rows | Wave-1 c/g | Δ c/g |
+|---|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 879,653,583 | 19.889480 | 839,307,220 | 18.977225 | -0.912255 |
+| 25905782 | 47,065,991 | 1,019,260,670 | 21.655991 | 981,953,437 | 20.863333 | -0.792658 |
+| 25905783 | 25,320,107 | 487,781,368 | 19.264586 | 463,695,707 | 18.313339 | -0.951246 |
+| 25905784 | 19,039,352 | 375,857,499 | 19.741087 | 356,291,764 | 18.713440 | -1.027647 |
+| 25905785 | 47,351,982 | 911,097,971 | 19.240968 | 873,871,191 | 18.454796 | -0.786172 |
+| 25905786 | 26,354,048 | 433,649,800 | 16.454770 | 411,716,667 | 15.622521 | -0.832249 |
+| 25905787 | 27,961,947 | 580,776,145 | 20.770233 | 556,503,646 | 19.902178 | -0.868055 |
+| 25905788 | 6,217,605 | 138,143,068 | 22.218051 | 131,563,392 | 21.159818 | -1.058233 |
+| 25905789 | 44,608,380 | 969,623,128 | 21.736345 | 932,359,607 | 20.900997 | -0.835348 |
+| 25905790 | 32,881,199 | 630,061,389 | 19.161752 | 598,980,404 | 18.216501 | -0.945251 |
+| Plain mean | — | — | 20.013326 | — | 19.112415 | -0.900911 |
+| Gas-weighted mean | — | — | 20.016668 | — | 19.145523 | -0.871145 |
+
+### Coverage, self permutations, deserialize
+
+| Block | Codes hit / total | Code perms covered / total | Self perms wave 0 → 1 | Δ perms | Deserialize rows self / trusted |
+|---|---:|---:|---:|---:|---:|
+| 25905781 | 229/474 (48.31%) | 14,517/31,067 (46.73%) | 148,684 → 134,167 | -14,517 | 3,429,919 / 3,429,919 |
+| 25905782 | 146/364 (40.11%) | 9,929/23,451 (42.34%) | 150,676 → 140,747 | -9,929 | 3,069,996 / 3,069,996 |
+| 25905783 | 160/286 (55.94%) | 9,896/17,934 (55.18%) | 81,190 → 71,294 | -9,896 | 1,894,874 / 1,894,874 |
+| 25905784 | 126/221 (57.01%) | 7,334/13,931 (52.65%) | 66,064 → 58,730 | -7,334 | 1,590,210 / 1,590,210 |
+| 25905785 | 161/369 (43.63%) | 10,032/25,302 (39.65%) | 151,088 → 141,056 | -10,032 | 2,826,767 / 2,826,767 |
+| 25905786 | 133/303 (43.89%) | 8,283/19,815 (41.80%) | 78,800 → 70,517 | -8,283 | 1,908,819 / 1,908,819 |
+| 25905787 | 147/289 (50.87%) | 8,735/18,546 (47.10%) | 89,940 → 81,205 | -8,735 | 2,042,412 / 2,042,412 |
+| 25905788 | 45/71 (63.38%) | 2,263/3,918 (57.76%) | 23,611 → 21,348 | -2,263 | 701,114 / 701,114 |
+| 25905789 | 150/327 (45.87%) | 9,216/21,492 (42.88%) | 157,792 → 148,576 | -9,216 | 2,926,351 / 2,926,351 |
+| 25905790 | 168/312 (53.85%) | 10,687/20,155 (53.02%) | 112,956 → 102,269 | -10,687 | 2,738,879 / 2,738,879 |
+
+Aggregate coverage: **1,465/3,016 codes (48.5743%)**, **90,892/195,611 code-hash permutations (46.4657%)**. Library source blocks are 207,573–207,839 blocks older than the benchmark. This measures cross-era held-out coverage, not a paired decay experiment on the same target blocks.
+
+Reproduction (run cargo/build operations sequentially):
+
+```sh
+export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-campaign-2x
+export JOLT_PATH=/Volumes/Dev/cargo-target/jolt-cli-main/release/jolt
+cargo build -q --message-format=short --release -p jeth-host
+cargo nextest run --cargo-quiet --release --workspace
+# Use local regular input.bin and meta.json files before repacking.
+"$CARGO_TARGET_DIR/release/jeth" repack --dir data/25905781 --library library/dev/manifest.json
+"$CARGO_TARGET_DIR/release/jeth" run-native --input data/25905781/input.bin
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin --trusted-digests
+```
+
+Repeat native/traces for blocks 25905782–25905790; use `--skip-build` after each variant’s first build. Raw measurements and logs: `/tmp/jeth-wave1/{wave0,zero,both,coverage}.json`, `/tmp/jeth-wave1/{zero,both}-*.log`. Per-block copies: `data/<block>/{wave0,zero,wave1}-trace-summary*.json`.
+
+## Campaign wave 2 — fresh-neighborhood production library (2026-09-04)
+
+Gas-weighted self **24.305792 → 23.331042 c/g**; trusted **19.145523 → 18.911472 c/g**. No block’s trace-row count regresses in either variant. Execute-only traces; Jolt pin unchanged at `628713fd4`.
+
+### Source window and sizing
+
+Fetched **80/80 blocks, zero failures**: 25905701–25905780, using `jeth fetch --out data-lib`. RPC retries: 138 HTTP-429 backoffs; successful call wall times sum to 778.8 s, plus a 2 s inter-block throttle. Only this explicit window contributes to rev-1; concurrently fetched older sources are excluded. Benchmark 25905781–25905790 contributes no library code.
+
+Rank: `block_frequency * (last_seen_block - oldest_source_block + 1)`, descending; hash ascending on ties. Frequency counts each hash once per source block. Offline coverage uses every cached witness code occurrence, with `len(code) // 136 + 1` permutations. All MB below are decimal, including analyzed code, jump tables, and index.
+
+| K cap | Entries | Artifact MB | Codes covered | Code perms covered | Covered perms |
+|---|---:|---:|---:|---:|---:|
+| 500 | 500 | 5.074 | 60.345% | 59.386% | 116,166 |
+| 1000 | 1,000 | 10.289 | 72.546% | 71.661% | 140,176 |
+| 2000 | 2,000 | 20.619 | 82.858% | 81.456% | 159,336 |
+| 3000 | 3,000 | 30.682 | 86.439% | 85.334% | 166,922 |
+| 4000 | 4,000 | 41.131 | 87.467% | 86.541% | 169,284 |
+| 6000 | 4,797 | 49.383 | 89.390% | 88.341% | 172,805 |
+| 8000 | 4,797 | 49.383 | 89.390% | 88.341% | 172,805 |
+| all | 4,797 | 49.383 | 89.390% | 88.341% | 172,805 |
+
+**Pick K=3,000 (30.682 MB):** first measured tier above 85% permutation coverage, at 85.334%. K=4,000 adds 10.449 MB for 1.207 percentage points; the full 4,797-entry union adds 18.701 MB over the pick for 3.007 points. The curve flattens after K=2,000; K=3,000 adds 3.878 points and crosses the target. The 88.341% union ceiling is a source-window limit, not a size limit.
+
+### Production artifact and gates
+
+`library/production`: 3,000 entries; 27,073,904 raw-code bytes; 27,095,148 analyzed-code bytes; 3,394,869 jump-table bytes; 192,016 index bytes. ID `0x9306c4e333d2ee459ee4129edfd78f7f69aa21ced31f1b4457faab946929b12a`.
+
+Independent source-only rank reconstruction matches the selected hashes. Rebuilding with `jeth library build` produced byte-identical index, codes, jump tables, and manifest. Both host and guest default to this artifact; `library/dev` is retained as the historical baseline.
+
+Native validation: **10/10 benchmark hashes match wave 1**, plus the committed fixture hash matches. All 11 inputs repacked with `--library library/production/manifest.json`; stamped IDs and repack coverage match the offline calculation. Fixture witness copied read-only from `~/dev/jeth/data/25698189/witness.json`. No symlink writes; 59 protected source-data files retain their SHA-256 and mtime.
+
+Nextest: **5/5**, including the existing per-entry binding/parity test against all 3,000 embedded entries. Binding test: **37 → 86 ms**; suite: **39 → 88 ms**. No tests removed. Full self/trusted traces: **20/20**, identical block hashes and gas. Profiling lane released the wave-1 inputs before repack.
+
+| ELF | Wave-1 bytes | Wave-2 bytes | Delta bytes |
+|---|---:|---:|---:|
+| self | 11,390,304 | 32,631,616 | +21,241,312 |
+| trusted | 11,391,024 | 32,632,320 | +21,241,296 |
+
+### Full measurement ledger
+
+#### Self
+
+| Block | Gas | Wave-1 rows | Wave-2 rows | c/g wave 1 → 2 | Delta c/g |
+|---|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 1,074,581,041 | 1,026,896,402 | 24.296903 → 23.218725 | -1.078177 |
+| 25905782 | 47,065,991 | 1,214,386,698 | 1,174,618,499 | 25.801787 → 24.956842 | -0.844946 |
+| 25905783 | 25,320,107 | 590,300,791 | 564,373,652 | 23.313519 → 22.289545 | -1.023974 |
+| 25905784 | 19,039,352 | 458,550,662 | 438,819,393 | 24.084363 → 23.048021 | -1.036341 |
+| 25905785 | 47,351,982 | 1,108,179,054 | 1,059,304,849 | 23.403013 → 22.370866 | -1.032147 |
+| 25905786 | 26,354,048 | 539,362,998 | 504,204,199 | 20.466040 → 19.131945 | -1.334095 |
+| 25905787 | 27,961,947 | 698,878,917 | 669,139,908 | 24.993929 → 23.930376 | -1.063553 |
+| 25905788 | 6,217,605 | 169,045,610 | 163,174,014 | 27.188220 → 26.243869 | -0.944350 |
+| 25905789 | 44,608,380 | 1,168,484,347 | 1,138,079,161 | 26.194279 → 25.512676 | -0.681603 |
+| 25905790 | 32,881,199 | 781,062,263 | 751,300,423 | 23.754069 → 22.848936 | -0.905132 |
+| Plain mean | — | — | — | 24.349612 → 23.355180 | -0.994432 |
+| Gas-weighted mean | — | — | — | 24.305792 → 23.331042 | -0.974750 |
+
+#### Trusted
+
+| Block | Gas | Wave-1 rows | Wave-2 rows | c/g wave 1 → 2 | Delta c/g |
+|---|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 839,307,220 | 827,710,368 | 18.977225 → 18.715013 | -0.262212 |
+| 25905782 | 47,065,991 | 981,953,437 | 972,516,363 | 20.863333 → 20.662826 | -0.200507 |
+| 25905783 | 25,320,107 | 463,695,707 | 457,357,890 | 18.313339 → 18.063031 | -0.250308 |
+| 25905784 | 19,039,352 | 356,291,764 | 351,506,093 | 18.713440 → 18.462083 | -0.251357 |
+| 25905785 | 47,351,982 | 873,871,191 | 862,131,507 | 18.454796 → 18.206873 | -0.247924 |
+| 25905786 | 26,354,048 | 411,716,667 | 403,320,374 | 15.622521 → 15.303925 | -0.318596 |
+| 25905787 | 27,961,947 | 556,503,646 | 549,405,041 | 19.902178 → 19.648311 | -0.253867 |
+| 25905788 | 6,217,605 | 131,563,392 | 130,189,227 | 21.159818 → 20.938806 | -0.221012 |
+| 25905789 | 44,608,380 | 932,359,607 | 925,122,559 | 20.900997 → 20.738762 | -0.162235 |
+| 25905790 | 32,881,199 | 598,980,404 | 591,846,888 | 18.216501 → 17.999553 | -0.216948 |
+| Plain mean | — | — | — | 19.112415 → 18.873918 | -0.238497 |
+| Gas-weighted mean | — | — | — | 19.145523 → 18.911472 | -0.234051 |
+
+### Coverage and exact permutation ledger
+
+| Block | Codes covered | Code perms covered | Self perms wave 1 → 2 | Gained | Lost | Net drop | Trusted perms (unchanged) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 412/474 (86.92%) | 26,055/31,067 (83.87%) | 134,167 → 122,629 | 12,006 | 468 | 11,538 | 62,694 |
+| 25905782 | 307/364 (84.34%) | 19,626/23,451 (83.69%) | 140,747 → 131,050 | 9,697 | 0 | 9,697 | 70,240 |
+| 25905783 | 261/286 (91.26%) | 16,159/17,934 (90.10%) | 71,294 → 65,031 | 6,310 | 47 | 6,263 | 32,841 |
+| 25905784 | 195/221 (88.24%) | 12,113/13,931 (86.95%) | 58,730 → 53,951 | 5,094 | 315 | 4,779 | 27,649 |
+| 25905785 | 318/369 (86.18%) | 21,907/25,302 (86.58%) | 141,056 → 129,181 | 11,875 | 0 | 11,875 | 69,854 |
+| 25905786 | 264/303 (87.13%) | 16,840/19,815 (84.99%) | 70,517 → 61,960 | 8,557 | 0 | 8,557 | 31,537 |
+| 25905787 | 244/289 (84.43%) | 15,975/18,546 (86.14%) | 81,205 → 73,965 | 7,453 | 213 | 7,240 | 37,882 |
+| 25905788 | 67/71 (94.37%) | 3,701/3,918 (94.46%) | 21,348 → 19,910 | 1,438 | 0 | 1,438 | 9,989 |
+| 25905789 | 259/327 (79.20%) | 16,624/21,492 (77.35%) | 148,576 → 141,168 | 7,467 | 59 | 7,408 | 77,040 |
+| 25905790 | 280/312 (89.74%) | 17,922/20,155 (88.92%) | 102,269 → 95,034 | 7,569 | 334 | 7,235 | 47,060 |
+
+Aggregate: **2,607/3,016 codes (86.4390%)**; **166,922/195,611 code perms (85.3336%)**. Plain per-block mean: 87.1806% codes, 86.3047% perms.
+
+Wave-1 covered perms **90,892 → 166,922**. Gained hits cover 77,466 perms; lost dev-library hits cover 1,436; **net +76,030 = measured self permutation drop exactly**, both per block and in total. Relative to wave 0, cumulative drop is 166,922. Trusted permutation counts are unchanged; its row saving comes from non-keccak work.
+
+### Wall time
+
+| Counted trace pass, 10 blocks | Wave-1 seconds | Wave-2 seconds | Delta | Rows saved |
+|---|---:|---:|---:|---:|
+| self | 79.379 | 68.902 | -13.20% | 312,921,881 |
+| trusted | 72.688 | 63.783 | -12.25% | 75,136,725 |
+
+| Matched block 25905788, skip-build | Proven ELF decode/setup seconds | Startup through compute-ELF setup seconds | Full process seconds |
+|---|---:|---:|---:|
+| self | 0.633 → 1.711 | 0.650 → 1.728 | 5.008 → 7.198 |
+| trusted | 0.631 → 1.702 | 0.655 → 1.733 | 4.763 → 6.962 |
+
+ELF decode/setup timing is the interval between `advice tape:` and `tracing (` output; it includes `memory_config`/`tracer::decode` and intervening cleanup. Counted-pass timing is the existing tracer summary field. These are single runs on the same machine, with concurrent RPC fetching; wall-time differences include run-to-run noise. Trace-row and permutation counts are exact.
+
+### Reproduction and evidence
+
+```sh
+export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-campaign-2x
+export JOLT_PATH=/Volumes/Dev/cargo-target/jolt-cli-main/release/jolt
+"$CARGO_TARGET_DIR/release/jeth" library build --blocks data-lib/{25905701..25905780} --top-n 3000 --out /tmp/jeth-production-rebuild
+cargo build -q --message-format=short --release -p jeth-host
+"$CARGO_TARGET_DIR/release/jeth" repack --dir data/25905781 --library library/production/manifest.json
+"$CARGO_TARGET_DIR/release/jeth" run-native --input data/25905781/input.bin
+cargo nextest run --cargo-quiet --release --workspace
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin --trusted-digests
+```
+
+Repeat native/traces for blocks 25905782–25905790; use `--skip-build` after each variant’s first build. Offline full curve, per-block candidate coverage, source fingerprints, timing captures, gate logs, and scripts: `/tmp/jeth-wave2/`. Final per-block summaries: `data/<block>/wave2-trace-summary*.json`. Papercuts logged with `--source jeth-wave2 --tag jeth`: RPC throttling; a provisional broad-glob source count mixed in the older-source lane (corrected before selection; final source allowlist is explicit).

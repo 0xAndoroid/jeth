@@ -9,7 +9,7 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let library_dir = env::var_os("JETH_CODE_LIBRARY")
         .map(PathBuf::from)
-        .unwrap_or_else(|| manifest_dir.join("../../library/dev"));
+        .unwrap_or_else(|| manifest_dir.join("../../library/production"));
     let library_dir = library_dir.canonicalize().unwrap_or_else(|error| {
         panic!(
             "code library {} is unavailable: {error}; run `jeth library build`",
