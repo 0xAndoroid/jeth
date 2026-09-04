@@ -561,3 +561,92 @@ cargo nextest run --cargo-quiet --release --workspace
 ```
 
 Repeat native/traces for blocks 25905782–25905790; use `--skip-build` after each variant’s first build. Offline full curve, per-block candidate coverage, source fingerprints, timing captures, gate logs, and scripts: `/tmp/jeth-wave2/`. Final per-block summaries: `data/<block>/wave2-trace-summary*.json`. Papercuts logged with `--source jeth-wave2 --tag jeth`: RPC throttling; a provisional broad-glob source count mixed in the older-source lane (corrected before selection; final source allowlist is explicit).
+
+## Campaign wave 3 — address memo + deferred recovery (2026-09-04)
+
+Self-only: gas-weighted **23.331042 → 21.685187 c/g** (−7.0544%);
+plain **23.355180 → 21.595203 c/g**. All ten blocks improve.
+Merged `80eb287` (allocator kill ledger), `4156669` (address memo), and
+`d7c9622` (deferred recovery), in that order; no conflicts or resolutions.
+No new optimization. Jolt remains read-only at `628713fd4`.
+Trusted variant dropped by user directive; no trusted gates run.
+
+### Ladder
+
+| Step | Mechanism | Full-set rows | Gas-weighted self c/g | Delta c/g |
+|---|---|---:|---:|---:|
+| Wave 2 | Production bytecode library | 7,489,910,500 | 23.331042 | — |
+| Wave 3 | Address memo + deferred recovery | 6,961,545,463 | 21.685187 | -1.645855 |
+
+### Full 10-block SELF ledger
+
+| Block | Gas | Wave-2 rows | Wave-3 rows | Wave-2 c/g | Wave-3 c/g | Delta c/g |
+|---|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 1,026,896,402 | 938,512,897 | 23.218725 | 21.220323 | -1.998402 |
+| 25905782 | 47,065,991 | 1,174,618,499 | 1,106,461,974 | 24.956842 | 23.508736 | -1.448106 |
+| 25905783 | 25,320,107 | 564,373,652 | 516,751,690 | 22.289545 | 20.408748 | -1.880796 |
+| 25905784 | 19,039,352 | 438,819,393 | 400,871,656 | 23.048021 | 21.054900 | -1.993121 |
+| 25905785 | 47,351,982 | 1,059,304,849 | 1,003,270,651 | 22.370866 | 21.187511 | -1.183355 |
+| 25905786 | 26,354,048 | 504,204,199 | 461,937,742 | 19.131945 | 17.528151 | -1.603794 |
+| 25905787 | 27,961,947 | 669,139,908 | 614,337,260 | 23.930376 | 21.970475 | -1.959901 |
+| 25905788 | 6,217,605 | 163,174,014 | 148,643,438 | 26.243869 | 23.906864 | -2.337005 |
+| 25905789 | 44,608,380 | 1,138,079,161 | 1,086,513,295 | 25.512676 | 24.356708 | -1.155968 |
+| 25905790 | 32,881,199 | 751,300,423 | 684,244,860 | 22.848936 | 20.809608 | -2.039328 |
+| Plain mean | — | — | — | 23.355180 | 21.595203 | -1.759978 |
+| Gas-weighted mean | — | — | — | 23.331042 | 21.685187 | -1.645855 |
+
+Total saving: **528,365,037 rows**. Measured gas-weighted result is
+0.085187 c/g above the estimated 21.2–21.6 band. Per-block savings are
+1.155968–2.337005 c/g; the estimate was not a hard acceptance gate.
+On 781/786/788, row savings equal the sum of the two lanes' isolated savings exactly.
+
+### Exact permutation accounting
+
+Temporary native probes counted memo hits at `hash_address` and equation count
+at `Batch::verify`, using the merged `secp-inline` recovery/validation path.
+Every probe output hash matched its recorded block hash. Probes removed before
+handoff; the final host rebuilt without them. SELF measurements use unmodified
+merged guest code, not probe builds.
+
+For a nonempty batch of n equations: one 34 + 224n byte tuple transcript plus
+n single-permutation challenges adds `n + floor((34 + 224n)/136) + 1` permutations.
+One batch per block. Final proven-pass `post_validation` counters give the measured
+delta. **Delta = −memo hits + transcript/challenge perms; residual zero on 10/10.**
+
+| Block | Wave-2 perms | Wave-3 perms | Delta | Memo hits | Recoveries n | Added perms | Residual |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 122,629 | 121,206 | -1,423 | 2,832 | 532 | 1,409 | 0 |
+| 25905782 | 131,050 | 130,184 | -866 | 1,986 | 423 | 1,120 | 0 |
+| 25905783 | 65,031 | 64,506 | -525 | 1,357 | 314 | 832 | 0 |
+| 25905784 | 53,951 | 53,563 | -388 | 1,066 | 256 | 678 | 0 |
+| 25905785 | 129,181 | 128,159 | -1,022 | 1,984 | 363 | 962 | 0 |
+| 25905786 | 61,960 | 61,356 | -604 | 1,349 | 281 | 745 | 0 |
+| 25905787 | 73,965 | 73,342 | -623 | 1,534 | 344 | 911 | 0 |
+| 25905788 | 19,910 | 19,861 | -49 | 375 | 123 | 326 | 0 |
+| 25905789 | 141,168 | 140,584 | -584 | 1,522 | 354 | 938 | 0 |
+| 25905790 | 95,034 | 94,002 | -1,032 | 2,139 | 418 | 1,107 | 0 |
+
+### Gates and reproduction
+
+- Release host and SELF compute/proven ELF pair built under `/tmp/jeth-w3-cargo.lock`.
+- Native validation **10/10**: block hashes and gas agree with wave-2 records; SELF trace hashes match too.
+- Release workspace nextest with `jeth-host/secp-inline`: **14/14 passed, zero skipped**.
+- SELF traces **10/10**, no panics or regressions; exact permutation reconciliation **10/10**.
+
+```sh
+export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-campaign-2x
+export JOLT_PATH=/Volumes/Dev/cargo-target/jolt-cli-main/release/jolt
+# Acquire /tmp/jeth-w3-cargo.lock with mkdir; release with rmdir after builds.
+cargo build -q --message-format=short --release -p jeth-host --features secp-inline
+cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-inline
+"$CARGO_TARGET_DIR/release/jeth" run-native --input data/25905781/input.bin
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin
+```
+
+Repeat native/SELF traces for 25905782–25905790 with `--skip-build` on traces.
+Merged guest target prefix remains `/Volumes/Dev/cargo-target/jeth-w3-ecrecover-guest`.
+Raw logs, baseline snapshots, counter probes, and machine-readable ledger:
+`/tmp/jeth-wave3/`. Per-block `wave2-trace-summary.json` retains the baseline;
+`trace-summary.json` and `wave3-trace-summary.json` contain the merged SELF result.
+Papercut: macOS Bash rejects empty array expansion under `set -u`; the one-off
+runner uses an explicit first-build branch. No production changes required.
