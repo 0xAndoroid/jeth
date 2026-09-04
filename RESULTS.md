@@ -711,3 +711,101 @@ authentication, not by the skip loops.
 No remaining single in-lane pool clears 8M: mem builtins are already
 shift-combine word-wise (disassembly-verified), journal/U256/gas pools
 live in unvendored revm-context / ruint and are fragmented per-symbol.
+
+## Campaign wave 4 — merged interpreter + keccak pin (2026-09-04)
+
+SELF gas-weighted **21.685187 → 19.780546 c/g**
+(-8.7831%); all ten blocks improve. Native parity **10/10**;
+SELF traces **10/10**; release workspace nextest **14/14**, zero skipped.
+No trusted gates. No new optimization.
+
+### Ladder
+
+| Step | Mechanism | Full-set rows | Gas-weighted SELF c/g | Delta c/g |
+|---|---|---:|---:|---:|
+| Wave 3 | Address memo + deferred recovery | 6,961,545,463 | 21.685187 | — |
+| Wave 4 | Word-wise EVM memory ops + keccak XOR/ROTL fusion | 6,350,103,110 | 19.780546 | -1.904641 |
+
+### Full 10-block SELF ledger and permutation accounting
+
+| Block | Gas | Wave-3 rows | Wave-4 rows | Wave-3 c/g | Wave-4 c/g |
+|---|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 938,512,897 | 856,491,307 | 21.220323 | 19.365767 |
+| 25905782 | 47,065,991 | 1,106,461,974 | 1,012,323,673 | 23.508736 | 21.508602 |
+| 25905783 | 25,320,107 | 516,751,690 | 473,117,938 | 20.408748 | 18.685464 |
+| 25905784 | 19,039,352 | 400,871,656 | 364,751,467 | 21.054900 | 19.157767 |
+| 25905785 | 47,351,982 | 1,003,270,651 | 915,054,927 | 21.187511 | 19.324533 |
+| 25905786 | 26,354,048 | 461,937,742 | 420,011,691 | 17.528151 | 15.937274 |
+| 25905787 | 27,961,947 | 614,337,260 | 559,788,641 | 21.970475 | 20.019659 |
+| 25905788 | 6,217,605 | 148,643,438 | 136,331,705 | 23.906864 | 21.926723 |
+| 25905789 | 44,608,380 | 1,086,513,295 | 990,428,932 | 24.356708 | 22.202755 |
+| 25905790 | 32,881,199 | 684,244,860 | 621,802,829 | 20.809608 | 18.910589 |
+| Plain mean | — | — | — | 21.595203 | 19.703913 |
+| Gas-weighted mean | 321,027,690 | 6,961,545,463 | 6,350,103,110 | 21.685187 | 19.780546 |
+
+| Block | Wave-3 perms | Wave-4 perms | Saved rows | 576 × perms | Non-keccak saving |
+|---|---:|---:|---:|---:|---:|
+| 25905781 | 121,206 | 121,206 | 82,021,590 | 69,814,656 | 12,206,934 |
+| 25905782 | 130,184 | 130,184 | 94,138,301 | 74,985,984 | 19,152,317 |
+| 25905783 | 64,506 | 64,506 | 43,633,752 | 37,155,456 | 6,478,296 |
+| 25905784 | 53,563 | 53,563 | 36,120,189 | 30,852,288 | 5,267,901 |
+| 25905785 | 128,159 | 128,159 | 88,215,724 | 73,819,584 | 14,396,140 |
+| 25905786 | 61,356 | 61,356 | 41,926,051 | 35,341,056 | 6,584,995 |
+| 25905787 | 73,342 | 73,342 | 54,548,619 | 42,244,992 | 12,303,627 |
+| 25905788 | 19,861 | 19,861 | 12,311,733 | 11,439,936 | 871,797 |
+| 25905789 | 140,584 | 140,584 | 96,084,363 | 80,976,384 | 15,107,979 |
+| 25905790 | 94,002 | 94,002 | 62,442,031 | 54,145,152 | 8,296,879 |
+
+Total rows saved: 611,442,353; keccak: 510,775,488; non-keccak: 100,666,865.
+Gas-weighted change: -8.7831%.
+
+Permutation counts unchanged **10/10**. Every block saves at least `576 × perms`.
+Non-keccak saving is the measured residual after subtracting that exact keccak
+term, attributed to the merged word-wise MLOAD/MSTORE/CALLDATALOAD path.
+On 781/786/788, it matches the interpreter lane's isolated savings exactly:
+12,206,934 / 6,584,995 / 871,797 rows; reconciliation residual zero.
+Other blocks have no isolated interpreter baseline; their non-keccak column is
+an inferred contribution, not an independent measurement.
+
+### Integration and frozen dependency
+
+Merged `1ef7089`, `745707e`, `06fc763` in order. No text conflicts. The interpreter merge
+carried its lane guest target path; set the campaign-owned prefix
+`/Volumes/Dev/cargo-target/jeth-campaign-2x-guest` before committing.
+Predecoded/reveal merges contain ledgers only; kept interpreter code is `4266322`.
+
+Jolt: **LOCAL, pending upstream PR**, detached read-only worktree
+`/Volumes/Dev/worktrees/jolt/keccak-9340a77` at
+`9340a777d86ec03f1ace78c235b32b8990ddc803`.
+All Jolt path dependencies use it. Default CLI and trace `JOLT_PATH`:
+`/Volumes/Dev/cargo-target/jolt-cli-keccak/release/jolt`.
+Keccak permutation expansion: **3,087 → 2,511 rows** (−576).
+No edits in the frozen Jolt source, no merge of `w5-keccak-repin`, no push.
+
+### Gates and reproduction
+
+CLI, release host, SELF proven/compute-advice ELF pair, sweep, and nextest
+ran sequentially under `/tmp/jeth-w3-cargo.lock` with owner `campaign-2x 79849`.
+EXIT cleanup unlinks the owner and removes the directory only on owner match.
+Native and SELF output hashes/gas match wave 3 on all ten blocks; no guest panics.
+
+```sh
+CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jolt-cli-keccak cargo build -q --message-format=short --release -p jolt --manifest-path /Volumes/Dev/worktrees/jolt/keccak-9340a77/Cargo.toml
+export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-campaign-2x
+export JOLT_PATH=/Volumes/Dev/cargo-target/jolt-cli-keccak/release/jolt
+cargo build -q --message-format=short --release -p jeth-host --features secp-inline
+"$CARGO_TARGET_DIR/release/jeth" run-native --input data/25905781/input.bin
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin
+cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-inline
+```
+
+Acquire the owner-checked lock before these commands. Repeat native/SELF traces
+for 25905782–25905790 with `--skip-build`. Complete locked runner, logs, baseline
+snapshots, accounting script, and JSON ledger: `/tmp/jeth-wave4/`.
+Per-block summaries: `data/<block>/wave4-trace-summary.json`.
+Papercut logged (`jeth-w4-integration`, `jeth`): commit hook rejects the `merge`
+subject type; use `chore` for code integration merges.
+
+Cleanup candidates, now merged: `w4-interp`, `w4-predecoded`, `w4-reveal`.
+No lane worktrees removed. Keep the frozen Jolt dependency and leave
+`w5-keccak-repin` untouched.

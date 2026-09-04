@@ -22,8 +22,8 @@ const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4194304; // 4 MiB (validate_block_truste
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
 const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
-const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-w4-interp-guest";
-const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli-main/release/jolt";
+const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-campaign-2x-guest";
+const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli-keccak/release/jolt";
 
 /// Guest entry point variant.
 #[derive(Clone, Copy, PartialEq)]
@@ -115,7 +115,7 @@ pub fn build_guest_symbols_features(variant: Variant, extra_features: &[&str]) -
     build_guest_inner(variant, true, extra_features)
 }
 
-/// Build the guest ELF via the `jolt` CLI (main-2026-09-04 build recipe:
+/// Build the guest ELF via the `jolt` CLI (keccak-9340a77 build recipe:
 /// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.)
 /// with extra guest cargo features (e.g. `pertx` for per-tx markers).
 pub fn build_guest_features(variant: Variant, extra_features: &[&str]) -> Result<()> {
