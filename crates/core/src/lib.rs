@@ -20,6 +20,8 @@ mod instrument;
 #[cfg(feature = "premeasure")]
 pub mod premeasure;
 mod recover;
+#[cfg(feature = "secp-inline")]
+pub mod recovery_batch;
 mod resolver;
 pub mod validation;
 mod walk;
@@ -145,6 +147,9 @@ pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, Stateless
         evm_config,
     )?;
 
+    #[cfg(feature = "secp-inline")]
+    recovery_batch::verify();
+
     Ok(ValidationResult {
         block_hash: output.block_hash.0,
         gas_used: output.execution_output.result.gas_used,
@@ -170,6 +175,9 @@ pub fn validate_recovered(
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
     let output = validation::validate_recovered_pertx(recovered, witness, chain_spec, evm_config)?;
+
+    #[cfg(feature = "secp-inline")]
+    recovery_batch::verify();
 
     Ok(ValidationResult {
         block_hash: output.block_hash.0,

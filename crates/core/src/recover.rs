@@ -1,12 +1,4 @@
-//! Block sender recovery: verify each tx signature against a host-supplied
-//! uncompressed pubkey and derive the sender address.
-//!
-//! Local reimplementation of `stateless::recover_block_with_public_keys` so the
-//! signature check itself is pluggable:
-//! - default: alloy/k256 `verify_and_compute_signer_unchecked` (native + fallback)
-//! - `secp-inline` feature: Jolt's secp256k1 inline `ecdsa_verify` (guest builds) —
-//!   same acceptance set (validated pubkey on curve, r/s canonical nonzero, ECDSA
-//!   check) plus the identical EIP-2 low-s gate applied here for both paths.
+//! Transaction sender recovery with an EIP-2 gate and deferred recovery equations.
 
 use crate::UncompressedPublicKey;
 use alloc::vec::Vec;
@@ -41,7 +33,7 @@ pub fn recover_block(
     Ok(RecoveredBlock::new(block, senders, block_hash))
 }
 
-fn verify_and_compute_sender(
+pub(crate) fn verify_and_compute_sender(
     vk: &UncompressedPublicKey,
     tx: &TransactionSigned,
     is_homestead: bool,
@@ -57,7 +49,8 @@ fn verify_and_compute_sender(
 
     #[cfg(feature = "secp-inline")]
     {
-        inline_verify_pubkey(&vk.0, sig, sig_hash)
+        crate::recovery_batch::verify_pubkey(&vk.0, sig, sig_hash)
+            .ok_or(StatelessValidationError::SignerRecovery)
     }
     #[cfg(not(feature = "secp-inline"))]
     {

@@ -255,8 +255,15 @@ fn run_native(input_path: &str) -> Result<()> {
     println!("block {number}: {txs} txs, {header_gas} gas (header)");
 
     let start = Instant::now();
-    let result = jeth_core::validate_mainnet(input)
-        .map_err(|e| anyhow::anyhow!("stateless validation FAILED: {e}"))?;
+    #[cfg(feature = "secp-inline")]
+    let validation = {
+        jeth_core::install_jolt_crypto();
+        jeth_core::recover_block(input.block, input.signers)
+            .and_then(|block| jeth_core::validate_recovered(block, input.witness))
+    };
+    #[cfg(not(feature = "secp-inline"))]
+    let validation = jeth_core::validate_mainnet(input);
+    let result = validation.map_err(|e| anyhow::anyhow!("stateless validation FAILED: {e}"))?;
     let elapsed = start.elapsed();
 
     println!(

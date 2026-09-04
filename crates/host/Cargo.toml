@@ -12,6 +12,7 @@ default = ["code-library"]
 code-library = ["jeth-core/code-library"]
 # §8.1 pre-measurement report after run-native (see jeth-core/premeasure).
 premeasure = ["jeth-core/premeasure"]
+secp-inline = ["jeth-core/secp-inline"]
 
 [dependencies]
 jeth-core = { workspace = true, features = ["std"] }

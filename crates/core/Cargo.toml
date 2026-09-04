@@ -6,10 +6,7 @@ edition.workspace = true
 [features]
 std = []
 code-library = []
-# Verify tx signatures with the Jolt secp256k1 inline (guest builds only; native
-# builds keep alloy/k256). The inline SDK panics if called on a non-RISC-V target.
-# Also installs the alloy-consensus pluggable crypto backend so EIP-7702
-# authority recovery (via alloy-evm's TxEnv conversion) hits the inline too.
+# Deferred tx, precompile, and authorization recovery using the secp256k1 inlines.
 secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
@@ -64,4 +61,6 @@ serde.workspace = true
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/main-2026-09-04/jolt-sdk", default-features = false }
 
 [dev-dependencies]
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+k256 = { workspace = true, features = ["ecdsa"] }
 postcard = { workspace = true, features = ["use-std"] }
