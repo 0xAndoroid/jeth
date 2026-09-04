@@ -20,8 +20,8 @@ lazy = ["jeth-core/lazy-analysis"]
 compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/main-2026-09-04/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/main-2026-09-04/jolt-inlines/keccak256", default-features = false }
 
 jeth-core = { path = "../core", features = ["secp-inline", "guest-instrument"] }
 
@@ -34,12 +34,6 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 # once_cell(critical-section) inside reth-primitives-traits needs a provider on
 # bare metal; the Jolt guest is single-hart with no interrupts → no-op impl.
 critical-section = "1.2"
-
-# Replace ZeroOS's linked_list_allocator (first-fit; measured 85.7% of ALL guest
-# cycles on block validation) with an O(1) segregated-recycling bump allocator.
-# See crates/alloc-o1. Patch applies to this (standalone) guest workspace only.
-[patch."https://github.com/LayerZero-Labs/ZeroOS.git"]
-zeroos-allocator-linked-list = { path = "../alloc-o1" }
 
 # Word-wise Stack::exchange (SWAP1-16 measured at 16.9% of trace rows via the
 # untyped byte-swap codegen). One-function patch; see crates/vendor/README.
