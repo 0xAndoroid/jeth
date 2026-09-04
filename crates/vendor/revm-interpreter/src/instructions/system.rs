@@ -110,8 +110,15 @@ pub fn calldataload<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionConte
     let input = context.interpreter.input.input();
     let input_len = input.len();
     if offset < input_len {
-        let count = 32.min(input_len - offset);
         let input = &*input.as_bytes_memory(&context.interpreter.memory);
+        if offset + 32 <= input_len {
+            // Word-wise fast path (see interpreter::words).
+            if let Some(value) = crate::interpreter::words::read_u256_be(input, offset) {
+                *offset_ptr = value;
+                return;
+            }
+        }
+        let count = 32.min(input_len - offset);
         // SAFETY: `count` is bounded by the calldata length.
         // This is `word[..count].copy_from_slice(input[offset..offset + count])`, written using
         // raw pointers as apparently the compiler cannot optimize the slice version, and using

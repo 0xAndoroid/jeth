@@ -8,6 +8,7 @@ mod return_data;
 mod runtime_flags;
 mod shared_memory;
 mod stack;
+pub(crate) mod words;
 
 use context_interface::cfg::GasParams;
 // re-exports

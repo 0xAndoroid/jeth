@@ -77,6 +77,14 @@ impl MemoryTr for SharedMemory {
         self.set(memory_offset, data);
     }
 
+    fn get_u256(&self, offset: usize) -> U256 {
+        self.get_u256(offset)
+    }
+
+    fn set_u256(&mut self, offset: usize, value: U256) {
+        self.set_u256(offset, value);
+    }
+
     fn size(&self) -> usize {
         self.len()
     }
@@ -385,7 +393,9 @@ impl SharedMemory {
     /// Panics on out of bounds.
     #[inline]
     pub fn get_u256(&self, offset: usize) -> U256 {
-        self.get_word(offset).into()
+        let mem = self.context_memory();
+        super::words::read_u256_be(&mem, offset)
+            .unwrap_or_else(|| U256::try_from_be_slice(&mem[offset..offset + 32]).unwrap())
     }
 
     /// Sets the `byte` at the given `index`.
@@ -418,8 +428,12 @@ impl SharedMemory {
     #[inline]
     #[cfg_attr(debug_assertions, track_caller)]
     pub fn set_u256(&mut self, offset: usize, value: U256) {
-        self.set(offset, &value.to_be_bytes::<32>());
+        let mut mem = self.context_memory_mut();
+        if !super::words::write_u256_be(&mut mem, offset, &value) {
+            mem[offset..offset + 32].copy_from_slice(&value.to_be_bytes::<32>());
+        }
     }
+
 
     /// Set memory region at given `offset`.
     ///

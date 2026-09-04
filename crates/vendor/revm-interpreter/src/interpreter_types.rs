@@ -142,6 +142,24 @@ pub trait MemoryTr {
         self.slice(offset..offset + len)
     }
 
+    /// Reads the 32-byte big-endian word at `offset` (MLOAD).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + 32` is out of scope of allocated memory.
+    fn get_u256(&self, offset: usize) -> U256 {
+        U256::try_from_be_slice(&self.slice_len(offset, 32)).unwrap()
+    }
+
+    /// Writes `value` as a 32-byte big-endian word at `offset` (MSTORE).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + 32` is out of scope of allocated memory.
+    fn set_u256(&mut self, offset: usize, value: U256) {
+        self.set(offset, &value.to_be_bytes::<32>());
+    }
+
     /// Resizes memory to new size
     ///
     /// # Note
