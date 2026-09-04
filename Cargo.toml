@@ -43,12 +43,12 @@ revm-database-interface = { version = "11.0.1", default-features = false }
 revm-state = { version = "11.0.1", default-features = false }
 
 # jolt w4-keccak-rows @ 9340a777d — LOCAL, pending upstream PR (keccak-f XOR+ROTL fusion, 3087→2511 rows/perm)
-jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/keccak-9340a77/jolt-sdk" }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/keccak-9340a77/jolt-inlines/keccak256", default-features = false }
-jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/keccak-9340a77/jolt-inlines/secp256k1", default-features = false }
-tracer = { path = "/Volumes/Dev/worktrees/jolt/keccak-9340a77/tracer" }
-jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/keccak-9340a77/common" }
-jolt-program = { path = "/Volumes/Dev/worktrees/jolt/keccak-9340a77/crates/jolt-program" }
+jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber/jolt-inlines/keccak256", default-features = false }
+jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber/jolt-inlines/secp256k1", default-features = false }
+tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber/tracer" }
+jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-amber/common" }
+jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber/crates/jolt-program" }
 
 # misc
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
