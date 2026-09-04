@@ -50,7 +50,7 @@ fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> 
 use crate::resolver::WitnessResolver;
 use alloy_primitives::{
     keccak256,
-    map::{indexmap::map::Entry, B256IndexMap},
+    map::{indexmap::map::Entry, AddressMap, B256IndexMap},
     Address, B256, KECCAK256_EMPTY, U256,
 };
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -130,6 +130,7 @@ pub struct SparseState {
     storage_roots: RefCell<B256IndexMap<B256>>,
     /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
     resolver: RefCell<WitnessResolver>,
+    address_hashes: RefCell<AddressMap<B256>>,
 }
 
 impl SparseState {
@@ -179,6 +180,10 @@ impl SparseState {
                 storages: B256IndexMap::default(),
                 storage_roots: RefCell::new(B256IndexMap::default()),
                 resolver: RefCell::new(resolver),
+                address_hashes: RefCell::new(AddressMap::with_capacity_and_hasher(
+                    witness.state.len() / 8,
+                    Default::default(),
+                )),
             },
             codes,
         ))
@@ -243,6 +248,10 @@ impl StatelessTrie for SparseState {
                 storages: B256IndexMap::default(),
                 storage_roots: RefCell::new(B256IndexMap::default()),
                 resolver: RefCell::new(resolver),
+                address_hashes: RefCell::new(AddressMap::with_capacity_and_hasher(
+                    witness.state.len() / 8,
+                    Default::default(),
+                )),
             },
             bytecode,
         ))
@@ -250,7 +259,7 @@ impl StatelessTrie for SparseState {
 
     /// Returns the `TrieAccount` that corresponds to the `Address`.
     fn account(&self, address: Address) -> Result<Option<TrieAccount>, WitnessDbError> {
-        let hashed_address = keccak256(address);
+        let hashed_address = hash_address(address, &self.address_hashes);
         match self.state.get(hashed_address)? {
             None => Ok(None),
             Some(account) => {
@@ -272,7 +281,7 @@ impl StatelessTrie for SparseState {
         let root = *self
             .storage_roots
             .borrow()
-            .get(&keccak256(address))
+            .get(&hash_address(address, &self.address_hashes))
             .unwrap();
         let key = keccak256(B256::from(slot));
         Ok(self
@@ -291,6 +300,7 @@ impl StatelessTrie for SparseState {
             storages,
             storage_roots,
             resolver,
+            ..
         } = self;
         let storage_roots = storage_roots.get_mut();
         let resolver = resolver.get_mut();
@@ -387,5 +397,43 @@ impl StatelessTrie for SparseState {
         #[cfg(feature = "premeasure")]
         crate::premeasure::POST_ROOT.record();
         Ok(root)
+    }
+}
+
+fn hash_address(address: Address, memo: &RefCell<AddressMap<B256>>) -> B256 {
+    let mut memo = memo.borrow_mut();
+    let digest = *memo.entry(address).or_insert_with(|| keccak256(address));
+    #[cfg(test)]
+    debug_assert_eq!(digest, keccak256(address));
+    digest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn address_memo_matches_direct_hashes() {
+        let memo = RefCell::new(AddressMap::default());
+        let mut rng = 0x9432_1735_abc0_ef89u64;
+        let addresses: Vec<_> = (0..1024)
+            .map(|_| {
+                let mut bytes = [0u8; 20];
+                for byte in &mut bytes {
+                    rng ^= rng << 13;
+                    rng ^= rng >> 7;
+                    rng ^= rng << 17;
+                    *byte = rng as u8;
+                }
+                Address::from(bytes)
+            })
+            .collect();
+        for _ in 0..2 {
+            for &address in &addresses {
+                let expected = keccak256(address);
+                assert_eq!(hash_address(address, &memo), expected);
+            }
+        }
+        assert_eq!(memo.borrow().len(), addresses.len());
     }
 }
