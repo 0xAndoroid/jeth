@@ -7,6 +7,7 @@
 
 mod fetch;
 mod library;
+mod opcodes;
 mod profile;
 mod repack;
 mod rpc;
@@ -83,6 +84,14 @@ enum Command {
         /// deferred bytecode analysis. Each set builds into its own target dir.
         #[arg(long, value_delimiter = ',', default_value = "")]
         guest_features: Vec<String>,
+    },
+    /// Exact dynamic RV-opcode histogram (execs × trace rows).
+    Opcodes {
+        #[arg(long)]
+        input: String,
+        /// Skip rebuilding the guest ELF if it already exists.
+        #[arg(long)]
+        skip_build: bool,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -188,6 +197,7 @@ fn main() -> Result<()> {
                 .collect();
             trace::run(&input, skip_build, variant, &features)
         }
+        Command::Opcodes { input, skip_build } => opcodes::run(&input, skip_build),
         Command::Profile {
             input,
             every,
