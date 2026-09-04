@@ -650,3 +650,64 @@ Raw logs, baseline snapshots, counter probes, and machine-readable ledger:
 `trace-summary.json` and `wave3-trace-summary.json` contain the merged SELF result.
 Papercut: macOS Bash rejects empty array expansion under `set -u`; the one-off
 runner uses an explicit first-build branch. No production changes required.
+
+## Campaign wave 4 — interpreter lane (w4-interp, 2026-09-04)
+
+Base `85ce0d0` (post-wave-3). Scope: EVM exec-phase structural row cuts,
+excluding the pre-decoded-stream lane (dispatch + PUSH + block-level
+gas/stack) and keccak. Fresh exec-phase profile on this tree (781):
+398.6M exec rows, 134.2M keccak, ~264M non-keccak.
+
+### Kept: word-wise MLOAD/MSTORE/CALLDATALOAD (`4266322`)
+
+Byte loads expand to 4-row and byte stores to 8-row virtual sequences on
+Jolt RV64IMAC; aligned LD/SD are 1 row. U256 memory words moved through
+per-byte paths (`try_from_be_slice` on unaligned slices, `to_be_bytes` +
+memcpy). New `interpreter::words` (vendored revm-interpreter): four
+aligned u64 loads/stores + `swap_bytes`; unaligned offsets shift-combine
+the five covering doublewords; byte-slice fallback at buffer edges.
+Pool measured 29.2M rows on 781 (mstore 15.8M + mload 10.3M +
+calldataload 3.1M + their memcpy share).
+
+| Block | Before | After | Delta | c/g |
+|---|---:|---:|---:|---|
+| 25905781 | 938,512,897 | 926,305,963 | -12,206,934 | 21.220 → 20.944 |
+| 25905786 | 461,937,742 | 455,352,747 | -6,584,995 | 17.528 → 17.278 |
+| 25905788 | 148,643,438 | 147,771,641 | -871,797 | 23.907 → 23.766 |
+
+Gates: native parity 3/3 (hash + gas), keccak perms unchanged
+(781 post_validation = 121,206), nextest 14/14, vendored words tests
+cover all 8 alignments. Guest target dir renamed to
+`jeth-w4-interp-guest` for lane isolation.
+
+### Killed: storage-walk fast-skip (measured, reverted)
+
+`walk.rs` skip_item/Header::decode on already-validated entries replaced
+with size-only fast skips: **-2,057,349 rows on 781** (926,305,963 →
+924,248,614, parity + perms clean). Projected ceiling with branch
+child-offset memo + single-pass validate ≈ 6.5M < 8M gate → reverted.
+The exec-phase trie pool (~24.5M: SparseState::storage 10.5M +
+walk::validate_at 9.3M + RlpTrie::get 1.8M + hash_address 1.5M) is
+dominated by first-touch node validation and per-level digest
+authentication, not by the skip loops.
+
+### Residual exec-phase budget on 781 after this lane (pertx profile, 386.4M exec rows)
+
+| Family | Rows | Share |
+|---|---:|---|
+| keccak inline | 134,206,216 | 34.7% |
+| dispatch loop (pre-decoded lane) | 42,497,087 | 11.0% |
+| bn254/precompile backends (arkworks) | 32,435,738 | 8.4% |
+| journal/state bookkeeping (revm-context/database) | 31,577,056 | 8.2% |
+| mem builtins (memcpy/memset/memcmp, already word-wise) | 30,073,821 | 7.8% |
+| storage/account trie walks (jeth-core) | 24,530,807 | 6.3% |
+| U256 arith/bitwise (ruint) | 24,002,947 | 6.2% |
+| PUSH (pre-decoded lane) | 17,559,194 | 4.5% |
+| memory ops post-word-wise | 16,032,643 | 4.1% |
+| DUP/SWAP/POP | 10,429,048 | 2.7% |
+| JUMP/JUMPI | 5,977,018 | 1.5% |
+| rest (calldataload, maps, gas calc, alloc, other) | 14,758,351 | 3.8% |
+
+No remaining single in-lane pool clears 8M: mem builtins are already
+shift-combine word-wise (disassembly-verified), journal/U256/gas pools
+live in unvendored revm-context / ruint and are fragmented per-symbol.
