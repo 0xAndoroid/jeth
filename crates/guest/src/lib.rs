@@ -72,7 +72,7 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
 #[jolt::provable(
     max_input_size = 33554432,   // 32 MiB
     max_output_size = 4096,      // 4 KiB
-    heap_size = 1610612736,      // 1.5 GiB (pow2-class allocator needs headroom; keeps addr space < 4 GiB)
+    heap_size = 1610612736,      // 1.5 GiB (bump allocator never frees: peak = total allocated; keeps addr space < 4 GiB)
     stack_size = 33554432        // 32 MiB
 )]
 fn validate_block(input: &[u8]) -> ValidationResult {
