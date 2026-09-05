@@ -1541,3 +1541,16 @@ Cumulative vs wave-4 baseline: **19.780546 → 14.427262 (-5.353284 c/g,
 - Unsafe: one new block — `asm!("addi {r}, {x}, {neg}")` in gas.rs
   `sub_const`, `cfg(target_arch = "riscv64")`, `options(pure, nomem,
   nostack)`, register-only.
+
+## Evaluated, not built: bn254 Fq Montgomery multiplication inline
+
+Design in `.journals/bn254-fq-inline-design.md`. q has four full limbs, so
+the Montgomery m·q half costs as much as a·b (secp256k1's sparse p is why
+its inline wins), and the virtual ISA has no carry primitive: floor = 60
+partial-product half-terms × 4 rows. Compiled ark-ff-macros CIOS is
+already ≈310 dynamic rows per `mul_assign` (≈520 per
+`sum_of_products::<2>`, ≈270 per square); an inline MULQ lands at 285
+(−8%), SOPQ2 at 419 (−20%), square gains nothing. Block 781: −3.2M rows
+≈ 0.51% (785/789 ≈ 0.58%; +fused Fp2 ≈ 0.64%) for ~20 h (+6 h). Marginal
+against the 0.5% bar; pre-gate (count calls in the trace: GO only if
+≥ 305 / ≥ 515 rows per call) before committing effort.
