@@ -1357,3 +1357,65 @@ semantic difference — a soundness hole, not a completeness one — and the
 10-block gate cannot exclude it. Not worth ~0.7–1% of rows. Remaining
 journal items (witness presize ~0.25M, `#[inline(never)]` removal ~0.6M,
 fused warm-SLOAD pointer cache ~1.3M/medium-high risk) are tail.
+
+## Campaign opt-amber wave J — revm interpreter hot paths (jeth-only, vendored revm-interpreter)
+
+Handler::execution's dispatch loop is 22 rows per EVM op × ~1.8M ops on
+781; PUSHn, MSTORE/MLOAD/CALLDATALOAD and the initial-gas calldata count
+were byte-wise. Five commits, each gated (hash + census exact):
+
+| Step | Commit | Change | 781 Δ rows |
+|---|---|---|---:|
+| 0 | 67d4083 | keccak-shim review nits: `#[inline(never)] native_keccak256`; in-tree `crates/guest/native-tests` (own workspace; keccak vs sha3 + mem fuzz, 4 tests); UB doctrine stated in keccak.rs | 0 |
+| 1 | 2964732 | `ExtBytecode::continue_execution: bool → u64` (loop flag LD, not LBU) | -3,633,556 |
+| 2 | fe1a192 | SWAR calldata token count for initial tx gas (`calculate_initial_tx_gas_for_tx` shadows the glob re-export; `GasParams::initial_tx_gas` via pub accessors; 8-aligned interior, byte head/tail) | -1,720,767 |
+| 3 | 4c94224 | PUSHn via `words::read_be_immediate::<N>`: N≤4 sequential byte loads; N≥5 volatile LD of the containing words + funnel shift + 13-op asm `bswap64`; `Stack::push` stores 4 limbs directly (PUSH32 287 → ~118 rows, PUSH20 176 → ~102, PUSH4 47 → 34) | -3,826,942 |
+| 4 | 8f08c51 | `read/write_u256_be` with asm bswap64, `#[inline(always)]` into mstore/mload/calldataload (no 4 LD + 4 SD temp, call, 13 spills); guest uses the containing-word rule with volatile edge RMW, native keeps a `#[cold]` byte path behind a window check | -6,331,826 |
+| 5 | — | JUMP/JUMPI jumpdest bit via LD: dropped (≤ −0.37M; jump tables are not alignment-guaranteed) | 0 |
+
+Dispatch loop now 19 rows/op; the remaining structure (ip/gas round-trip
+memory, two ABI `mv`s, flag reload) is fixed under the current design —
+the only structural saving left is −2 rows/op by moving static gas into
+each instruction (~140 fns), not done. Unsafe added (each with SAFETY):
+`align_to::<u64>` in the SWAR count; `asm!` bswap64 (pure, nomem);
+volatile containing-word loads in `read_be_immediate` (analysis pads
+truncated immediates + STOP); `read/write_u256_be` five-word path;
+`RefCell::as_ptr` in `context_bytes(_mut)` under the invariant
+`buffer_ref(_mut)` already assume.
+
+### Ladder (jolt-amber @ ef89da425, jeth @ 8f08c51)
+
+| Block | Gas | Wave-I rows | Wave-J rows | Delta rows | c/g I → J |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 651,720,107 | 636,207,016 | -15,513,091 | 14.735771 → 14.385011 |
+| 25905782 | 47,065,991 | 787,854,076 | 764,755,471 | -23,098,605 | 16.739350 → 16.248579 |
+| 25905783 | 25,320,107 | 360,591,789 | 352,672,764 | -7,919,025 | 14.241322 → 13.928565 |
+| 25905784 | 19,039,352 | 273,306,846 | 265,684,444 | -7,622,402 | 14.354840 → 13.954490 |
+| 25905785 | 47,351,982 | 691,153,814 | 673,227,692 | -17,926,122 | 14.596090 → 14.217519 |
+| 25905786 | 26,354,048 | 318,591,298 | 310,214,938 | -8,376,360 | 12.088894 → 11.771055 |
+| 25905787 | 27,961,947 | 435,185,262 | 422,441,198 | -12,744,064 | 15.563482 → 15.107718 |
+| 25905788 | 6,217,605 | 99,794,877 | 98,211,703 | -1,583,174 | 16.050373 → 15.795745 |
+| 25905789 | 44,608,380 | 746,502,505 | 726,953,345 | -19,549,160 | 16.734580 → 16.296340 |
+| 25905790 | 32,881,199 | 467,184,434 | 456,164,853 | -11,019,581 | 14.208254 → 13.873121 |
+| Gas-weighted | 321,027,690 | 4,831,885,008 | 4,706,533,424 | -125,351,584 | **15.051303 → 14.660833** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 14.660833 (-5.119713 c/g,
+-25.9%; -1,643,569,686 rows)**.
+
+Attribution on 781: Handler::execution 38.76M → 35.14M (−2 rows × 1.81M
+ops); mstore+set_u256 8.75M → 5.73M; mload+get_u256 5.83M → 3.32M;
+calldataload 3.43M → 2.79M; PUSH1–32 total 15.45M → 12.03M;
+calculate_initial_tx_gas 2.17M → 0.44M. SharedMemory's buffer is align-1
+under the bump allocator, so ~7/8 of MSTORE/MLOAD still take the five-word
+path — an 8-byte minimum alignment in bump_alloc (next lane) makes the
+4 LD / 4 SD path the common one (≈ −1.9M more on 781) and aligns every
+Bytes/Vec<u8> for the memcpy/keccak gathers.
+
+### Gates
+
+- Trace 781 hash + census exact after each commit; `run-native` 10/10;
+  sweep 782–790 hashes unchanged.
+- jeth nextest 17/17; vendored revm-interpreter 47/47 (5 new: SWAR vs byte
+  filter, initial_tx_gas vs GasParams for all 21 specs, bswap64 vs
+  swap_bytes, read_be_immediate all N × offsets, read/write_u256 all
+  alignments + slice edges); guest native-tests 4/4. Jolt: untouched.
