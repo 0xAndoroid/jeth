@@ -132,6 +132,21 @@ pub struct SparseState {
     /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
     resolver: RefCell<WitnessResolver>,
     address_hashes: RefCell<AddressMap<B256>>,
+    /// last address resolved by `account()` / `storage()`: consecutive reads
+    /// of one contract skip the address-hash and storage-root map probes
+    last_read: RefCell<Option<LastRead>>,
+}
+
+/// One-entry memo of the address → (hashed address, storage root) chain.
+/// Pre-state storage roots are immutable during execution, so an entry never
+/// goes stale. `repr(C)` keeps `hashed` at an 8-aligned offset (whole-word
+/// copies).
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct LastRead {
+    root: [u64; 4],
+    hashed: B256,
+    address: Address,
 }
 
 impl SparseState {
@@ -185,6 +200,7 @@ impl SparseState {
                     witness.state.len() / 8,
                     Default::default(),
                 )),
+                last_read: RefCell::new(None),
             },
             codes,
         ))
@@ -253,6 +269,7 @@ impl StatelessTrie for SparseState {
                     witness.state.len() / 8,
                     Default::default(),
                 )),
+                last_read: RefCell::new(None),
             },
             bytecode,
         ))
@@ -260,17 +277,23 @@ impl StatelessTrie for SparseState {
 
     /// Returns the `TrieAccount` that corresponds to the `Address`.
     fn account(&self, address: Address) -> Result<Option<TrieAccount>, WitnessDbError> {
-        let hashed_address = hash_address(address, &self.address_hashes);
+        let hashed_address = match &*self.last_read.borrow() {
+            Some(last) if last.address == address => last.hashed,
+            _ => hash_address(address, &self.address_hashes),
+        };
         match self.state.get(hashed_address)? {
             None => Ok(None),
             Some(account) => {
                 // record the storage anchor for byte-walk reads; no
                 // materialization (the account leaf is authenticated chain to
                 // pre_state_root, so the root is authenticated too)
-                self.storage_roots.borrow_mut().insert(
-                    hashed_address,
-                    zeth_mpt::le_words_32(account.storage_root.as_slice()),
-                );
+                let root = zeth_mpt::le_words_32(account.storage_root.as_slice());
+                self.storage_roots.borrow_mut().insert(hashed_address, root);
+                *self.last_read.borrow_mut() = Some(LastRead {
+                    root,
+                    hashed: hashed_address,
+                    address,
+                });
                 Ok(Some(account))
             }
         }
@@ -280,11 +303,23 @@ impl StatelessTrie for SparseState {
     fn storage(&self, address: Address, slot: U256) -> Result<U256, WitnessDbError> {
         // storage() is always called after account(), so the anchor must exist
         // (same revm-enforced invariant as the old trie-must-exist unwrap)
-        let root = *self
-            .storage_roots
-            .borrow()
-            .get(&hash_address(address, &self.address_hashes))
-            .unwrap();
+        let memo = match &*self.last_read.borrow() {
+            Some(last) if last.address == address => Some(last.root),
+            _ => None,
+        };
+        let root = match memo {
+            Some(root) => root,
+            None => {
+                let hashed = hash_address(address, &self.address_hashes);
+                let root = *self.storage_roots.borrow().get(&hashed).unwrap();
+                *self.last_read.borrow_mut() = Some(LastRead {
+                    root,
+                    hashed,
+                    address,
+                });
+                root
+            }
+        };
         let key = keccak256(B256::from(slot));
         Ok(self
             .resolver

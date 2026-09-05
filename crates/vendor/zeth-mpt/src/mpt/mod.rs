@@ -58,7 +58,7 @@ impl Trie {
     /// It panics when neither inclusion nor exclusion of the key can be guaranteed.
     #[inline]
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
-        self.0.get(NibbleSlice::from(Nibbles::unpack(key))).map(|b| b.as_ref())
+        self.0.get(key.as_ref()).map(|b| b.as_ref())
     }
 
     /// Inserts a key-value pair into the trie.
@@ -270,7 +270,7 @@ impl CachedTrie {
     /// See [`Trie::get`] for detailed documentation.
     #[inline]
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
-        self.inner.get(NibbleSlice::from(Nibbles::unpack(key))).map(|b| b.as_ref())
+        self.inner.get(key.as_ref()).map(|b| b.as_ref())
     }
 
     /// Inserts a key-value pair into the trie.

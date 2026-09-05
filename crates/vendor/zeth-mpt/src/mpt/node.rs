@@ -16,12 +16,46 @@ use super::{
     children::{Children, Entry},
     memoize::Memoization,
     nibbles::NibbleSlice,
-    rlp::DigestResolver,
+    rlp::{le_words_32, DigestResolver},
 };
 use alloc::boxed::Box;
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_trie::Nibbles;
 use core::{mem, ops::Deref};
+
+/// Nibble `d` of the raw key bytes (two nibbles per byte, high first).
+#[inline(always)]
+fn key_nibble(key: &[u8], d: usize) -> u8 {
+    let b = key[d >> 1];
+    if d & 1 == 0 {
+        b >> 4
+    } else {
+        b & 0xf
+    }
+}
+
+/// Sixty-four zero nibbles: the shape of every packed 32-byte key.
+const FULL_KEY: Nibbles = Nibbles::unpack_array(&[0; 32]);
+
+/// `Nibbles::unpack(key)`, assembled from whole words for the 32-byte hashed
+/// keys jeth looks up: the packed form is the key as a big-endian `U256`, so
+/// four aligned-word loads ([`le_words_32`]) plus four byte swaps replace the
+/// byte-reversing copy loop. Other lengths take `Nibbles::unpack`.
+#[inline(always)]
+fn packed_key(key: &[u8]) -> Nibbles {
+    if key.len() != 32 {
+        return Nibbles::unpack(key);
+    }
+    let w = le_words_32(key);
+    let mut nibbles = FULL_KEY;
+    *nibbles.as_mut_uint_unchecked() = U256::from_limbs([
+        w[3].swap_bytes(),
+        w[2].swap_bytes(),
+        w[1].swap_bytes(),
+        w[0].swap_bytes(),
+    ]);
+    nibbles
+}
 
 pub(super) type Child<M> = Box<Node<M>>;
 
@@ -97,24 +131,47 @@ impl<M> PartialEq for Node<M> {
 impl<M> Eq for Node<M> {}
 
 impl<M: Memoization> Node<M> {
-    /// Retrieves the value associated with a given key.
-    pub(super) fn get(&self, key: NibbleSlice) -> Option<&Bytes> {
-        match self {
-            Node::Null => None,
-            Node::Leaf(prefix, value, _) if prefix == key.as_nibbles() => Some(value),
-            Node::Leaf(..) => None,
-            Node::Extension(prefix, child, _) => {
-                key.strip_prefix(prefix).and_then(|tail| child.get(tail))
-            }
-            Node::Branch(children, _) => match key.split_first() {
-                Some((nib, tail)) => {
-                    // SAFETY: `key` is a `NibbleSlice` and thus only contains values < 0xf
-                    let child = unsafe { children.get_unchecked(nib) };
-                    child.and_then(|node| node.get(tail))
+    /// Retrieves the value associated with a given key (raw key bytes).
+    ///
+    /// Walks by depth over the key: branch nibbles are read straight from the
+    /// key bytes, extension and leaf prefixes are compared against the packed
+    /// key sliced at the current depth — the key is never re-sliced per level
+    /// and never unpacked byte by byte ([`packed_key`]).
+    pub(super) fn get(&self, key: &[u8]) -> Option<&Bytes> {
+        let total = 2 * key.len();
+        let packed = packed_key(key);
+        let mut node = self;
+        let mut depth = 0usize;
+        loop {
+            match node {
+                Node::Null => return None,
+                Node::Leaf(prefix, value, _) => {
+                    let hit = prefix.len() == total - depth
+                        && packed.slice_unchecked(depth, total) == *prefix;
+                    return hit.then_some(value);
                 }
-                None => None, // branch nodes don't have values in our MPT version
-            },
-            Node::Digest(_) => panic!("MPT: Unresolved node access"),
+                Node::Extension(prefix, child, _) => {
+                    let len = prefix.len();
+                    if len > total - depth || packed.slice_unchecked(depth, depth + len) != *prefix
+                    {
+                        return None;
+                    }
+                    depth += len;
+                    node = child;
+                }
+                Node::Branch(children, _) => {
+                    if depth == total {
+                        return None; // branch nodes don't have values in our MPT version
+                    }
+                    let nib = key_nibble(key, depth);
+                    depth += 1;
+                    match children.get(nib) {
+                        Some(child) => node = child,
+                        None => return None,
+                    }
+                }
+                Node::Digest(_) => panic!("MPT: Unresolved node access"),
+            }
         }
     }
 
@@ -352,5 +409,24 @@ impl<M: Memoization> Node<M> {
                     .sum::<usize>()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The word-assembled packed key equals `Nibbles::unpack` for every
+    /// source alignment of a 32-byte key.
+    #[test]
+    fn packed_key_matches_unpack() {
+        let bytes: alloc::vec::Vec<u8> = (0..48u8)
+            .map(|i| i.wrapping_mul(53).wrapping_add(7))
+            .collect();
+        for so in 0..8 {
+            let key = &bytes[so..so + 32];
+            assert_eq!(packed_key(key), Nibbles::unpack(key), "so={so}");
+        }
+        assert_eq!(packed_key(&bytes[..5]), Nibbles::unpack(&bytes[..5]));
     }
 }
