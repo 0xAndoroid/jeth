@@ -1644,3 +1644,19 @@ Cumulative vs wave-4 baseline: **19.780546 → 14.283997 (-5.496549 c/g,
   deltas reconciled per block (new perms in the table).
 - Workspace nextest 21/21 (19 + 2 new); clippy `-D warnings` on every
   commit; no `unsafe` added; no cfg divergence between native and guest.
+
+## Evaluated, not built: fused secp256k1 affine-add inline (ADDPTQ)
+
+Two independent designs (`.journals/addptq-inline-design.md`,
+`.journals/addptq-inline-design-b.md`; row model `count_addptq.py`, identity
+check `check.py`) agree: advised (λ, x3, y3) plus three quotients, verified by
+three MULQ-style integer identities with range checks on x3, y3 (sound: dx ≠ 0
+⇒ λ unique ⇒ x3, y3 unique; any lie ⇒ VirtualAssert abort, exactly like
+DIVQ). Cost ≈ 697–699 rows (three unavoidable 256×256 products at 157 rows
+each on this ISA), so a bucket add goes 862 → ≈ 746 rows: ≈ −4.5M on 781
+(−0.72%; −13% of `recovery_msm`), ≈ 18–22 h. The earlier −14M census
+assumed 3.5 rows per partial product; the real cost is 8 per limb pair.
+Decision rule if built: fixture `row_count` ≤ 720 AND measured
+`recovery_msm` drop ≥ 4M AND `run-native` unchanged. Cheaper first:
+duplicate-key term merging (−1.5…−2.3M), `MaybeUninit` outputs in the secp
+sdk (−0.5…−0.8M), `add` restructure (−0.6M), `add_nonzero` (−0.23M).
