@@ -23,7 +23,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use alloc::vec::Vec;
-use core::{cell::RefCell, marker::PhantomData, ptr::read_volatile};
+use core::{cell::RefCell, marker::PhantomData};
 
 use tries::{StatelessTrie, StatelessTrieError, WitnessDbError};
 
@@ -47,7 +47,7 @@ pub fn set_trusted_digests(state: &'static [[u8; 32]], codes: &'static [[u8; 32]
 fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> {
     unsafe { TRUSTED_DIGESTS.take() }
 }
-use crate::resolver::{b256_from_le_words, WitnessResolver};
+use crate::resolver::{b256_from_le_words, words_eq, WitnessResolver};
 use alloy_primitives::{
     keccak256,
     map::{indexmap::map::Entry, B256IndexMap},
@@ -139,7 +139,7 @@ pub struct SparseState {
     slot_hashes: RefCell<SlotMemo>,
     /// last address resolved by `account()` / `storage()`: consecutive reads
     /// of one contract skip the address-hash and storage-root map probes
-    last_read: RefCell<Option<LastRead>>,
+    last_read: RefCell<LastRead>,
 }
 
 type AddressMemo = KeccakMemo<3>;
@@ -258,16 +258,6 @@ impl<const K: usize> KeccakMemo<K> {
     }
 }
 
-/// The 20 address bytes as three little-endian words (word 2 holds bytes
-/// 16..20), gathered from the 8-aligned words containing them: `Address` is
-/// align 1, and a byte-wise assembly costs 3 rows per byte on Jolt.
-///
-/// # Safety of the containing-word reads
-/// As for [`zeth_mpt::le_words_32`]: every word read holds a live byte of the
-/// address — word 0 holds byte 0, word 2 holds byte 16 at every offset, and
-/// word 3 is read only when the offset puts byte 19 in it — and Jolt guest RAM
-/// is flat and word-granular (natively the containing word lies in the same
-/// allocation granule). Every load address is a multiple of 8.
 /// A `B256` at an 8-byte boundary. A bare `B256` is align 1, so materializing
 /// one from words stores its 32 bytes one at a time (≈220 rows); into an
 /// aligned slot it is four whole-word stores.
@@ -280,47 +270,54 @@ impl AlignedB256 {
     fn from_le_words(words: [u64; 4]) -> Self {
         Self(b256_from_le_words(words))
     }
+
+    /// The four little-endian words (whole-word loads: the bytes are 8-aligned).
+    #[inline(always)]
+    fn words(&self) -> [u64; 4] {
+        let bytes = &self.0 .0;
+        core::array::from_fn(|i| u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap()))
+    }
 }
 
+/// The 20 address bytes as three little-endian words (word 2 holds bytes
+/// 16..20). `Address` is align 1, so this is 20 byte loads; it stays
+/// in-bounds and free of pointer-to-integer casts so that every caller passing
+/// the address by value hands over its own copy — LLVM elides that copy only
+/// for callees it can prove read-only and non-capturing, and a gather from the
+/// containing aligned words (cheaper here) made each caller repack the address
+/// byte-wise before the call instead.
 #[inline(always)]
 fn address_words(address: &Address) -> [u64; 3] {
-    let src = address.as_ptr() as usize;
-    let so = src & 7;
-    let base = (src & !7) as *const u64;
-    unsafe {
-        let w0 = u64::from_le(read_volatile(base));
-        let w1 = u64::from_le(read_volatile(base.add(1)));
-        let w2 = u64::from_le(read_volatile(base.add(2)));
-        if so == 0 {
-            return [w0, w1, w2 & 0xffff_ffff];
-        }
-        let w3 = if so > 4 {
-            u64::from_le(read_volatile(base.add(3)))
-        } else {
-            0
-        };
-        let sr = (8 * so) as u32;
-        let sl = 64 - sr;
-        [
-            (w0 >> sr) | (w1 << sl),
-            (w1 >> sr) | (w2 << sl),
-            ((w2 >> sr) | (w3 << sl)) & 0xffff_ffff,
-        ]
-    }
+    let bytes = &address.0 .0;
+    [
+        u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+        u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+        u32::from_le_bytes(bytes[16..].try_into().unwrap()) as u64,
+    ]
 }
 
 /// One-entry memo of the address → (hashed address, storage root) chain.
 /// Pre-state storage roots are immutable during execution, so an entry never
 /// goes stale. Invariant: `last_read ≡ storage_roots[hashed(address)]` — the
 /// pre-state trie mutates only in `calculate_state_root`, which never reads
-/// the memo. `repr(C)` keeps `hashed` at an 8-aligned offset (whole-word
-/// copies).
+/// the memo. Everything is held as words: an `Address`/`B256` field is
+/// compared and copied byte-wise (`memcmp`/`memcpy` calls), words in
+/// registers.
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
 struct LastRead {
     root: [u64; 4],
-    hashed: B256,
-    address: Address,
+    hashed: [u64; 4],
+    address: [u64; 3],
+}
+
+impl LastRead {
+    /// Matches no address: word 2 of a real address ([`address_words`]) is
+    /// below 2^32.
+    const NONE: Self = Self {
+        root: [0; 4],
+        hashed: [0; 4],
+        address: [u64::MAX; 3],
+    };
 }
 
 impl SparseState {
@@ -345,7 +342,7 @@ impl SparseState {
     /// `keccak256(address)` through the `account()` memo (log emitters were
     /// all loaded during execution).
     pub fn hashed_address(&self, address: Address) -> B256 {
-        hash_address(address, &self.address_hashes).0
+        hash_address(&address, &self.address_hashes).0
     }
 }
 
@@ -390,7 +387,7 @@ impl SparseState {
                 resolver: RefCell::new(resolver),
                 address_hashes: RefCell::new(AddressMemo::with_capacity(witness.state.len() / 8)),
                 slot_hashes: RefCell::new(SlotMemo::with_capacity(witness.state.len() / 8)),
-                last_read: RefCell::new(None),
+                last_read: RefCell::new(LastRead::NONE),
             },
             codes,
         ))
@@ -457,7 +454,7 @@ impl StatelessTrie for SparseState {
                 resolver: RefCell::new(resolver),
                 address_hashes: RefCell::new(AddressMemo::with_capacity(witness.state.len() / 8)),
                 slot_hashes: RefCell::new(SlotMemo::with_capacity(witness.state.len() / 8)),
-                last_read: RefCell::new(None),
+                last_read: RefCell::new(LastRead::NONE),
             },
             bytecode,
         ))
@@ -465,9 +462,14 @@ impl StatelessTrie for SparseState {
 
     /// Returns the `TrieAccount` that corresponds to the `Address`.
     fn account(&self, address: Address) -> Result<Option<TrieAccount>, WitnessDbError> {
-        let hashed_address = match &*self.last_read.borrow() {
-            Some(last) if last.address == address => AlignedB256(last.hashed),
-            _ => hash_address(address, &self.address_hashes),
+        let words = address_words(&address);
+        let hashed_address = {
+            let last = self.last_read.borrow();
+            if words_eq(&last.address, &words) {
+                AlignedB256::from_le_words(last.hashed)
+            } else {
+                hash_address_words(words, &self.address_hashes)
+            }
         };
         match self.state.get(&hashed_address.0)? {
             None => Ok(None),
@@ -479,11 +481,11 @@ impl StatelessTrie for SparseState {
                 self.storage_roots
                     .borrow_mut()
                     .insert(hashed_address.0, root);
-                *self.last_read.borrow_mut() = Some(LastRead {
+                *self.last_read.borrow_mut() = LastRead {
                     root,
-                    hashed: hashed_address.0,
-                    address,
-                });
+                    hashed: hashed_address.words(),
+                    address: words,
+                };
                 Ok(Some(account))
             }
         }
@@ -493,20 +495,21 @@ impl StatelessTrie for SparseState {
     fn storage(&self, address: Address, slot: U256) -> Result<U256, WitnessDbError> {
         // storage() is always called after account(), so the anchor must exist
         // (same revm-enforced invariant as the old trie-must-exist unwrap)
-        let memo = match &*self.last_read.borrow() {
-            Some(last) if last.address == address => Some(last.root),
-            _ => None,
+        let words = address_words(&address);
+        let memo = {
+            let last = self.last_read.borrow();
+            words_eq(&last.address, &words).then_some(last.root)
         };
         let root = match memo {
             Some(root) => root,
             None => {
-                let hashed = hash_address(address, &self.address_hashes);
+                let hashed = hash_address_words(words, &self.address_hashes);
                 let root = *self.storage_roots.borrow().get(&hashed.0).unwrap();
-                *self.last_read.borrow_mut() = Some(LastRead {
+                *self.last_read.borrow_mut() = LastRead {
                     root,
-                    hashed: hashed.0,
-                    address,
-                });
+                    hashed: hashed.words(),
+                    address: words,
+                };
                 root
             }
         };
@@ -627,16 +630,26 @@ impl StatelessTrie for SparseState {
     }
 }
 
-fn hash_address(address: Address, memo: &RefCell<AddressMemo>) -> AlignedB256 {
-    let digest = memo
-        .borrow_mut()
-        .get_or_insert_with(address_words(&address), || {
-            zeth_mpt::le_words_32(keccak256(address).as_slice())
-        });
-    let digest = AlignedB256::from_le_words(digest);
+fn hash_address(address: &Address, memo: &RefCell<AddressMemo>) -> AlignedB256 {
+    let digest = hash_address_words(address_words(address), memo);
     #[cfg(test)]
     debug_assert_eq!(digest.0, keccak256(address));
     digest
+}
+
+/// [`hash_address`] from the address words alone: the miss path rebuilds the
+/// 20 bytes in an 8-aligned buffer (three word stores) for the keccak instead
+/// of borrowing the caller's `Address` — a reference escaping into the
+/// out-of-line miss path would make every caller up the chain copy its
+/// by-value `Address` byte-wise before the call.
+fn hash_address_words(words: [u64; 3], memo: &RefCell<AddressMemo>) -> AlignedB256 {
+    #[repr(C, align(8))]
+    struct Buffer([[u8; 8]; 3]);
+    let digest = memo.borrow_mut().get_or_insert_with(words, || {
+        let buffer = Buffer(words.map(u64::to_le_bytes));
+        zeth_mpt::le_words_32(keccak256(&buffer.0.as_flattened()[..20]).as_slice())
+    });
+    AlignedB256::from_le_words(digest)
 }
 
 fn hashed_post_state<'a>(
@@ -647,7 +660,7 @@ fn hashed_post_state<'a>(
     state
         .into_iter()
         .map(|(address, account)| {
-            let hashed_address = hash_address(*address, address_hashes).0;
+            let hashed_address = hash_address(address, address_hashes).0;
             let hashed_account = account.info.as_ref().map(Into::into);
             let hashed_storage = HashedStorage::from_iter(
                 account.status.was_destroyed(),
@@ -698,7 +711,7 @@ mod tests {
         for _ in 0..2 {
             for &address in &addresses {
                 let expected = keccak256(address);
-                assert_eq!(hash_address(address, &memo).0, expected);
+                assert_eq!(hash_address(&address, &memo).0, expected);
             }
         }
         assert_eq!(memo.borrow().len(), addresses.len());
@@ -734,7 +747,7 @@ mod tests {
         let slot_memo = RefCell::new(SlotMemo::with_capacity(0));
         for _ in 0..2 {
             for (address, slot) in addresses.iter().zip(&slots) {
-                assert_eq!(hash_address(*address, &address_memo).0, keccak256(address));
+                assert_eq!(hash_address(address, &address_memo).0, keccak256(address));
                 assert_eq!(hash_slot(*slot, &slot_memo).0, keccak256(B256::from(*slot)));
             }
             assert_eq!(address_memo.borrow().len(), addresses.len());
@@ -881,7 +894,7 @@ mod tests {
         let address_hashes = RefCell::new(AddressMemo::with_capacity(0));
         let slot_hashes = RefCell::new(SlotMemo::with_capacity(0));
         for i in [1, 3, 4, 5, 6] {
-            hash_address(address(i), &address_hashes);
+            hash_address(&address(i), &address_hashes);
         }
         for slot in [U256::ZERO, U256::from(7), mapping_slot] {
             hash_slot(slot, &slot_hashes);

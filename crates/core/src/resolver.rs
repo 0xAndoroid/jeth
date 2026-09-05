@@ -28,6 +28,17 @@ use zeth_mpt::{le_words_32, DigestResolver};
 /// anchors: `B256` is align 1, so every limb extraction from it byte-expands
 /// on riscv64imac; words are gathered once ([`le_words_32`]) and compared /
 /// copied as whole registers.
+/// Word-wise equality: a derived `[u64; N] == [u64; N]` is a `memcmp` call on
+/// riscv64imac (≈70 rows for four words); this is `2N + 1` ALU ops.
+#[inline(always)]
+pub(crate) fn words_eq<const N: usize>(a: &[u64; N], b: &[u64; N]) -> bool {
+    let mut diff = 0;
+    for i in 0..N {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
+}
+
 pub(crate) fn b256_from_le_words(words: [u64; 4]) -> B256 {
     // SAFETY: `[[u8; 8]; 4]` and `[u8; 32]` have identical layout.
     B256::new(unsafe {
@@ -190,7 +201,7 @@ impl WitnessResolver {
         root: [u64; 4],
         key: &B256,
     ) -> alloy_rlp::Result<Option<U256>> {
-        if root == EMPTY_ROOT_WORDS {
+        if words_eq(&root, &EMPTY_ROOT_WORDS) {
             // Empty trie — no advice call (from_digest parity; keccak(0x80)
             // is never a witness entry, so walking it would panic).
             return Ok(None);
