@@ -168,7 +168,8 @@ fn transcript_binds_count_order_and_every_component() {
 fn pippenger_batch_matches_independent_recovery() {
     let r = generator_r();
     let mut equations = Vec::new();
-    for i in 2..270u64 {
+    // 99 equations at the mid-check (w = 7 windows), 598 at the end (w = 8).
+    for i in 2..600u64 {
         let msg = U256::from(i).to_be_bytes();
         let sig = signature(r, U256::from(i % 11 + 1));
         let mut equation = prepare_recovery(&sig, (i % 2) as u8, &msg).unwrap();

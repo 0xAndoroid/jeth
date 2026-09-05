@@ -169,38 +169,78 @@ fn challenge(digest: B256, index: usize) -> Secp256k1Fr {
     scalar(keccak256(bytes).0)
 }
 
+/// One GLV half of a term: the biased 128-bit magnitude, its unsigned top
+/// window digit, and the point in both signs so a negative digit costs a
+/// select instead of a field negation per window.
+struct Term {
+    biased: u128,
+    top: usize,
+    point: Secp256k1Point,
+    negated: Secp256k1Point,
+}
+
+/// Pippenger MSM over the GLV-split terms with signed window digits.
+///
+/// Adding 2^(w-1) to every window below the top one and then subtracting it
+/// per digit recodes each `w`-bit digit into [-2^(w-1), 2^(w-1)) exactly
+/// (the carries are absorbed by the bias addition), so a window's buckets
+/// span 1..=2^(w-1) and its reduction chain halves. The top window keeps its
+/// unsigned digit plus the bias carry (≤ 2^w, hence 2^w + 1 buckets) so no
+/// extra window is needed.
 fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
-    let terms: Vec<_> = terms
-        .iter()
-        .flat_map(|(scalar, point)| {
-            let split = scalar.glv_decompose();
-            let points = [point.clone(), point.endomorphism()];
-            split
-                .into_iter()
-                .zip(points)
-                .map(|((negative, scalar), point)| {
-                    (scalar, if negative { point.neg() } else { point })
-                })
-        })
-        .collect();
-    let width = if terms.len() < 1024 { 7 } else { 8 };
-    let mut buckets = alloc::vec![Secp256k1Point::infinity(); 1 << width];
+    let width = if terms.len() < 512 { 7 } else { 8 };
+    let windows = 128usize.div_ceil(width);
+    let half = 1usize << (width - 1);
+    let top_shift = width * (windows - 1);
+    let bias = (0..windows - 1).fold(0u128, |bias, i| bias | (half as u128) << (width * i));
+    let mut split = Vec::with_capacity(2 * terms.len());
+    let mut push = |(negative, scalar): (bool, u128), point: Secp256k1Point| {
+        let point = if negative { point.neg() } else { point };
+        let (biased, overflow) = scalar.overflowing_add(bias);
+        split.push(Term {
+            biased,
+            top: (biased >> top_shift) as usize | (overflow as usize) << (128 - top_shift),
+            negated: point.neg(),
+            point,
+        });
+    };
+    for (scalar, point) in terms {
+        let [k1, k2] = scalar.glv_decompose();
+        push(k1, point.clone());
+        push(k2, point.endomorphism());
+    }
+    let mut buckets = alloc::vec![Secp256k1Point::infinity(); (1 << width) + 1];
     let mut result = Secp256k1Point::infinity();
-    for window in (0..128usize.div_ceil(width)).rev() {
+    for window in (0..windows).rev() {
         for _ in 0..width {
             result = result.double();
         }
-        buckets.fill(Secp256k1Point::infinity());
-        let bit = window * width;
-        for (scalar, point) in &terms {
-            let digit = scalar >> bit;
-            let digit = digit as usize & ((1 << width) - 1);
-            if digit != 0 {
-                buckets[digit] = buckets[digit].add(point);
+        let top = window == windows - 1;
+        let live = if top { 1 << width } else { half };
+        buckets[1..=live].fill(Secp256k1Point::infinity());
+        if top {
+            for term in &split {
+                if term.top != 0 {
+                    buckets[term.top] = buckets[term.top].add(&term.point);
+                }
+            }
+        } else {
+            let shift = window * width;
+            for term in &split {
+                let digit =
+                    ((term.biased >> shift) as usize & ((1 << width) - 1)).wrapping_sub(half);
+                if digit != 0 {
+                    let (index, point) = if (digit as isize) > 0 {
+                        (digit, &term.point)
+                    } else {
+                        (digit.wrapping_neg(), &term.negated)
+                    };
+                    buckets[index] = buckets[index].add(point);
+                }
             }
         }
         let mut sum = Secp256k1Point::infinity();
-        for bucket in buckets[1..].iter().rev() {
+        for bucket in buckets[1..=live].iter().rev() {
             sum = sum.add(bucket);
             result = result.add(&sum);
         }
