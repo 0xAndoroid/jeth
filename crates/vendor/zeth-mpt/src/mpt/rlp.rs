@@ -778,6 +778,15 @@ impl<M: Memoization> Decodable for Node<M> {
 /// `?` → `Box::new`, ≈3 × 176-byte memcpy per node on riscv64; 49.6M trace
 /// rows on block 25905781 before this change).
 ///
+/// List payloads are scanned in place instead of through
+/// `Header::decode_raw`'s `PayloadView` `Vec` (allocation + 3 grows + 17
+/// pushes per branch): pass 1 ([`count_items`]) validates every item header
+/// in order and yields the item count exactly like `decode_raw`, pass 2
+/// re-derives the item boundaries with the same [`item_len`] while decoding
+/// (the count decides the grammar, so boundaries cannot be consumed on the
+/// fly: a 33-byte leaf path item is indistinguishable from a digest item
+/// until the count is known).
+///
 /// Contract: on `Ok(())`, `out` holds the decoded node. On `Err`, `out` is
 /// either untouched or holds the resource-free [`Node::Null`] (a branch whose
 /// children failed to decode is dropped and replaced) — never partially
@@ -787,9 +796,13 @@ fn decode_node_zc_into<M: Memoization>(
     buf: &mut &[u8],
     out: &mut MaybeUninit<Node<M>>,
 ) -> alloy_rlp::Result<()> {
-    match Header::decode_raw(buf)? {
+    let h = Header::decode(buf)?;
+    // `Header::decode` checked `buf.len() >= payload_length`.
+    let (payload, rest) = buf.split_at(h.payload_length);
+    *buf = rest;
+    if !h.list {
         // if the node is not a list, it must be empty or a digest
-        PayloadView::String(payload) => match payload.len() {
+        return match payload.len() {
             0 => {
                 out.write(Node::Null);
                 Ok(())
@@ -799,75 +812,113 @@ fn decode_node_zc_into<M: Memoization>(
                 Ok(())
             }
             _ => Err(alloy_rlp::Error::UnexpectedLength),
-        },
-        PayloadView::List(items) => match items.len() {
-            // branch node: 17-item node [ v0 ... v15, value ]
-            17 => {
-                // Write the empty branch first and decode the children into
-                // its slots, so the 128-byte `Children` is never moved.
-                let node = out.write(Node::Branch(Children::default(), M::default()));
-                let Node::Branch(children, _) = &mut *node else {
-                    unreachable!()
-                };
-                let filled = decode_branch_children(source, &items, children);
-                if filled.is_err() {
-                    *node = Node::Null; // drops the partial branch
-                }
-                filled
+        };
+    }
+    match count_items(payload)? {
+        // branch node: 17-item node [ v0 ... v15, value ]
+        17 => {
+            // Write the empty branch first and decode the children into
+            // its slots, so the 128-byte `Children` is never moved.
+            let node = out.write(Node::Branch(Children::default(), M::default()));
+            let Node::Branch(children, _) = &mut *node else {
+                unreachable!()
+            };
+            let filled = decode_branch_children(source, payload, children);
+            if filled.is_err() {
+                *node = Node::Null; // drops the partial branch
             }
-            // leaf or extension node: 2-item node [ encodedPath, v ]
-            2 => {
-                let [mut encode_path, mut v] = items.as_slice() else {
-                    unreachable!()
-                };
-                let (path, is_leaf) = decode_path(&mut encode_path)?;
-                if is_leaf {
-                    let payload = Header::decode_bytes(&mut v, false)?;
-                    out.write(Node::Leaf(path, source.slice_ref(payload), M::default()));
-                    Ok(())
-                } else {
-                    let mut child = Box::<Node<M>>::new_uninit();
-                    decode_child_into(source, v, &mut child)?;
-                    // SAFETY: `Ok` return above ⇒ the callee wrote a fully
-                    // initialized `Node` into the slot.
-                    let child = unsafe { child.assume_init() };
-                    if !matches!(*child, Node::Branch(..) | Node::Digest(..)) {
-                        return Err(alloy_rlp::Error::Custom(
-                            "extension node with invalid child",
-                        ));
-                    }
-                    out.write(Node::Extension(path, child, M::default()));
-                    Ok(())
+            filled
+        }
+        // leaf or extension node: 2-item node [ encodedPath, v ]
+        // they are distinguished by a flag in the first nibble of the encodedPath
+        2 => {
+            // pass 1 validated both item headers, so this cannot fail
+            let (mut encode_path, v) = payload.split_at(item_len(payload)?);
+            let (path, is_leaf) = decode_path(&mut encode_path)?;
+            if is_leaf {
+                let value = Header::decode_bytes(&mut &v[..], false)?;
+                out.write(Node::Leaf(path, source.slice_ref(value), M::default()));
+                Ok(())
+            } else {
+                let mut child = Box::<Node<M>>::new_uninit();
+                decode_child_into(source, v, &mut child)?;
+                // SAFETY: `Ok` return above ⇒ the callee wrote a fully
+                // initialized `Node` into the slot.
+                let child = unsafe { child.assume_init() };
+                if !matches!(*child, Node::Branch(..) | Node::Digest(..)) {
+                    return Err(alloy_rlp::Error::Custom(
+                        "extension node with invalid child",
+                    ));
                 }
+                out.write(Node::Extension(path, child, M::default()));
+                Ok(())
             }
-            _ => Err(alloy_rlp::Error::Custom("unexpected list length")),
-        },
+        }
+        _ => Err(alloy_rlp::Error::Custom("unexpected list length")),
     }
 }
 
-/// Decode the 16 child items of a branch node straight into `children` (the
-/// slots of a freshly written empty [`Node::Branch`]); item 16 must be the
-/// empty value. Children decoded before an `Err` stay owned by the branch.
+/// Header + payload length of the RLP item at the start of the non-empty
+/// `p`, validated exactly like [`Header::decode`] — which the general arm
+/// calls; the two fast paths cover the dominant branch items and cannot
+/// fail: `0x80` is the empty string (payload 0) and `0xa0` a 32-byte string
+/// whose payload is present when `p` holds the whole item.
+#[inline(always)]
+fn item_len(p: &[u8]) -> alloy_rlp::Result<usize> {
+    debug_assert!(!p.is_empty());
+    match p[0] {
+        EMPTY_STRING_CODE => Ok(1),
+        DIGEST_ITEM_PREFIX if p.len() >= DIGEST_RLP_LENGTH => Ok(DIGEST_RLP_LENGTH),
+        _ => {
+            let mut q = p;
+            let h = Header::decode(&mut q)?;
+            Ok(p.len() - q.len() + h.payload_length)
+        }
+    }
+}
+
+/// Number of RLP items in a list payload; every item header is decoded and
+/// validated in order, first error wins — the item scan of
+/// `Header::decode_raw` without its `Vec`.
+#[inline(always)]
+fn count_items(mut p: &[u8]) -> alloy_rlp::Result<usize> {
+    let mut n = 0usize;
+    while !p.is_empty() {
+        p = &p[item_len(p)?..];
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// Decode the 16 child items of the 17-item branch payload `p` straight into
+/// `children` (the slots of a freshly written empty [`Node::Branch`]); item
+/// 16 must be the empty value. Children decoded before an `Err` stay owned
+/// by the branch.
 fn decode_branch_children<M: Memoization>(
     source: &Bytes,
-    items: &[&[u8]],
+    mut p: &[u8],
     children: &mut Children<M>,
 ) -> alloy_rlp::Result<()> {
-    for (i, child_rlp) in items.iter().enumerate() {
-        if child_rlp != &[EMPTY_STRING_CODE] {
+    let mut count = 0usize;
+    for i in 0..17usize {
+        // pass 1 counted exactly 17 validated items over `p`
+        let (item, rest) = p.split_at(item_len(p)?);
+        p = rest;
+        if item != [EMPTY_STRING_CODE] {
             if i == 16 {
                 return Err(alloy_rlp::Error::Custom("branch node with value"));
             }
             let mut child = Box::<Node<M>>::new_uninit();
-            decode_child_into(source, child_rlp, &mut child)?;
+            decode_child_into(source, item, &mut child)?;
             // SAFETY: `Ok` return above ⇒ the callee wrote a fully initialized
             // `Node` into the slot. On `Err`, `?` drops the `Box<MaybeUninit<..>>`
             // without reading it; the slot is untouched or `Node::Null`, so
             // nothing leaks.
             children.insert(i as u8, unsafe { child.assume_init() });
+            count += 1;
         }
     }
-    if children.len() < 2 {
+    if count < 2 {
         return Err(alloy_rlp::Error::Custom("branch node without two children"));
     }
     Ok(())
@@ -1182,6 +1233,144 @@ where
 #[cfg(test)]
 mod tests {
     use super::{super::memoize::Cache, *};
+
+    /// `item_len` agrees with `Header::decode` (length or error) on every
+    /// 1-byte item, every 33-byte item prefix, truncated digest items and
+    /// long-form headers.
+    #[test]
+    fn item_len_matches_header_decode() {
+        fn via_header(p: &[u8]) -> alloy_rlp::Result<usize> {
+            let mut q = p;
+            let h = Header::decode(&mut q)?;
+            Ok(p.len() - q.len() + h.payload_length)
+        }
+        let mut cases: Vec<Vec<u8>> = Vec::new();
+        for b in 0..=255u8 {
+            cases.push(vec![b]);
+            let mut item = vec![b];
+            item.extend((0..32u8).map(|i| i.wrapping_mul(7)));
+            cases.push(item.clone());
+            item.truncate(20);
+            cases.push(item);
+        }
+        cases.push(vec![0xa0, 0x00]);
+        cases.push(vec![0xb8, 0x38]);
+        cases.push(vec![0xb8, 0x37]);
+        cases.push(vec![0xb9, 0x00, 0x40]);
+        cases.push(vec![0xf8, 0x40]);
+        cases.push(vec![0xf9, 0x01, 0x00]);
+        let mut long = vec![0xf8, 0x40];
+        long.resize(2 + 0x40, 0x80);
+        cases.push(long);
+        for case in &cases {
+            assert_eq!(item_len(case), via_header(case), "{case:02x?}");
+        }
+    }
+
+    /// The zero-copy decoder agrees with the `Decodable` impl (which scans
+    /// through `Header::decode_raw`) on nodes, errors and trailing bytes.
+    #[test]
+    fn zc_decode_matches_decodable_impl() {
+        fn digest_item(seed: u8) -> Vec<u8> {
+            let mut v = vec![0xa0];
+            v.extend((0..32u8).map(|i| i.wrapping_mul(seed).wrapping_add(seed)));
+            v
+        }
+        fn list(items: &[Vec<u8>]) -> Vec<u8> {
+            let payload: Vec<u8> = items.concat();
+            let mut out = Vec::new();
+            Header {
+                list: true,
+                payload_length: payload.len(),
+            }
+            .encode(&mut out);
+            out.extend_from_slice(&payload);
+            out
+        }
+        fn branch(children: &[(usize, Vec<u8>)], value: Vec<u8>) -> Vec<u8> {
+            let mut items = vec![vec![EMPTY_STRING_CODE]; 17];
+            for (i, child) in children {
+                items[*i] = child.clone();
+            }
+            items[16] = value;
+            list(&items)
+        }
+        let leaf = list(&[vec![0x83, 0x20, 0x12, 0x34], vec![0x82, 0xab, 0xcd]]);
+        let mut long_leaf_value = vec![0xb8, 0x40];
+        long_leaf_value.extend(core::iter::repeat_n(0x11u8, 0x40));
+        let long_leaf = list(&[vec![0x82, 0x20, 0x12], long_leaf_value]);
+        let inline_branch = branch(&[(1, digest_item(3)), (2, digest_item(4))], vec![0x80]);
+        let mut path32 = vec![0xa0, 0x20];
+        path32.extend(core::iter::repeat_n(0x77u8, 31));
+        let cases: Vec<Vec<u8>> = vec![
+            vec![0x80],
+            digest_item(1),
+            vec![0x83, 1, 2, 3],
+            vec![0xc0],
+            vec![0x05],
+            vec![0x81, 0x05],
+            vec![0xb8, 0x05],
+            vec![0xb9, 0x00, 0x40],
+            branch(&[(0, digest_item(1)), (5, digest_item(2))], vec![0x80]),
+            branch(&[(0, digest_item(1)), (5, leaf.clone())], vec![0x80]),
+            branch(
+                &[(0, digest_item(1)), (7, inline_branch.clone())],
+                vec![0x80],
+            ),
+            branch(&[(0, digest_item(1))], vec![0x80]),
+            branch(&[(0, digest_item(1)), (5, digest_item(2))], vec![0x01]),
+            branch(
+                &[(0, digest_item(1)), (5, digest_item(2))],
+                vec![0x81, 0x05],
+            ),
+            branch(
+                &[(3, vec![0x82, 0x01, 0x02]), (5, digest_item(2))],
+                vec![0x80],
+            ),
+            branch(&[(3, vec![0x02]), (5, digest_item(2))], vec![0x80]),
+            branch(&[(3, vec![0xc0]), (5, digest_item(2))], vec![0x80]),
+            branch(&[(3, vec![0x81, 0x05]), (5, digest_item(2))], vec![0x80]),
+            branch(
+                &[(3, digest_item(2)[..20].to_vec()), (5, digest_item(2))],
+                vec![0x80],
+            ),
+            leaf.clone(),
+            long_leaf,
+            list(&[path32, digest_item(9)]),
+            list(&[vec![0x81, 0x1f], digest_item(2)]),
+            list(&[vec![0x81, 0x00], digest_item(2)]),
+            list(&[vec![0x81, 0x00], inline_branch.clone()]),
+            list(&[vec![0x81, 0x00], leaf.clone()]),
+            list(&[vec![0x81, 0x00], vec![0x80]]),
+            list(&[vec![0x81, 0x40], digest_item(2)]),
+            list(&[vec![0x80], digest_item(2)]),
+            list(&[vec![0xc1, 0x20], digest_item(2)]),
+            list(&[vec![0x82, 0x20, 0x12], vec![0xc2, 0xab, 0xcd]]),
+            list(&[vec![0x82, 0x20, 0x12], vec![0x81, 0x05]]),
+            list(&[vec![0x82, 0x20, 0x12]]),
+            list(&[vec![0x82, 0x20, 0x12], vec![0x80], vec![0x80]]),
+            list(&[vec![0xa0, 0x20]]),
+            vec![0xf9, 0x00, 0x10, 0x80],
+            vec![0xc2, 0x80],
+        ];
+        for case in &cases {
+            for trailing in [0usize, 1] {
+                let mut bytes = case.clone();
+                bytes.extend(core::iter::repeat_n(0x80u8, trailing));
+                let source = Bytes::from(bytes);
+                let expected = alloy_rlp::decode_exact::<Node<Cache>>(&source);
+                let mut slot = MaybeUninit::<Node<Cache>>::uninit();
+                let got = decode_node_zc_exact_into(&source, &mut slot);
+                match (expected, got) {
+                    (Ok(node), Ok(())) => {
+                        assert_eq!(unsafe { slot.assume_init() }, node, "{source}")
+                    }
+                    (Err(e), Err(g)) => assert_eq!(e, g, "{source}"),
+                    (e, g) => panic!("{source}: expected {e:?}, got {g:?}"),
+                }
+            }
+        }
+    }
 
     /// The digest fast path yields the general decoder's node for every
     /// source alignment.
