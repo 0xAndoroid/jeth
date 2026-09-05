@@ -10,6 +10,7 @@ use crate::InstructionContext;
 ///
 /// Removes the top item from the stack.
 pub fn pop<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, POP);
     // Can ignore return. as relative N jump is safe operation.
     popn!([_i], context.interpreter);
 }
@@ -18,6 +19,7 @@ pub fn pop<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H,
 ///
 /// Introduce a new instruction which pushes the constant value 0 onto the stack.
 pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, PUSH0);
     check!(context.interpreter, SHANGHAI);
     push!(context.interpreter, U256::ZERO);
 }
@@ -28,6 +30,8 @@ pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, 
 pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
+    // PUSH1..=PUSH32 share one static gas.
+    static_gas!(context.interpreter, PUSH1);
     let imm = context.interpreter.bytecode.read_slice(N);
     // SAFETY: `imm` is the N immediate bytes at the instruction pointer, and
     // analysed bytecode has at least one byte after them (see
@@ -47,6 +51,8 @@ pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
 pub fn dup<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
+    // DUP1..=DUP16 share one static gas.
+    static_gas!(context.interpreter, DUP1);
     if !context.interpreter.stack.dup(N) {
         context.interpreter.halt(InstructionResult::StackOverflow);
     }
@@ -58,6 +64,8 @@ pub fn dup<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
 pub fn swap<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
+    // SWAP1..=SWAP16 share one static gas.
+    static_gas!(context.interpreter, SWAP1);
     assert!(N != 0);
     if !context.interpreter.stack.exchange(0, N) {
         context.interpreter.halt(InstructionResult::StackUnderflow);
@@ -68,6 +76,7 @@ pub fn swap<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
 ///
 /// Duplicates the Nth stack item to the top of the stack, with N given by an immediate.
 pub fn dupn<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, DUPN);
     check!(context.interpreter, AMSTERDAM);
     let x: usize = context.interpreter.bytecode.read_u8().into();
     if let Some(n) = decode_single(x) {
@@ -86,6 +95,7 @@ pub fn dupn<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H
 ///
 /// Swaps the top stack item with the N+1th stack item, with N given by an immediate.
 pub fn swapn<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, SWAPN);
     check!(context.interpreter, AMSTERDAM);
     let x: usize = context.interpreter.bytecode.read_u8().into();
     if let Some(n) = decode_single(x) {
@@ -104,6 +114,7 @@ pub fn swapn<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, 
 ///
 /// Swaps the N+1th stack item with the M+1th stack item, with N, M given by an immediate.
 pub fn exchange<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, EXCHANGE);
     check!(context.interpreter, AMSTERDAM);
     let x: usize = context.interpreter.bytecode.read_u8().into();
     if let Some((n, m)) = decode_pair(x) {

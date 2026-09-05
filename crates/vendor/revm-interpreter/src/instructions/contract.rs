@@ -135,6 +135,7 @@ pub fn create<WIRE: InterpreterTypes, const IS_CREATE2: bool, H: Host + ?Sized>(
 pub fn call<WIRE: InterpreterTypes, H: Host + ?Sized>(
     mut context: InstructionContext<'_, H, WIRE>,
 ) {
+    static_gas!(context.interpreter, CALL);
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = to.into_address();
     // Max gas limit is not possible in real ethereum situation.
@@ -187,6 +188,7 @@ pub fn call<WIRE: InterpreterTypes, H: Host + ?Sized>(
 pub fn call_code<WIRE: InterpreterTypes, H: Host + ?Sized>(
     mut context: InstructionContext<'_, H, WIRE>,
 ) {
+    static_gas!(context.interpreter, CALLCODE);
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = Address::from_word(B256::from(to));
     // Max gas limit is not possible in real ethereum situation.
@@ -232,6 +234,7 @@ pub fn call_code<WIRE: InterpreterTypes, H: Host + ?Sized>(
 pub fn delegate_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
     mut context: InstructionContext<'_, H, WIRE>,
 ) {
+    static_gas!(context.interpreter, DELEGATECALL);
     check!(context.interpreter, HOMESTEAD);
     popn!([local_gas_limit, to], context.interpreter);
     let to = Address::from_word(B256::from(to));
@@ -277,6 +280,7 @@ pub fn delegate_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
 pub fn static_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
     mut context: InstructionContext<'_, H, WIRE>,
 ) {
+    static_gas!(context.interpreter, STATICCALL);
     check!(context.interpreter, BYZANTIUM);
     popn!([local_gas_limit, to], context.interpreter);
     let to = Address::from_word(B256::from(to));

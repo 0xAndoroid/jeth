@@ -9,6 +9,7 @@ use crate::InstructionContext;
 ///
 /// Loads a 32-byte word from memory.
 pub fn mload<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, MLOAD);
     popn_top!([], top, context.interpreter);
     let offset = as_usize_or_fail!(context.interpreter, top);
     resize_memory!(context.interpreter, context.host.gas_params(), offset, 32);
@@ -19,6 +20,7 @@ pub fn mload<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionConte
 ///
 /// Stores a 32-byte word to memory.
 pub fn mstore<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, MSTORE);
     popn!([offset, value], context.interpreter);
     let offset = as_usize_or_fail!(context.interpreter, offset);
     resize_memory!(context.interpreter, context.host.gas_params(), offset, 32);
@@ -29,6 +31,7 @@ pub fn mstore<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionCont
 ///
 /// Stores a single byte to memory.
 pub fn mstore8<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, MSTORE8);
     popn!([offset, value], context.interpreter);
     let offset = as_usize_or_fail!(context.interpreter, offset);
     resize_memory!(context.interpreter, context.host.gas_params(), offset, 1);
@@ -39,6 +42,7 @@ pub fn mstore8<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionCon
 ///
 /// Gets the size of active memory in bytes.
 pub fn msize<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, MSIZE);
     push!(
         context.interpreter,
         U256::from(context.interpreter.memory.size())
@@ -49,6 +53,7 @@ pub fn msize<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, 
 ///
 /// EIP-5656: Memory copying instruction that copies memory from one location to another.
 pub fn mcopy<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, MCOPY);
     check!(context.interpreter, CANCUN);
     popn!([dst, src, len], context.interpreter);
 

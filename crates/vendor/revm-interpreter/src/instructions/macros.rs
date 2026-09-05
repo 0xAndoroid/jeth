@@ -62,6 +62,39 @@ macro_rules! gas {
     };
 }
 
+/// Charges the opcode's static gas ([`crate::instructions::static_gas`]) and fails the
+/// instruction on out-of-gas. Every instruction runs this before any other check so
+/// out-of-gas keeps priority over stack underflow and activation errors.
+///
+/// Spec-independent opcodes charge a compile-time constant; the repriced ones read the
+/// spec at runtime.
+#[macro_export]
+#[collapse_debuginfo(yes)]
+macro_rules! static_gas {
+    ($interpreter:expr, $opcode:ident) => {{
+        const OPCODE: u8 = $crate::bytecode::opcode::$opcode;
+        if const { $crate::instructions::static_gas_is_spec_independent(OPCODE) } {
+            if $interpreter.gas.record_static_cost::<{
+                $crate::instructions::static_gas(
+                    OPCODE,
+                    $crate::primitives::hardfork::SpecId::FRONTIER,
+                )
+            }>() {
+                $interpreter.halt_oog();
+                return;
+            }
+        } else {
+            $crate::gas!(
+                $interpreter,
+                $crate::instructions::static_gas(
+                    OPCODE,
+                    $crate::interpreter_types::RuntimeFlag::spec_id(&$interpreter.runtime_flag)
+                )
+            )
+        }
+    }};
+}
+
 /// Loads account and account berlin gas cost accounting.
 #[macro_export]
 #[collapse_debuginfo(yes)]

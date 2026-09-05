@@ -11,6 +11,7 @@ use crate::InstructionContext;
 pub fn gasprice<WIRE: InterpreterTypes, H: Host + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
+    static_gas!(context.interpreter, GASPRICE);
     push!(context.interpreter, context.host.effective_gas_price());
 }
 
@@ -18,6 +19,7 @@ pub fn gasprice<WIRE: InterpreterTypes, H: Host + ?Sized>(
 ///
 /// Gets the execution origination address.
 pub fn origin<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, ORIGIN);
     push!(
         context.interpreter,
         context.host.caller().into_word().into()
@@ -30,6 +32,7 @@ pub fn origin<WIRE: InterpreterTypes, H: Host + ?Sized>(context: InstructionCont
 pub fn blob_hash<WIRE: InterpreterTypes, H: Host + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
+    static_gas!(context.interpreter, BLOBHASH);
     check!(context.interpreter, CANCUN);
     popn_top!([], index, context.interpreter);
     let i = as_usize_saturated!(*index);

@@ -12,6 +12,7 @@ use crate::InstructionContext;
 ///
 /// Unconditional jump to a valid destination.
 pub fn jump<ITy: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, ITy>) {
+    static_gas!(context.interpreter, JUMP);
     popn!([target], context.interpreter);
     jump_inner(context.interpreter, target);
 }
@@ -20,6 +21,7 @@ pub fn jump<ITy: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H,
 ///
 /// Conditional jump to a valid destination if condition is true.
 pub fn jumpi<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, JUMPI);
     popn!([target, cond], context.interpreter);
     if !cond.is_zero() {
         jump_inner(context.interpreter, target);
@@ -43,12 +45,15 @@ fn jump_inner<WIRE: InterpreterTypes>(interpreter: &mut Interpreter<WIRE>, targe
 /// Implements the JUMPDEST instruction.
 ///
 /// Marks a valid destination for jump operations.
-pub fn jumpdest<WIRE: InterpreterTypes, H: ?Sized>(_context: InstructionContext<'_, H, WIRE>) {}
+pub fn jumpdest<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, JUMPDEST);
+}
 
 /// Implements the PC instruction.
 ///
 /// Pushes the current program counter onto the stack.
 pub fn pc<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+    static_gas!(context.interpreter, PC);
     // - 1 because we have already advanced the instruction pointer in `Interpreter::step`
     push!(
         context.interpreter,
