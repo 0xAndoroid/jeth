@@ -1001,3 +1001,71 @@ R2 shard's estimate.
 - jeth: release workspace nextest 15/15 (new `receipt_root_bloom` parity
   test vs direct `with_bloom_ref` hashing over 0/1/32/96-receipt slices).
 - Jolt: untouched this wave.
+
+## Campaign opt-amber wave D — in-place MPT node construction (jeth-only)
+
+Vendored zeth-mpt decoded every node by value: `decode_node_zc` built the
+176-byte `Node<Cache>` enum (Children = `[Option<Box<Node>>; 16]` inline
+128 B + `Option<RlpNode>` cache 44 B) on the stack and moved it ~3× per
+child (Result sret → `?` → `Box::new`), plus a 128 B Children move into
+the return and a 176 B `*self = node` per resolved stub — pure move traffic
+LLVM cannot elide across two call boundaries, lowered to memcpy on riscv64
+(49.6M rows of memcpy attributed under decode on 781; repo commit 7df9cd0
+had documented the chain). Fix (three commits, representation unchanged —
+arena and Box<Children> remain dead):
+
+- f64e143 `decode_node_zc_into(.., out: &mut MaybeUninit<Node>)`; every
+  Ok arm ends in `out.write`; children allocated with `Box::new_uninit`
+  BEFORE decoding so each node is built in its final heap slot. 781
+  −52,982,316.
+- 72fa3a0 `decode_stub_in_place`: resolve_with/resolve_stub decode into
+  the node's own slot (deletes `*self = node`); by-value
+  `decode_node_zc_exact` removed. −2,020,854.
+- 88e4db2 Branch children built in the node slot (empty Branch written
+  first, children filled in place; safe code). −859,710.
+
+Unsafe inventory: `Box<MaybeUninit<Node>>::assume_init` ×2 (contract:
+callee's every Ok arm wrote `out`), `assume_init_drop` ×1 (trailing-bytes
+refusal), one `&mut Node → &mut MaybeUninit<Node>` cast in
+decode_stub_in_place (Node::Digest owns nothing; slot is untouched, Null,
+or a valid node at every panic point; stub restored on every Err incl.
+digest-for-digest). Independent adversarial review requested (see journal).
+
+### Ladder (jolt-amber @ d2d9bf2e6, jeth @ 88e4db2)
+
+| Block | Gas | Wave-C rows | Wave-D rows | Delta rows | c/g C → D |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 828,666,884 | 772,804,004 | -55,862,880 | 18.736641 → 17.473548 |
+| 25905782 | 47,065,991 | 982,452,956 | 918,303,726 | -64,149,230 | 20.873946 → 19.510982 |
+| 25905783 | 25,320,107 | 459,509,635 | 428,059,864 | -31,449,771 | 18.148013 → 16.905926 |
+| 25905784 | 19,039,352 | 353,543,859 | 327,029,695 | -26,514,164 | 18.569112 → 17.176514 |
+| 25905785 | 47,351,982 | 884,651,698 | 820,939,382 | -63,712,316 | 18.682464 → 17.336959 |
+| 25905786 | 26,354,048 | 407,200,516 | 378,374,842 | -28,825,674 | 15.451156 → 14.357371 |
+| 25905787 | 27,961,947 | 542,512,306 | 508,481,563 | -34,030,743 | 19.401807 → 18.184770 |
+| 25905788 | 6,217,605 | 132,720,275 | 122,277,571 | -10,442,704 | 21.345884 → 19.666346 |
+| 25905789 | 44,608,380 | 958,875,633 | 887,565,591 | -71,310,042 | 21.495415 → 19.896835 |
+| 25905790 | 32,881,199 | 601,526,875 | 559,141,685 | -42,385,190 | 18.293946 → 17.004906 |
+| Gas-weighted | 321,027,690 | 6,151,660,637 | 5,722,977,923 | -428,682,714 | **19.162399 → 17.827054** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 17.827054 (−1.953492 c/g,
+−9.9%; −627,125,187 rows)**.
+
+Attribution on 781 (`jeth profile --callers-of memcpy --rows`, exact):
+memcpy under decode_node_zc(_into) 49,595,949 → 10,827,010; under
+decode_node_zc_exact 4,262,544 → 0; under resolve_with 3,770,964 →
+1,184,913; under resolve_stub 1,788,633 → 768,159; memoize_arena
+16,161,760 unchanged (separate lane); total memcpy ≈106.9M → 60,227,867
+(−46.6M). The remaining ≈−12M of the −55.9M is decode-internal
+non-memcpy move traffic that vanished with the same chain (Result<Node> →
+Result<()> ABI: 176 B sret temporaries and their spill/reload); every
+other symbol byte-identical in A/B. Landed above the verifier's 30–38M
+band for that reason. Residue under decode (10.8M) = `B256::from_slice`
+32 B copies per Digest child + Leaf/Extension path construction.
+
+### Gates
+
+- Native gate: `run-native` all ten blocks match records.
+- Traces: all ten hashes match; 781 proven-pass perms 118,366 and set
+  perms 867,543 exactly unchanged (no hash-count change).
+- jeth: release workspace nextest 15/15 with `jeth-host/secp-inline`.
+- Jolt: untouched this wave.
