@@ -1,94 +1,108 @@
 //! Word-wise big-endian 32-byte transfers on byte buffers.
 //!
-//! On the Jolt RV64IMAC target every byte load expands to a 4-row virtual
-//! sequence and every byte store to an 8-row one, while naturally aligned
+//! On the Jolt RV64IMAC target every byte load expands to a 3-row virtual
+//! sequence and every byte store to a 6-row one, while naturally aligned
 //! `LD`/`SD` are single rows. `U256::try_from_be_slice` / `to_be_bytes` on
 //! unaligned EVM memory therefore degrade to per-byte loops (~150+ rows per
 //! 32-byte word). These helpers move whole doublewords instead: aligned
-//! pointers use four `LD`/`SD` + `swap_bytes`, unaligned ones read/write the
-//! five covering aligned doublewords with shift-combine.
+//! pointers use four `LD`/`SD` + [`bswap64`], unaligned ones the five aligned
+//! doublewords covering the 32 bytes, shift-combined, the two edge words
+//! read-modify-written on store so their outside bytes keep their values.
+//!
+//! The five-word window can leave the slice by up to seven bytes on either
+//! side. Native builds check for that and take a byte path (the Rust-AM
+//! in-bounds version; it is what the tests exercise at the slice edges). The
+//! Jolt guest skips the check: every word touched holds at least one byte of
+//! the 32-byte range, so the containing-word rule of the guest's `mem.rs`
+//! (flat, word-granular RAM) makes it addressable, and the edge RMW writes
+//! the outside bytes back unchanged. In Rust's abstract machine those accesses
+//! are undefined behaviour; they are volatile so LLVM emits them as written
+//! and infers nothing from them.
 
-use core::ptr::read_volatile;
+use core::ptr::{read_volatile, write_volatile};
 use primitives::U256;
 
-/// Reads the 32-byte big-endian word at `data[offset..offset + 32]` using
-/// aligned u64 loads. Returns `None` when the five covering doublewords are
-/// not fully inside `data` (caller falls back to the byte-slice path).
+/// Whether the five-word window is checked against the slice (see the module
+/// docs); `false` on the Jolt guest.
+const CHECK_WINDOW: bool = !cfg!(target_os = "none");
+
+/// Reads the 32-byte big-endian word at `data[offset..offset + 32]` (MLOAD,
+/// CALLDATALOAD) with aligned `u64` loads.
 ///
 /// # Panics
 ///
 /// Debug-asserts `offset + 32 <= data.len()`.
-#[inline]
-pub(crate) fn read_u256_be(data: &[u8], offset: usize) -> Option<U256> {
+#[inline(always)]
+pub(crate) fn read_u256_be(data: &[u8], offset: usize) -> U256 {
     debug_assert!(offset + 32 <= data.len());
-    let p = data[offset..].as_ptr();
+    // SAFETY: `offset + 32 <= data.len()` (callers resize / bounds-check first).
+    let p = unsafe { data.as_ptr().add(offset) };
     let s = p as usize & 7;
     if s == 0 {
-        // SAFETY: p is 8-aligned and bytes [offset, offset+32) are in bounds.
-        let limbs = unsafe {
+        // SAFETY: `p` is 8-aligned and bytes [offset, offset + 32) are in bounds.
+        return unsafe {
             let w = p.cast::<u64>();
-            [
-                (*w.add(3)).swap_bytes(),
-                (*w.add(2)).swap_bytes(),
-                (*w.add(1)).swap_bytes(),
-                (*w).swap_bytes(),
-            ]
+            U256::from_limbs([
+                bswap64(*w.add(3)),
+                bswap64(*w.add(2)),
+                bswap64(*w.add(1)),
+                bswap64(*w),
+            ])
         };
-        return Some(U256::from_limbs(limbs));
     }
-    // Five aligned doublewords cover [offset - s, offset - s + 40); all their
-    // bytes must be inside `data`.
-    if offset < s || offset + 40 - s > data.len() {
-        return None;
+    if CHECK_WINDOW && (offset < s || offset + 40 - s > data.len()) {
+        return read_u256_be_bytes(&data[offset..offset + 32]);
     }
     let sh = (s * 8) as u32;
     let inv = 64 - sh;
-    // SAFETY: `a` is 8-aligned, `offset >= s` keeps it inside `data`, and the
-    // bounds check above keeps all five doublewords inside `data`.
+    // SAFETY: `a` is the 8-aligned word containing `p`; each of the five words
+    // read holds at least one byte of [offset, offset + 32) — containing-word
+    // rule (module docs); natively the window was checked to lie in `data`.
     unsafe {
-        let a = p.sub(s).cast::<u64>();
-        let w0 = *a;
-        let w1 = *a.add(1);
-        let w2 = *a.add(2);
-        let w3 = *a.add(3);
-        let w4 = *a.add(4);
-        // Little-endian target: `l0` is the LE u64 of bytes [p, p+8), i.e. the
-        // most significant 8 big-endian bytes.
+        let a = (p as usize & !7) as *const u64;
+        let w0 = read_volatile(a);
+        let w1 = read_volatile(a.add(1));
+        let w2 = read_volatile(a.add(2));
+        let w3 = read_volatile(a.add(3));
+        let w4 = read_volatile(a.add(4));
+        // Little-endian target: `l0` is the LE u64 of bytes [p, p + 8), i.e.
+        // the most significant 8 big-endian bytes.
         let l0 = (w0 >> sh) | (w1 << inv);
         let l1 = (w1 >> sh) | (w2 << inv);
         let l2 = (w2 >> sh) | (w3 << inv);
         let l3 = (w3 >> sh) | (w4 << inv);
-        Some(U256::from_limbs([
-            l3.swap_bytes(),
-            l2.swap_bytes(),
-            l1.swap_bytes(),
-            l0.swap_bytes(),
-        ]))
+        U256::from_limbs([bswap64(l3), bswap64(l2), bswap64(l1), bswap64(l0)])
     }
 }
 
-/// Writes `value` as a 32-byte big-endian word at `data[offset..offset + 32]`
-/// using aligned u64 stores. Returns `false` when the five covering
-/// doublewords are not fully inside `data` (caller falls back to the
-/// byte-slice path).
+/// Byte path for a window that leaves the slice (native builds only).
+#[cold]
+#[inline(never)]
+fn read_u256_be_bytes(bytes: &[u8]) -> U256 {
+    U256::try_from_be_slice(bytes).unwrap()
+}
+
+/// Writes `value` as the 32-byte big-endian word at `data[offset..offset + 32]`
+/// (MSTORE) with aligned `u64` stores.
 ///
 /// # Panics
 ///
 /// Debug-asserts `offset + 32 <= data.len()`.
-#[inline]
-pub(crate) fn write_u256_be(data: &mut [u8], offset: usize, value: &U256) -> bool {
+#[inline(always)]
+pub(crate) fn write_u256_be(data: &mut [u8], offset: usize, value: &U256) {
     debug_assert!(offset + 32 <= data.len());
+    // SAFETY: `offset + 32 <= data.len()` (callers resize first).
     let p = unsafe { data.as_mut_ptr().add(offset) };
     let s = p as usize & 7;
     let limbs = value.as_limbs();
     // `v0` holds the most significant 8 big-endian bytes as the LE u64 to be
     // stored at the lowest address.
-    let v0 = limbs[3].swap_bytes();
-    let v1 = limbs[2].swap_bytes();
-    let v2 = limbs[1].swap_bytes();
-    let v3 = limbs[0].swap_bytes();
+    let v0 = bswap64(limbs[3]);
+    let v1 = bswap64(limbs[2]);
+    let v2 = bswap64(limbs[1]);
+    let v3 = bswap64(limbs[0]);
     if s == 0 {
-        // SAFETY: p is 8-aligned and bytes [offset, offset+32) are in bounds.
+        // SAFETY: `p` is 8-aligned and bytes [offset, offset + 32) are in bounds.
         unsafe {
             let w = p.cast::<u64>();
             *w = v0;
@@ -96,25 +110,32 @@ pub(crate) fn write_u256_be(data: &mut [u8], offset: usize, value: &U256) -> boo
             *w.add(2) = v2;
             *w.add(3) = v3;
         }
-        return true;
+        return;
     }
-    if offset < s || offset + 40 - s > data.len() {
-        return false;
+    if CHECK_WINDOW && (offset < s || offset + 40 - s > data.len()) {
+        return write_u256_be_bytes(&mut data[offset..offset + 32], value);
     }
     let sh = (s * 8) as u32;
     let inv = 64 - sh;
-    let keep = (1u64 << sh) - 1;
-    // SAFETY: as in `read_u256_be`; the first and last doublewords are
-    // read-modify-written to preserve their out-of-range bytes.
+    let keep = (1u64 << sh) - 1; // bytes of the first word before `p`
+                                 // SAFETY: as in `read_u256_be`; the first and last words are
+                                 // read-modify-written so the bytes outside [offset, offset + 32) keep
+                                 // their values.
     unsafe {
-        let a = p.sub(s).cast::<u64>();
-        *a = (*a & keep) | (v0 << sh);
-        *a.add(1) = (v0 >> inv) | (v1 << sh);
-        *a.add(2) = (v1 >> inv) | (v2 << sh);
-        *a.add(3) = (v2 >> inv) | (v3 << sh);
-        *a.add(4) = (*a.add(4) & !keep) | (v3 >> inv);
+        let a = (p as usize & !7) as *mut u64;
+        write_volatile(a, (read_volatile(a) & keep) | (v0 << sh));
+        write_volatile(a.add(1), (v0 >> inv) | (v1 << sh));
+        write_volatile(a.add(2), (v1 >> inv) | (v2 << sh));
+        write_volatile(a.add(3), (v2 >> inv) | (v3 << sh));
+        write_volatile(a.add(4), (read_volatile(a.add(4)) & !keep) | (v3 >> inv));
     }
-    true
+}
+
+/// Byte path for a window that leaves the slice (native builds only).
+#[cold]
+#[inline(never)]
+fn write_u256_be_bytes(bytes: &mut [u8], value: &U256) {
+    bytes.copy_from_slice(&value.to_be_bytes::<32>());
 }
 
 /// Byte-swaps `x`. Without Zbb's `rev8`, LLVM lowers `u64::swap_bytes` on
@@ -229,21 +250,26 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
 mod tests {
     use super::*;
 
+    /// Every alignment of the 32-byte word inside a buffer with slack on both
+    /// sides (the window path), plus every alignment at the very start and
+    /// end of the buffer (the window leaves the slice: native byte path).
     #[test]
     fn read_write_all_alignments() {
         let value = U256::from_be_bytes::<32>(core::array::from_fn(|i| (i as u8) * 7 + 1));
         for pad in 0..8usize {
-            let mut buf = vec![0xAAu8; 64];
-            if write_u256_be(&mut buf, pad + 8, &value) {
-                assert_eq!(&buf[pad + 8..pad + 40], &value.to_be_bytes::<32>());
+            for (len, off) in [(64usize, pad + 8), (32 + pad, pad), (40, 8 - pad)] {
+                let mut buf = vec![0xAAu8; len];
+                write_u256_be(&mut buf, off, &value);
+                assert_eq!(&buf[off..off + 32], &value.to_be_bytes::<32>());
                 // Neighbours untouched.
-                assert!(buf[..pad + 8].iter().all(|&b| b == 0xAA));
-                assert!(buf[pad + 40..].iter().all(|&b| b == 0xAA));
-            }
-            buf.fill(0xAA);
-            buf[pad + 8..pad + 40].copy_from_slice(&value.to_be_bytes::<32>());
-            if let Some(read) = read_u256_be(&buf, pad + 8) {
-                assert_eq!(read, value);
+                assert!(buf[..off].iter().all(|&b| b == 0xAA), "pad {pad} len {len}");
+                assert!(
+                    buf[off + 32..].iter().all(|&b| b == 0xAA),
+                    "pad {pad} len {len}"
+                );
+                buf.fill(0xAA);
+                buf[off..off + 32].copy_from_slice(&value.to_be_bytes::<32>());
+                assert_eq!(read_u256_be(&buf, off), value, "pad {pad} len {len}");
             }
         }
     }
@@ -295,12 +321,9 @@ mod tests {
     fn read_write_slice_edges() {
         let value = U256::from_be_bytes::<32>(core::array::from_fn(|i| 255 - i as u8));
         let mut buf = vec![0u8; 32];
-        if write_u256_be(&mut buf, 0, &value) {
-            assert_eq!(&buf[..], &value.to_be_bytes::<32>());
-        }
+        write_u256_be(&mut buf, 0, &value);
+        assert_eq!(&buf[..], &value.to_be_bytes::<32>());
         buf.copy_from_slice(&value.to_be_bytes::<32>());
-        if let Some(read) = read_u256_be(&buf, 0) {
-            assert_eq!(read, value);
-        }
+        assert_eq!(read_u256_be(&buf, 0), value);
     }
 }

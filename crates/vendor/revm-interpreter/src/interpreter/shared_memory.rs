@@ -77,10 +77,12 @@ impl MemoryTr for SharedMemory {
         self.set(memory_offset, data);
     }
 
+    #[inline(always)]
     fn get_u256(&self, offset: usize) -> U256 {
         self.get_u256(offset)
     }
 
+    #[inline(always)]
     fn set_u256(&mut self, offset: usize, value: U256) {
         self.set_u256(offset, value);
     }
@@ -386,16 +388,17 @@ impl SharedMemory {
         (*self.slice_len(offset, 32)).try_into().unwrap()
     }
 
-    /// Returns a U256 of the memory region at the given offset.
+    /// Returns a U256 of the memory region at the given offset (MLOAD).
+    ///
+    /// Word-wise (see [`super::words`]); `#[inline(always)]` so the caller's
+    /// limbs and offset stay in registers instead of a by-value temp + call.
     ///
     /// # Panics
     ///
-    /// Panics on out of bounds.
-    #[inline]
+    /// Panics on out of bounds in debug builds only.
+    #[inline(always)]
     pub fn get_u256(&self, offset: usize) -> U256 {
-        let mem = self.context_memory();
-        super::words::read_u256_be(&mem, offset)
-            .unwrap_or_else(|| U256::try_from_be_slice(&mem[offset..offset + 32]).unwrap())
+        super::words::read_u256_be(self.context_bytes(), offset)
     }
 
     /// Sets the `byte` at the given `index`.
@@ -420,20 +423,48 @@ impl SharedMemory {
         self.set(offset, &value[..]);
     }
 
-    /// Sets the given U256 `value` to the memory region at the given `offset`.
+    /// Sets the given U256 `value` to the memory region at the given `offset`
+    /// (MSTORE). Word-wise (see [`super::words`]); `#[inline(always)]` as
+    /// [`Self::get_u256`].
     ///
     /// # Panics
     ///
-    /// Panics on out of bounds.
-    #[inline]
-    #[cfg_attr(debug_assertions, track_caller)]
+    /// Panics on out of bounds in debug builds only.
+    #[inline(always)]
     pub fn set_u256(&mut self, offset: usize, value: U256) {
-        let mut mem = self.context_memory_mut();
-        if !super::words::write_u256_be(&mut mem, offset, &value) {
-            mem[offset..offset + 32].copy_from_slice(&value.to_be_bytes::<32>());
+        super::words::write_u256_be(self.context_bytes_mut(), offset, &value);
+    }
+
+    /// The current context's memory without a `RefCell` guard: the MLOAD /
+    /// MSTORE path skips the guard's borrow-flag update and restore.
+    ///
+    /// Relies on the invariant [`Self::buffer_ref`] / [`Self::buffer_ref_mut`]
+    /// already assume — in release builds they treat a conflicting live borrow
+    /// as unreachable: the interpreter never holds a `Ref`/`RefMut` on the
+    /// shared buffer across a `MemoryTr` call.
+    #[inline(always)]
+    fn context_bytes(&self) -> &[u8] {
+        // SAFETY: no live `RefMut` on the buffer (invariant above), so the
+        // shared view is valid for `'_`; `my_checkpoint <= len` is the struct
+        // invariant (checked in `context_memory` the same way).
+        unsafe {
+            let buf = &*self.buffer().as_ptr();
+            debug_assert!(self.my_checkpoint <= buf.len());
+            buf.get_unchecked(self.my_checkpoint..)
         }
     }
 
+    /// Mutable [`Self::context_bytes`].
+    #[inline(always)]
+    fn context_bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as `context_bytes`; `&mut self` plus no live `Ref`/`RefMut`
+        // on the buffer make the exclusive view unique for `'_`.
+        unsafe {
+            let buf = &mut *self.buffer().as_ptr();
+            debug_assert!(self.my_checkpoint <= buf.len());
+            buf.get_unchecked_mut(self.my_checkpoint..)
+        }
+    }
 
     /// Set memory region at given `offset`.
     ///

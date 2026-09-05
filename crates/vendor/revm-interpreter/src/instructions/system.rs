@@ -112,11 +112,9 @@ pub fn calldataload<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionConte
     if offset < input_len {
         let input = &*input.as_bytes_memory(&context.interpreter.memory);
         if offset + 32 <= input_len {
-            // Word-wise fast path (see interpreter::words).
-            if let Some(value) = crate::interpreter::words::read_u256_be(input, offset) {
-                *offset_ptr = value;
-                return;
-            }
+            // Word-wise (see interpreter::words).
+            *offset_ptr = crate::interpreter::words::read_u256_be(input, offset);
+            return;
         }
         let count = 32.min(input_len - offset);
         // SAFETY: `count` is bounded by the calldata length.
