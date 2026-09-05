@@ -211,18 +211,31 @@ impl WitnessResolver {
 }
 
 impl DigestResolver for WitnessResolver {
-    /// Hits hand out a borrow of the witness entry (the decoder takes its
-    /// leaf-value views with `slice_ref`); the digest words are gathered from
-    /// the trie's 8-aligned stub (4 `ld`) — misses never touch the digest.
+    /// A miss (`hint == 0`: boundary sibling, absent) is the common answer —
+    /// 9 of 10 probes on mainnet blocks — and is decided here, inlined into
+    /// the caller's loop: one `ADVICE_LD` and a branch, no frame. Hits go out
+    /// of line ([`Self::resolve_hit`]).
+    #[inline(always)]
     fn resolve(&mut self, digest: &B256) -> Option<&Bytes> {
         let hint = advice_u64!(self.slot_impl(digest));
         if hint == 0 {
             return None;
         }
+        Some(self.resolve_hit(hint, digest))
+    }
+}
+
+impl WitnessResolver {
+    /// [`DigestResolver::resolve`] hit: hands out a borrow of the witness
+    /// entry (the decoder takes its leaf-value views with `slice_ref`); the
+    /// digest words are gathered from the trie's 8-aligned stub (4 `ld`).
+    #[cold]
+    #[inline(never)]
+    fn resolve_hit(&mut self, hint: u64, digest: &B256) -> &Bytes {
         // Slice indexing bounds-panics on a lying hint (tracer refuses ⇒ no
         // proof) — the explicit spec check_advice!(i < len) is subsumed.
         let i = (hint - 1) as usize;
         self.verify_slot(i, le_words_32(digest.as_slice()));
-        Some(&self.witness[i])
+        &self.witness[i]
     }
 }
