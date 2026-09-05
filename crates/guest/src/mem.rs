@@ -214,9 +214,25 @@ pub(crate) unsafe fn memset_impl(dst: *mut u8, val: i32, n: usize) -> *mut u8 {
     dst
 }
 
+/// `memcmp` sign from the first differing words, both loaded little-endian so
+/// the lowest differing byte is the first one in memory order. Bytes below it
+/// are equal, so the words masked up to and including that byte order like
+/// the byte itself (no byte swap: RV64IMAC has no `rev8`).
+#[inline(always)]
+fn first_diff_sign(x: u64, y: u64) -> i32 {
+    let d = x ^ y;
+    let low_bit = d & d.wrapping_neg();
+    let ones = (low_bit | (low_bit - 1)) & 0x0101_0101_0101_0101;
+    let mask = ones * 0xFF;
+    if (x & mask) > (y & mask) {
+        1
+    } else {
+        -1
+    }
+}
+
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
-    // Compare 8 bytes at a time; byte-lexicographic order == big-endian order
-    // of the mismatching word. Sub-word accesses appear nowhere.
+    // Compare 8 bytes at a time. Sub-word accesses appear nowhere.
     let mut i = 0usize;
     // Co-aligned fast path (the common case: 32-byte hash equality between
     // 8-aligned heap objects): one aligned load per side per word after a
@@ -227,12 +243,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
             let x = load_le_partial(a, head);
             let y = load_le_partial(b, head);
             if x != y {
-                let sh = (8 - head) * 8;
-                return if (x << sh).to_be() > (y << sh).to_be() {
-                    1
-                } else {
-                    -1
-                };
+                return first_diff_sign(x, y);
             }
             i = head;
         }
@@ -240,7 +251,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
             let x = read_volatile(a.add(i) as *const u64);
             let y = read_volatile(b.add(i) as *const u64);
             if x != y {
-                return if x.to_be() > y.to_be() { 1 } else { -1 };
+                return first_diff_sign(x, y);
             }
             i += 8;
         }
@@ -249,7 +260,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
         let x = load_le_partial(a.add(i), 8);
         let y = load_le_partial(b.add(i), 8);
         if x != y {
-            return if x.to_be() > y.to_be() { 1 } else { -1 };
+            return first_diff_sign(x, y);
         }
         i += 8;
     }
@@ -258,12 +269,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
         let x = load_le_partial(a.add(i), rem);
         let y = load_le_partial(b.add(i), rem);
         if x != y {
-            // low bytes are the earlier ones (LE) — compare as BE of the
-            // rem-byte prefix: shift both up so byte 0 is most significant.
-            let sh = (8 - rem) * 8;
-            let xb = (x << sh).to_be();
-            let yb = (y << sh).to_be();
-            return if xb > yb { 1 } else { -1 };
+            return first_diff_sign(x, y);
         }
     }
     0
@@ -341,6 +347,9 @@ mod tests {
                 let mut other = expect;
                 other[doff + flip] =
                     other[doff + flip].wrapping_add(1 + (xorshift(&mut rng) % 254) as u8);
+                for b in other[doff + flip + 1..doff + n].iter_mut() {
+                    *b = xorshift(&mut rng) as u8;
+                }
                 let want = expect[doff..doff + n].cmp(&other[doff..doff + n]) as i32;
                 let got = unsafe { jmemcmp(dst.as_ptr().add(doff), other.as_ptr().add(doff), n) };
                 assert_eq!(got.signum(), want.signum(), "memcmp n={n} flip={flip}");
