@@ -1583,6 +1583,7 @@ bytes=13417708 perms=118366); `run-native` 10/10; workspace nextest 19/19
 | J + L (interpreter: SWAR, PUSH gather, u256 words, static gas + `addi`) | b601b2a7 | SOUND_WITH_NITS | none |
 | K (GLV ecmul parsing, signed-digit pippenger, memcpy unroll, bump alignment) | 659e2aa9 | SOUND_WITH_NITS | none |
 | N (MPT resolver inline miss path, aligned RlpNode, Slot children layout) | cda74652 | SOUND_WITH_NITS | none |
+| O (register-resident ip, null-ip stop, limb-wise exchange) | 4eee04c0 | SOUND_WITH_NITS | none |
 | M (keccak memos, HashedPostState from memos) | — (safe code, memo reuse; covered by the parity test) | — | — |
 | N (MPT resolver inline, aligned RlpNode, Slot layout) | cda74652 | SOUND_WITH_NITS | none |
 
@@ -1788,4 +1789,5 @@ Cumulative vs wave-4 baseline: **19.780546 → 13.649923 (-6.130623 c/g,
   `ip.add(1)`; `Stack::exchange` limb loop via `.cast::<u64>()`
   (repr(transparent) U256). `clippy::not_unsafe_ptr_arg_deref` allowed on
   push/dupn/swapn/exchange/pc_of with a one-line reason. Independent
-  adversarial review: pending.
+  adversarial review: 4eee04c0 SOUND_WITH_NITS (inspector-only pc drift on
+  DUPN/SWAPN/EXCHANGE stack errors; `unsafe fn`/`# Safety` docs — queued).
