@@ -18,7 +18,7 @@ use super::{
     rlp::Scratch,
 };
 use alloc::boxed::Box;
-use core::slice::Iter;
+use core::slice::{Iter, IterMut};
 
 /// Implements a helper wrapper for the children of a Branch node.
 ///
@@ -160,6 +160,14 @@ impl<M> Children<M> {
     #[inline]
     pub(super) fn iter(&self) -> Iter<'_, Option<Child<M>>> {
         self.0.iter()
+    }
+
+    /// Mutable slot iterator. Callers that may leave a `Node::Null` child
+    /// behind must clear its slot themselves (what [`OccupiedEntry`] does on
+    /// drop); [`Self::entries`] pays that check on every slot.
+    #[inline]
+    pub(super) fn iter_mut(&mut self) -> IterMut<'_, Option<Child<M>>> {
+        self.0.iter_mut()
     }
 
     #[inline]

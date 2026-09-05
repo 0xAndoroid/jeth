@@ -654,9 +654,24 @@ impl<M: Memoization> Node<M> {
                 }
             }
             Node::Branch(children, _) => {
-                for entry in children.entries() {
-                    if let Entry::Occupied(mut entry) = entry {
-                        entry.get_mut().resolve_with(r)?;
+                for slot in children.iter_mut() {
+                    let Some(child) = slot else { continue };
+                    // Digest stubs are the bulk of the children and most of
+                    // them miss (boundary siblings): resolve them here instead
+                    // of through a recursive call per stub, whose frame and
+                    // dispatch cost more than the resolver's miss.
+                    if let Node::Digest(digest) = &**child {
+                        #[cfg(feature = "premeasure")]
+                        super::premeasure::count(&super::premeasure::PROBES);
+                        let Some(bytes) = r.resolve(digest) else { continue };
+                        let digest = *digest;
+                        if !child.hydrate(digest, bytes)? {
+                            continue;
+                        }
+                    }
+                    child.resolve_with(r)?;
+                    if matches!(**child, Node::Null) {
+                        *slot = None;
                     }
                 }
             }
@@ -664,17 +679,8 @@ impl<M: Memoization> Node<M> {
                 #[cfg(feature = "premeasure")]
                 super::premeasure::count(&super::premeasure::PROBES);
                 if let Some(bytes) = r.resolve(digest) {
-                    #[cfg(feature = "premeasure")]
-                    super::premeasure::count(&super::premeasure::HITS);
                     let digest = *digest;
-                    self.decode_stub_in_place(&digest, bytes)?;
-                    // do not try to replace a node by a digest
-                    if matches!(self, Node::Digest(_)) {
-                        *self = Node::Digest(digest);
-                    } else {
-                        #[cfg(feature = "premeasure")]
-                        super::premeasure::count(&super::premeasure::DECODES);
-                        self.cache_set(RlpNode::from_digest(&digest));
+                    if self.hydrate(digest, bytes)? {
                         self.resolve_with(r)?;
                     }
                 }
@@ -682,6 +688,26 @@ impl<M: Memoization> Node<M> {
         }
 
         Ok(())
+    }
+
+    /// [`Self::resolve_with`] hit: `bytes` is the authenticated encoding of
+    /// the stub `*self == Node::Digest(digest)`. Decodes it in place and caches
+    /// the digest as the node's encoding; a digest-for-digest answer is refused
+    /// (the stub stays). Returns whether the node was resolved and its own
+    /// children still need resolving.
+    fn hydrate(&mut self, digest: Digest, bytes: &Bytes) -> alloy_rlp::Result<bool> {
+        #[cfg(feature = "premeasure")]
+        super::premeasure::count(&super::premeasure::HITS);
+        self.decode_stub_in_place(&digest, bytes)?;
+        // do not try to replace a node by a digest
+        if matches!(self, Node::Digest(_)) {
+            *self = Node::Digest(digest);
+            return Ok(false);
+        }
+        #[cfg(feature = "premeasure")]
+        super::premeasure::count(&super::premeasure::DECODES);
+        self.cache_set(RlpNode::from_digest(&digest));
+        Ok(true)
     }
 
     #[inline]
