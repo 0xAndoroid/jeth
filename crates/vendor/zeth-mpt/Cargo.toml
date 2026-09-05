@@ -2,10 +2,11 @@
 # Copyright 2025 RISC Zero, Inc.). Applied via [patch] of the git dependency.
 #
 # Changes vs upstream (profile-driven, block 25698189):
-# - Node::Branch boxes its Children: sizeof(Node) 176 -> ~112 bytes. Every
-#   decode moves each node ~3x (decode return, Box::new, *self = node); the
-#   riscv64 byte/word copy storm for those moves measured as a large share of
-#   the 129M decode-driven memcpy rows.
+# - Branch children are 16 inline 40-byte slots (Empty / inline Digest /
+#   boxed Node): unresolved children cost no heap node, and nodes are decoded
+#   in place into their final slot (decode_node_zc_into) — moving a node by
+#   value (decode return, Box::new, *self = node) was a large share of the
+#   129M decode-driven memcpy rows.
 # - Zero-copy decode: leaf/branch values become Bytes::slice_ref views into the
 #   witness node bytes instead of allocated copies (resolve_digests path, the
 #   only decode path jeth exercises).

@@ -1753,4 +1753,27 @@ mod tests {
             }
         }
     }
+
+    /// `RlpNode::from_digest` is the RLP string item of the digest
+    /// (`0xa0 ++ digest`), and `from_rlp` switches from the inline encoding
+    /// to the digest reference exactly at 32 bytes.
+    #[test]
+    fn rlp_node_digest_and_inline_boundary() {
+        let digest = B256::from_slice(&(0..32u8).map(|i| i.wrapping_mul(37)).collect::<Vec<_>>());
+        let node = RlpNode::from_digest(&digest);
+        assert_eq!(node.as_slice(), alloy_rlp::encode(digest));
+        assert_eq!(node.len(), DIGEST_RLP_LENGTH);
+        assert_eq!(node.hash(), digest);
+
+        let rlp31: Vec<u8> = (0..31u8).map(|i| i.wrapping_mul(11).wrapping_add(1)).collect();
+        let inline = RlpNode::from_rlp(&rlp31);
+        assert_eq!(inline.as_slice(), &rlp31[..]);
+        assert_eq!(inline.len(), 31);
+        assert_eq!(inline.hash(), keccak256(&rlp31));
+
+        let rlp32: Vec<u8> = (0..32u8).map(|i| i.wrapping_mul(11).wrapping_add(1)).collect();
+        let referenced = RlpNode::from_rlp(&rlp32);
+        assert_eq!(referenced.as_slice(), alloy_rlp::encode(keccak256(&rlp32)));
+        assert_eq!(referenced.hash(), keccak256(&rlp32));
+    }
 }

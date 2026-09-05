@@ -98,10 +98,10 @@ impl DigestResolver for Unresolvable {
 }
 
 /// jeth fork note: `Node<Cache>` is 688 bytes — [`Children`] stores its 16
-/// [`Slot`]s inline (640 B; the first slot's tag word doubles as the node's
-/// discriminant), with unresolved children held as bare digests instead of
-/// one heap `Node` per stub (145k stub boxes of 176 B on a mainnet block,
-/// 33 B live each). Moving a node by value (decode return →
+/// [`Slot`]s inline (640 B; rustc currently folds the node discriminant into
+/// the first slot's tag word — an observed layout nothing here relies on),
+/// with unresolved children held as bare digests instead of one heap `Node`
+/// per stub (145k stub boxes of 176 B on a mainnet block, 33 B live each). Moving a node by value (decode return →
 /// `?` → `Box::new`, or a split's `*self = branch`) lowers to word copy loops
 /// that Jolt expands into trace rows, so nodes are constructed directly in
 /// their final slot instead ([`super::rlp`]'s `decode_node_zc_into`,
@@ -427,17 +427,26 @@ impl<M: Memoization> Slot<M> {
     /// digest-for-digest refusal ("MPT: Unresolved node access" — INV-W3) and
     /// on malformed bytes, exactly like [`Node::resolve_stub`].
     pub(super) fn resolve_mut<R: DigestResolver>(&mut self, r: &mut R) -> Option<&mut Node<M>> {
-        if let Slot::Digest(digest) = self {
-            let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
-            let child = Node::decode_child(digest, bytes)
-                .expect("MPT: invalid witness node")
-                .expect("MPT: Unresolved node access"); // digest-for-digest refusal
-            *self = Slot::Node(child);
-        }
         match self {
             Slot::Node(child) => Some(child),
             Slot::Empty => None,
-            Slot::Digest(_) => unreachable!(), // resolved above
+            Slot::Digest(digest) => {
+                let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
+                let child = Node::decode_child(digest, bytes)
+                    .expect("MPT: invalid witness node")
+                    .expect("MPT: Unresolved node access"); // digest-for-digest refusal
+                // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
+                // which a slot never holds: the child is absent.
+                if matches!(*child, Node::Null) {
+                    *self = Slot::Empty;
+                    return None;
+                }
+                *self = Slot::Node(child);
+                let Slot::Node(child) = self else {
+                    unreachable!() // stored just above
+                };
+                Some(child)
+            }
         }
     }
 }
