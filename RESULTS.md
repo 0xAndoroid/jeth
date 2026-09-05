@@ -1106,3 +1106,52 @@ Cumulative vs wave-4 baseline: **19.780546 → 17.511009 (−2.269537 c/g,
   (781: 118,366; set 867,543).
 - jeth: release workspace nextest 15/15.
 - Jolt: untouched this wave.
+
+## Campaign opt-amber wave F — arena child refs and string items assembled from whole words (jeth-only)
+
+`memoize_arena` built each node's RLP in an owned scratch buffer by
+memcpy-ing 32-byte digests and ≤33-byte cached child refs at a byte-granular
+cursor from 8-aligned sources — every copy took the generic misaligned
+memcpy path (~70–116 rows); 16.16M rows of memcpy under memoize_arena on
+781. Replaced with a funnel writer over an `#[repr(C, align(8))]` scratch
+(`put_window`/`put_window33`/`put_raw`/`put_prefixed`): source read as the
+aligned words containing it, shifted by the cursor offset, whole-word SD
+stores with a first-word RMW and a ≤7-byte owned overrun; the one-byte RLP
+prefix is folded into word 0 instead of a separate SB. Used for child refs
+(Digest, Cached) and leaf path/value string items. Byte-exact output is
+asserted by an exhaustive offset×shift×length test against the byte copy.
+jeth commit d979f0c (also fixes the wave-D review nits in rlp.rs).
+
+### Ladder (jolt-amber @ d2d9bf2e6, jeth @ d979f0c)
+
+| Block | Gas | Wave-E rows | Wave-F rows | Delta rows | c/g E → F |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 759,473,828 | 749,233,347 | -10,240,481 | 17.172145 → 16.940602 |
+| 25905782 | 47,065,991 | 903,197,053 | 890,175,181 | -13,021,872 | 19.190015 → 18.913342 |
+| 25905783 | 25,320,107 | 420,588,931 | 414,886,377 | -5,702,554 | 16.610867 → 16.385649 |
+| 25905784 | 19,039,352 | 320,727,131 | 315,845,472 | -4,881,659 | 16.845486 → 16.589087 |
+| 25905785 | 47,351,982 | 805,904,445 | 792,751,133 | -13,153,312 | 17.019445 → 16.741667 |
+| 25905786 | 26,354,048 | 371,521,181 | 366,438,325 | -5,082,856 | 14.097310 → 13.904442 |
+| 25905787 | 27,961,947 | 500,387,639 | 494,122,962 | -6,264,677 | 17.895307 → 17.671265 |
+| 25905788 | 6,217,605 | 119,813,905 | 117,757,192 | -2,056,713 | 19.270106 → 18.939317 |
+| 25905789 | 44,608,380 | 870,818,262 | 855,305,307 | -15,512,955 | 19.521405 → 19.173646 |
+| 25905790 | 32,881,199 | 549,086,254 | 541,444,076 | -7,642,178 | 16.699095 → 16.466677 |
+| Gas-weighted | 321,027,690 | 5,621,518,629 | 5,537,959,372 | -83,559,257 | **17.511009 → 17.250722** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 17.250722 (−2.529824 c/g,
+−12.8%; −812,143,738 rows)**.
+
+Attribution on 781: memcpy under memoize_arena 16,161,760 → 1,273,614
+(residual = per-node `RlpNode::from_rlp` 32-B copy + 44-B cache.set move);
+memoize_arena self 12,576,720 → 17,250,480 (+4.67M of inline word writes,
+well under the memcpy removed); memcpy total 60,227,867 → 45,217,177; net
+−10,240,481.
+
+### Gates
+
+- Native gate: `run-native` all ten blocks match records.
+- Traces: all ten hashes match; perms unchanged (781: 118,366).
+- jeth: nextest 15/15; vendored zeth-mpt 18/18 (new exhaustive
+  `word_writer_matches_byte_copy`); workspace clippy `--all-targets
+  -D warnings` clean.
+- Jolt: untouched this wave.
