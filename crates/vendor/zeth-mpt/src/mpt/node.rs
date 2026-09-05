@@ -300,13 +300,14 @@ impl<M: Memoization> Node<M> {
     pub(super) fn resolve_stub<R: DigestResolver>(&mut self, r: &mut R) {
         if let Node::Digest(digest) = self {
             let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
-            let mut node: Node<M> =
-                super::rlp::decode_node_zc_exact(&bytes).expect("MPT: invalid witness node");
-            if matches!(node, Node::Digest(_)) {
+            let digest = *digest;
+            self.decode_stub_in_place(&digest, &bytes)
+                .expect("MPT: invalid witness node");
+            if matches!(self, Node::Digest(_)) {
+                *self = Node::Digest(digest);
                 panic!("MPT: Unresolved node access"); // digest-for-digest refusal
             }
-            node.cache_set(super::rlp::RlpNode::from_digest(digest));
-            *self = node;
+            self.cache_set(super::rlp::RlpNode::from_digest(&digest));
         }
     }
 

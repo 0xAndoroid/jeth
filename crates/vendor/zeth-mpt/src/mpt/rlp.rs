@@ -413,13 +413,15 @@ impl<M: Memoization> Node<M> {
                 if let Some(bytes) = r.resolve(digest) {
                     #[cfg(feature = "premeasure")]
                     super::premeasure::count(&super::premeasure::HITS);
-                    let mut node: Node<M> = decode_node_zc_exact(&bytes)?;
+                    let digest = *digest;
+                    self.decode_stub_in_place(&digest, &bytes)?;
                     // do not try to replace a node by a digest
-                    if !matches!(node, Node::Digest(_)) {
+                    if matches!(self, Node::Digest(_)) {
+                        *self = Node::Digest(digest);
+                    } else {
                         #[cfg(feature = "premeasure")]
                         super::premeasure::count(&super::premeasure::DECODES);
-                        node.cache_set(RlpNode::from_digest(digest));
-                        *self = node;
+                        self.cache_set(RlpNode::from_digest(&digest));
                         self.resolve_with(r)?;
                     }
                 }
@@ -437,6 +439,34 @@ impl<M: Memoization> Node<M> {
             }
             _ => {}
         }
+    }
+
+    /// jeth (advice-trie): decode `bytes` — the authenticated encoding of the
+    /// [`Node::Digest`] stub `*self` — straight into this node's slot, so the
+    /// resolved node is never moved (`*self = node` copied 176 B per node).
+    ///
+    /// Requires `*self` to be `Node::Digest(*digest)`. On `Ok`, `*self` is the
+    /// decoded node (possibly itself a `Digest`); on `Err`, `*self` is the
+    /// original stub again.
+    pub(super) fn decode_stub_in_place(
+        &mut self,
+        digest: &B256,
+        bytes: &Bytes,
+    ) -> alloy_rlp::Result<()> {
+        debug_assert!(matches!(self, Node::Digest(d) if d == digest));
+        // SAFETY: `MaybeUninit<Node<M>>` has the layout of `Node<M>`, and a
+        // `Node::Digest` owns no resources, so its bytes may be overwritten
+        // without a drop. `decode_node_zc_exact_into` touches the slot only
+        // through `MaybeUninit::write` (whole-value stores, after every
+        // fallible/panicking step of the arm) and, on `Err`, leaves it either
+        // untouched or holding `Node::Null` — so `*self` is a valid, drop-safe
+        // node at every panic point and on both result paths.
+        let slot = unsafe { &mut *(self as *mut Self as *mut MaybeUninit<Self>) };
+        let result = decode_node_zc_exact_into(bytes, slot);
+        if result.is_err() {
+            *self = Node::Digest(*digest);
+        }
+        result
     }
 }
 
@@ -581,16 +611,25 @@ fn decode_node_zc_into<M: Memoization>(
 }
 
 /// [`decode_node_zc_into`] over the whole buffer, mirroring `alloy_rlp::decode_exact`.
-pub(super) fn decode_node_zc_exact<M: Memoization>(source: &Bytes) -> alloy_rlp::Result<Node<M>> {
+///
+/// Contract: on `Ok`, `out` holds the decoded node. On `Err`, `out` is either
+/// untouched or holds [`Node::Null`] (trailing-bytes refusal of a complete
+/// decode) — never partially written, so a caller may alias `out` with a live
+/// `&mut Node<M>` slot ([`Node::decode_stub_in_place`]).
+fn decode_node_zc_exact_into<M: Memoization>(
+    source: &Bytes,
+    out: &mut MaybeUninit<Node<M>>,
+) -> alloy_rlp::Result<()> {
     let mut buf = source.as_ref();
-    let mut node = MaybeUninit::uninit();
-    decode_node_zc_into(source, &mut buf, &mut node)?;
-    // SAFETY: `Ok` return above ⇒ `node` is fully initialized.
-    let node = unsafe { node.assume_init() };
+    decode_node_zc_into(source, &mut buf, out)?;
     if !buf.is_empty() {
+        // SAFETY: `Ok` return above ⇒ `out` is fully initialized. Drop it and
+        // leave a resource-free node behind for aliasing callers.
+        unsafe { out.assume_init_drop() };
+        out.write(Node::Null);
         return Err(alloy_rlp::Error::UnexpectedLength);
     }
-    Ok(node)
+    Ok(())
 }
 
 /// Append a child reference (post-order-memoized: cached / digest / null).
