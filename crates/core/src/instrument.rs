@@ -55,6 +55,11 @@ impl InstrumentedTrie {
     ) -> HashedPostState {
         self.0.hashed_post_state(state)
     }
+
+    /// [`crate::zeth_trie::SparseState::hashed_address`].
+    pub fn hashed_address(&self, address: Address) -> B256 {
+        self.0.hashed_address(address)
+    }
 }
 
 impl StatelessTrie for InstrumentedTrie {

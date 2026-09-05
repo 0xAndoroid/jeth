@@ -176,6 +176,12 @@ impl SparseState {
     ) -> HashedPostState {
         hashed_post_state(state, &self.address_hashes, &self.slot_hashes)
     }
+
+    /// `keccak256(address)` through the `account()` memo (log emitters were
+    /// all loaded during execution).
+    pub fn hashed_address(&self, address: Address) -> B256 {
+        hash_address(address, &self.address_hashes)
+    }
 }
 
 impl SparseState {

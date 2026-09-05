@@ -23,7 +23,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{
     keccak256,
-    map::{AddressMap, B256IndexMap, B256Map},
+    map::{B256IndexMap, B256Map},
     Address, Bloom, Bytes, B256, U256,
 };
 #[cfg(feature = "lazy-analysis")]
@@ -146,7 +146,9 @@ pub fn validate_recovered_pertx(
     // Single-shot process: leak the block state instead of tearing it down.
     core::mem::forget(state);
 
-    let root_bloom = receipt_root_bloom(&output.result.receipts);
+    let root_bloom = receipt_root_bloom(&output.result.receipts, |address| {
+        trie.hashed_address(address)
+    });
     validate_block_post_execution(
         &current_block,
         &chain_spec,
@@ -345,18 +347,19 @@ impl<T: StatelessTrie> Database for WitnessDatabase<'_, T> {
     }
 }
 
-fn receipt_root_bloom(receipts: &[EthereumReceipt]) -> (B256, Bloom) {
+/// Receipt root + block bloom; `hash_address` supplies `keccak256(address)`
+/// for log emitters (the trie's execution-time memo), topics are memoized here.
+fn receipt_root_bloom(
+    receipts: &[EthereumReceipt],
+    mut hash_address: impl FnMut(Address) -> B256,
+) -> (B256, Bloom) {
     let mut topics = B256Map::default();
-    let mut addresses = AddressMap::default();
     let receipts: Vec<_> = receipts
         .iter()
         .map(|receipt| {
             let mut logs_bloom = Bloom::ZERO;
             for log in receipt.logs() {
-                let hash = addresses
-                    .entry(log.address)
-                    .or_insert_with(|| keccak256(log.address.as_slice()));
-                logs_bloom.m3_2048_hashed(hash);
+                logs_bloom.m3_2048_hashed(&hash_address(log.address));
                 for &topic in log.topics() {
                     let hash = topics.entry(topic).or_insert_with(|| keccak256(topic));
                     logs_bloom.m3_2048_hashed(hash);
@@ -425,7 +428,7 @@ mod tests {
                     .iter()
                     .fold(Bloom::ZERO, |bloom, r| bloom | r.logs_bloom),
             );
-            assert_eq!(receipt_root_bloom(receipts), expected);
+            assert_eq!(receipt_root_bloom(receipts, keccak256), expected);
         }
     }
 }
