@@ -28,8 +28,12 @@ pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, 
 pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) {
-    let slice = context.interpreter.bytecode.read_slice(N);
-    if !context.interpreter.stack.push_slice(slice) {
+    let imm = context.interpreter.bytecode.read_slice(N);
+    // SAFETY: `imm` is the N immediate bytes at the instruction pointer, and
+    // analysed bytecode has at least one byte after them (see
+    // `read_be_immediate`).
+    let value = unsafe { crate::interpreter::words::read_be_immediate::<N>(imm.as_ptr()) };
+    if !context.interpreter.stack.push(value) {
         context.interpreter.halt(InstructionResult::StackOverflow);
         return;
     }

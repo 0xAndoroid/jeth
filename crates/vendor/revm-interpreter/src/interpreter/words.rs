@@ -8,6 +8,7 @@
 //! pointers use four `LD`/`SD` + `swap_bytes`, unaligned ones read/write the
 //! five covering aligned doublewords with shift-combine.
 
+use core::ptr::read_volatile;
 use primitives::U256;
 
 /// Reads the 32-byte big-endian word at `data[offset..offset + 32]` using
@@ -116,6 +117,114 @@ pub(crate) fn write_u256_be(data: &mut [u8], offset: usize, value: &U256) -> boo
     true
 }
 
+/// Byte-swaps `x`. Without Zbb's `rev8`, LLVM lowers `u64::swap_bytes` on
+/// riscv64 to ~25 mask/shift/or instructions per call (and re-derives that
+/// lowering from any hand-written swap it recognises); this pins the
+/// 13-instruction butterfly — rotate by 32, swap the 16-bit halves, swap the
+/// bytes — with the two lane masks materialised by the compiler once per
+/// function.
+#[inline(always)]
+pub(crate) fn bswap64(x: u64) -> u64 {
+    #[cfg(target_arch = "riscv64")]
+    {
+        let out: u64;
+        // SAFETY: register-only arithmetic on the named operands; no memory
+        // access, no stack use.
+        unsafe {
+            core::arch::asm!(
+                "srli {t}, {x}, 32",
+                "slli {o}, {x}, 32",
+                "or   {o}, {o}, {t}",
+                "srli {t}, {o}, 16",
+                "and  {t}, {t}, {m16}",
+                "and  {o}, {o}, {m16}",
+                "slli {o}, {o}, 16",
+                "or   {o}, {o}, {t}",
+                "srli {t}, {o}, 8",
+                "and  {t}, {t}, {m8}",
+                "and  {o}, {o}, {m8}",
+                "slli {o}, {o}, 8",
+                "or   {o}, {o}, {t}",
+                x = in(reg) x,
+                m16 = in(reg) 0x0000_ffff_0000_ffffu64,
+                m8 = in(reg) 0x00ff_00ff_00ff_00ffu64,
+                o = out(reg) out,
+                t = out(reg) _,
+                options(pure, nomem, nostack),
+            );
+        }
+        out
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    x.swap_bytes()
+}
+
+/// The `N`-byte (1..=32) big-endian PUSH immediate at `p` as a `U256`, read
+/// with aligned `LD`s only.
+///
+/// `N <= 4`: byte loads shifted in (cheaper than a word gather plus swap).
+/// `N >= 5`: loads the 8-aligned words containing bytes `[p, p + N]`, funnels
+/// them into the immediate's byte stream eight bytes at a time, byte-swaps
+/// each chunk and right-aligns the value with a constant shift, so the up to
+/// seven bytes past the immediate riding along in the last word fall off.
+///
+/// # Safety
+///
+/// `p` must point at `N` readable bytes followed by at least one more readable
+/// byte. Analysed bytecode always has a byte after a PUSH immediate: analysis
+/// pads truncated immediates and appends a STOP (`revm_bytecode`'s
+/// `analyze_legacy`). The loads then touch only 8-aligned words holding at
+/// least one of those `N + 1` bytes; on the Jolt guest (flat, word-granular
+/// RAM) such words are addressable — the containing-word rule of the guest's
+/// `mem.rs`/`keccak.rs`. In Rust's abstract machine the bytes beyond `p + N`
+/// inside those words lie outside the caller's slice; the loads are volatile,
+/// so nothing is inferred from them, and the bits they contribute are shifted
+/// out. The native tests give every buffer a word of slack on both sides.
+#[inline(always)]
+pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
+    const { assert!(1 <= N && N <= 32) };
+    if N <= 4 {
+        let mut v = 0u64;
+        for i in 0..N {
+            v = (v << 8) | *p.add(i) as u64;
+        }
+        return U256::from_limbs([v, 0, 0, 0]);
+    }
+    let s = p as usize & 7;
+    let base = (p as usize & !7) as *const u64;
+    // `c` 8-byte chunks make up the immediate's byte stream. Words 0..c each
+    // hold immediate bytes for every `s`; word c holds one of the N + 1
+    // guaranteed bytes exactly when `s + N >= 8c` (always for N % 8 == 0), and
+    // is needed only when the stream spills into it.
+    let c = N.div_ceil(8);
+    let mut w = [0u64; 5];
+    for (i, word) in w.iter_mut().enumerate().take(c) {
+        *word = read_volatile(base.add(i));
+    }
+    if s + N >= 8 * c {
+        w[c] = read_volatile(base.add(c));
+    }
+    let sh = (s * 8) as u32;
+    // Chunk m = stream bytes [8m, 8m + 8), little-endian; `<< (63 - sh) << 1`
+    // is `<< (64 - sh)` that is also defined for sh == 0. Swapped, chunk 0 is
+    // the most significant limb of the left-aligned value.
+    let mut y = [0u64; 4];
+    for m in 0..c {
+        y[3 - m] = bswap64((w[m] >> sh) | ((w[m + 1] << (63 - sh)) << 1));
+    }
+    // Right-align by the 32 - N missing bytes: `d` whole limbs and `r` bits.
+    let d = (32 - N) / 8;
+    let r = ((32 - N) % 8) * 8;
+    let mut x = [0u64; 4];
+    for i in 0..4 - d {
+        x[i] = y[i + d] >> r;
+        if r != 0 && i + d + 1 < 4 {
+            x[i] |= y[i + d + 1] << (64 - r);
+        }
+    }
+    U256::from_limbs(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +246,49 @@ mod tests {
                 assert_eq!(read, value);
             }
         }
+    }
+
+    #[test]
+    fn bswap64_matches_swap_bytes() {
+        let mut v = 0x0123_4567_89ab_cdefu64;
+        for _ in 0..64 {
+            assert_eq!(bswap64(v), v.swap_bytes());
+            v = v.rotate_left(7) ^ 0x9e37_79b9_7f4a_7c15;
+        }
+    }
+
+    /// `read_be_immediate::<N>` against `U256::try_from_be_slice` for every
+    /// N and every alignment of the immediate; the buffer carries a word of
+    /// slack on both sides (the containing-word contract) and the bytes after
+    /// the immediate are non-zero so a leak would show.
+    fn check_immediate<const N: usize>(rng: &mut u64) {
+        for off in 0..8usize {
+            let mut buf = vec![0u8; 8 + off + N + 8];
+            for b in buf.iter_mut() {
+                *rng ^= *rng << 13;
+                *rng ^= *rng >> 7;
+                *rng ^= *rng << 17;
+                *b = (*rng as u8) | 1;
+            }
+            // Immediates with zero bytes (and a zero leading byte) too.
+            if off % 3 == 0 {
+                buf[8 + off] = 0;
+                buf[8 + off + N / 2] = 0;
+            }
+            let imm = &buf[8 + off..8 + off + N];
+            let want = U256::try_from_be_slice(imm).unwrap();
+            let got = unsafe { read_be_immediate::<N>(imm.as_ptr()) };
+            assert_eq!(got, want, "N {N} off {off}");
+        }
+    }
+
+    #[test]
+    fn immediate_all_sizes_all_alignments() {
+        let mut rng = 0xfeed_face_cafe_beefu64;
+        macro_rules! check {
+            ($($n:literal)*) => { $( check_immediate::<$n>(&mut rng); )* };
+        }
+        check!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
     }
 
     #[test]
