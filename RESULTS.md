@@ -1726,3 +1726,66 @@ Cumulative vs wave-4 baseline: **19.780546 → 13.806895 (-5.973651 c/g,
   = `mem::forget(mem::replace(..))` on an Empty slot (leak, never UB, if
   the debug_assert precondition were violated). Independent adversarial
   review cda74652: SOUND_WITH_NITS (nits: `resolve_mut` Null → Empty on the `[0x80]` stub; `from_digest` parity test; stale layout comments; release assert in `write_str_item`).
+
+## Campaign opt-amber wave O — register-resident instruction pointer, null-ip stop (jeth-only, vendored revm-interpreter)
+
+The dispatch loop was 12 instructions / 14 rows per EVM op (ld ip, lbu,
+addi, sd ip, table slli/add/ld, two ABI moves, jalr, ld flag, bnez) ≈ 25.1M
+rows on 781 (plan: `.journals/dispatch-loop-analysis.md`). Three commits,
+each gated (hash 0xf691…b529 and census exact):
+
+| Step | Commit | Change | 781 Δ rows |
+|---|---|---|---:|
+| a | 393f063 | instruction fns are `fn(ip: Ip, ctx) -> Ip` (ip in a0 = return register, ctx a two-pointer ScalarPair); the loop keeps ip in a register; `set_action_at(ip, action)` persists ip at the 6 yield sites; `Interpreter::step` kept as the revm-inspector shim; halt helpers return a `#[must_use]` null | −3,998,470 |
+| b | 6d78c7d | null ip ⇒ stop; `continue_execution` deleted (`is_not_end = action.is_none()`, `reset_action` removed) | −1,863,728 |
+| e3 | 4c81dba | limb-wise `Stack::exchange` (no 32-byte stack temp): SWAP1 2.57M → 2.40M, SWAP2 1.47M → 1.37M | −385,888 |
+
+Total 781 −6,248,086 (−1.04%); Handler::execution 26,171,091 → 20,761,024.
+Loop after (9 instructions / 11 rows, objdump-verified): `lbu a1,0(a0); slli;
+add; ld a3; addi a0,a0,1; mv a1,s0; mv a2,s6; jalr a3; bnez a0` — table base
+and the initial ip load hoisted. **Refuted / corrected:** the first (a)
+build measured +1.51M — LLVM IPSCCP folded `halt`'s constant null into
+`li a0,0` after every halt call, so the cold halt stopped being a sibcall and
+every instruction grew an `ra` frame (+4 rows × 1.79M); `halt` now returns
+`black_box(null())`, add/push are frameless again with `jr` tails. PUSH
+saved 0.74M (not 0.9M), JUMP neutral (sd ip → mv); MSTORE/MLOAD/SHL/
+CALLDATALOAD +0.41M because ip is live across their cold resize call (one
+more callee-saved register) — e4 "resize before loading limbs" recovers it.
+Only ip-after-halt divergence: DUPN/SWAPN/EXCHANGE stack errors leave the
+persisted ip at the immediate byte (upstream op+2); nothing reads ip after a
+halt. API changes in the vendored crate: `Jumps` gained ip/set_ip/
+jump_target/pc_of; `LoopControl::reset_action` removed;
+`copy_cost_and_memory_resize` inlined into its 3 callers.
+
+### Ladder (jolt-amber @ 920868471, jeth @ 4c81dba)
+
+| Block | Gas | Wave-N rows | Wave-O rows | Delta rows | c/g N → O |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 602,581,200 | 596,333,114 | -6,248,086 | 13.624712 → 13.483439 |
+| 25905782 | 47,065,991 | 722,730,753 | 714,587,202 | -8,143,551 | 15.355690 → 15.182666 |
+| 25905783 | 25,320,107 | 333,270,545 | 329,918,101 | -3,352,444 | 13.162288 → 13.029886 |
+| 25905784 | 19,039,352 | 249,345,032 | 246,786,378 | -2,558,654 | 13.096298 → 12.961911 |
+| 25905785 | 47,351,982 | 629,164,492 | 621,484,417 | -7,680,075 | 13.286973 → 13.124781 |
+| 25905786 | 26,354,048 | 291,826,406 | 288,467,506 | -3,358,900 | 11.073305 → 10.945852 |
+| 25905787 | 27,961,947 | 402,255,180 | 397,307,708 | -4,947,472 | 14.385807 → 14.208871 |
+| 25905788 | 6,217,605 | 92,257,240 | 91,371,953 | -885,287 | 14.838067 → 14.695683 |
+| 25905789 | 44,608,380 | 676,714,323 | 668,276,137 | -8,438,186 | 15.170117 → 14.980955 |
+| 25905790 | 32,881,199 | 432,250,301 | 427,470,870 | -4,779,431 | 13.145819 → 13.000465 |
+| Gas-weighted | 321,027,690 | 4,432,395,472 | 4,382,003,386 | -50,392,086 | **13.806895 → 13.649923** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 13.649923 (-6.130623 c/g,
+-31.0%; -1,968,099,724 rows)**.
+
+### Gates
+
+- Trace hashes + census exact on all 10; `run-native` 10/10; sweep hashes =
+  records. Vendored revm-interpreter 49/49 + clippy `-D warnings` per
+  commit; workspace nextest 21/21; pre-commit fmt + clippy.
+- Unsafe (all with SAFETY comments): `run_plain`/`step` `(*ip, ip.add(1))`
+  + `get_unchecked(table)`; `jump_target` `base.add(offset)` and `pc_of`
+  `offset_from_unsigned` (moved from `absolute_jump`/`pc`); `push`
+  `read_be_immediate::<N>(ip)` + `ip.add(N)`; dupn/swapn/exchange `*ip` +
+  `ip.add(1)`; `Stack::exchange` limb loop via `.cast::<u64>()`
+  (repr(transparent) U256). `clippy::not_unsafe_ptr_arg_deref` allowed on
+  push/dupn/swapn/exchange/pc_of with a one-line reason. Independent
+  adversarial review: pending.
