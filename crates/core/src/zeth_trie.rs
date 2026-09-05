@@ -50,7 +50,7 @@ fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> 
 use crate::resolver::{b256_from_le_words, WitnessResolver};
 use alloy_primitives::{
     keccak256,
-    map::{indexmap::map::Entry, AddressMap, B256IndexMap},
+    map::{indexmap::map::Entry, AddressMap, B256IndexMap, FbBuildHasher, HashMap},
     Address, B256, KECCAK256_EMPTY, U256,
 };
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -132,10 +132,16 @@ pub struct SparseState {
     /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
     resolver: RefCell<WitnessResolver>,
     address_hashes: RefCell<AddressMap<B256>>,
+    /// slot → keccak(slot): address-independent, so one entry serves every
+    /// contract that touches the same slot number. Keyed by the limbs (revm's
+    /// `U256Map` hasher); the big-endian form is only built for the keccak.
+    slot_hashes: RefCell<SlotHashes>,
     /// last address resolved by `account()` / `storage()`: consecutive reads
     /// of one contract skip the address-hash and storage-root map probes
     last_read: RefCell<Option<LastRead>>,
 }
+
+type SlotHashes = HashMap<U256, B256, FbBuildHasher<32>>;
 
 /// One-entry memo of the address → (hashed address, storage root) chain.
 /// Pre-state storage roots are immutable during execution, so an entry never
@@ -199,6 +205,10 @@ impl SparseState {
                 storage_roots: RefCell::new(B256IndexMap::default()),
                 resolver: RefCell::new(resolver),
                 address_hashes: RefCell::new(AddressMap::with_capacity_and_hasher(
+                    witness.state.len() / 8,
+                    Default::default(),
+                )),
+                slot_hashes: RefCell::new(SlotHashes::with_capacity_and_hasher(
                     witness.state.len() / 8,
                     Default::default(),
                 )),
@@ -271,6 +281,10 @@ impl StatelessTrie for SparseState {
                     witness.state.len() / 8,
                     Default::default(),
                 )),
+                slot_hashes: RefCell::new(SlotHashes::with_capacity_and_hasher(
+                    witness.state.len() / 8,
+                    Default::default(),
+                )),
                 last_read: RefCell::new(None),
             },
             bytecode,
@@ -322,7 +336,7 @@ impl StatelessTrie for SparseState {
                 root
             }
         };
-        let key = keccak256(B256::from(slot));
+        let key = hash_slot(slot, &self.slot_hashes);
         Ok(self
             .resolver
             .borrow_mut()
@@ -444,6 +458,16 @@ fn hash_address(address: Address, memo: &RefCell<AddressMap<B256>>) -> B256 {
     let digest = *memo.entry(address).or_insert_with(|| keccak256(address));
     #[cfg(test)]
     debug_assert_eq!(digest, keccak256(address));
+    digest
+}
+
+fn hash_slot(slot: U256, memo: &RefCell<SlotHashes>) -> B256 {
+    let mut memo = memo.borrow_mut();
+    let digest = *memo
+        .entry(slot)
+        .or_insert_with(|| keccak256(B256::from(slot)));
+    #[cfg(test)]
+    debug_assert_eq!(digest, keccak256(B256::from(slot)));
     digest
 }
 
