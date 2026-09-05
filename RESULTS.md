@@ -1069,3 +1069,40 @@ band for that reason. Residue under decode (10.8M) = `B256::from_slice`
   perms 867,543 exactly unchanged (no hash-count change).
 - jeth: release workspace nextest 15/15 with `jeth-host/secp-inline`.
 - Jolt: untouched this wave.
+
+## Campaign opt-amber wave E — leak block state instead of tearing it down (jeth-only)
+
+At the end of `validate_recovered_pertx` the trie (~350k boxed nodes), the
+revm `State` cache, the bundle, the witness and the recovered block were
+dropped: ~12.5M rows of `drop_in_place<[Option<Box<Node>>;16]>` +
+`size_class_alloc::dealloc` on 781 plus smaller map/Vec teardowns — pure
+dealloc traffic in a single-shot process. `core::mem::forget` on those five
+owners after the state root is checked. No semantic change (validation
+output identical; native run-native path unchanged). jeth commit 443c327.
+
+### Ladder (jolt-amber @ d2d9bf2e6, jeth @ 443c327)
+
+| Block | Gas | Wave-D rows | Wave-E rows | Delta rows | c/g D → E |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 772,804,004 | 759,473,828 | -13,330,176 | 17.473548 → 17.172145 |
+| 25905782 | 47,065,991 | 918,303,726 | 903,197,053 | -15,106,673 | 19.510982 → 19.190015 |
+| 25905783 | 25,320,107 | 428,059,864 | 420,588,931 | -7,470,933 | 16.905926 → 16.610867 |
+| 25905784 | 19,039,352 | 327,029,695 | 320,727,131 | -6,302,564 | 17.176514 → 16.845486 |
+| 25905785 | 47,351,982 | 820,939,382 | 805,904,445 | -15,034,937 | 17.336959 → 17.019445 |
+| 25905786 | 26,354,048 | 378,374,842 | 371,521,181 | -6,853,661 | 14.357371 → 14.097310 |
+| 25905787 | 27,961,947 | 508,481,563 | 500,387,639 | -8,093,924 | 18.184770 → 17.895307 |
+| 25905788 | 6,217,605 | 122,277,571 | 119,813,905 | -2,463,666 | 19.666346 → 19.270106 |
+| 25905789 | 44,608,380 | 887,565,591 | 870,818,262 | -16,747,329 | 19.896835 → 19.521405 |
+| 25905790 | 32,881,199 | 559,141,685 | 549,086,254 | -10,055,431 | 17.004906 → 16.699095 |
+| Gas-weighted | 321,027,690 | 5,722,977,923 | 5,621,518,629 | -101,459,294 | **17.827054 → 17.511009** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 17.511009 (−2.269537 c/g,
+−11.5%; −728,584,481 rows)**.
+
+### Gates
+
+- Native gate: `run-native` all ten blocks match records.
+- Traces: all ten hashes match; per-block proven-pass perms unchanged
+  (781: 118,366; set 867,543).
+- jeth: release workspace nextest 15/15.
+- Jolt: untouched this wave.
