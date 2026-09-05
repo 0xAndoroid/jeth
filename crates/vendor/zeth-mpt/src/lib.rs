@@ -27,4 +27,4 @@ mod mpt;
 pub use mpt::orphan;
 #[cfg(feature = "premeasure")]
 pub use mpt::premeasure;
-pub use mpt::{le_words_32, CachedTrie, DigestResolver, Trie, EMPTY_ROOT_HASH};
+pub use mpt::{decode_header, le_words_32, CachedTrie, DigestResolver, Trie, EMPTY_ROOT_HASH};

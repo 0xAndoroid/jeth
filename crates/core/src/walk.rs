@@ -23,9 +23,9 @@
 //! (bytes already authenticated).
 
 use alloy_primitives::B256;
-use alloy_rlp::{Header, EMPTY_STRING_CODE};
+use alloy_rlp::EMPTY_STRING_CODE;
 use core::ops::Range;
-use zeth_mpt::le_words_32;
+use zeth_mpt::{decode_header, le_words_32};
 
 /// RLP header byte of a digest item (32-byte string) and the item's length.
 const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + 32;
@@ -76,7 +76,7 @@ pub(crate) fn key_nibble(key: &B256, d: usize) -> u8 {
 
 /// Header of the RLP item at the start of `p`: `(is_list, header length,
 /// payload length)`, validated exactly like [`Header::decode`] (the general
-/// arm). Fast paths for the two dominant branch items, which cannot fail:
+/// arm is its local twin [`decode_header`]). Fast paths for the two dominant branch items, which cannot fail:
 /// `0x80` is the empty string and `0xa0` a 32-byte string whose payload is
 /// present when `p` holds the whole item.
 #[inline(always)]
@@ -87,7 +87,7 @@ fn item_header(p: &[u8]) -> alloy_rlp::Result<(bool, usize, usize)> {
         Some(&DIGEST_ITEM_PREFIX) if p.len() >= DIGEST_ITEM_LENGTH => Ok((false, 1, 32)),
         Some(_) => {
             let mut q = p;
-            let h = Header::decode(&mut q)?;
+            let h = decode_header(&mut q)?;
             Ok((h.list, p.len() - q.len(), h.payload_length))
         }
     }
@@ -129,13 +129,13 @@ fn validate_branch_child(item: &[u8], list: bool, plen: usize) -> alloy_rlp::Res
 /// several defects coexist the reported error is the first one met in this
 /// order rather than `decode_raw`'s header-scan-first order.
 fn validate_at(r: &mut &[u8]) -> alloy_rlp::Result<NodeKind> {
-    let h = Header::decode(r)?;
+    let h = decode_header(r)?;
     if !h.list {
         // As an inline child this is handled at the item site (empty/digest);
         // as a top-level walk entry a bare string is unusable (see module docs).
         return Err(alloy_rlp::Error::Custom("bare string node in walk"));
     }
-    // `Header::decode` checked `r.len() >= payload_length`.
+    // `decode_header` checked `r.len() >= payload_length`.
     let (mut p, rest) = r.split_at(h.payload_length);
     *r = rest;
 
@@ -227,7 +227,7 @@ pub(crate) fn validate_entry(bytes: &[u8]) -> alloy_rlp::Result<NodeKind> {
 /// Classify an (already-validated) inline node span: item count + HP flag.
 fn classify(span: &[u8]) -> NodeKind {
     let mut r = span;
-    let h = Header::decode(&mut r).expect("validated");
+    let h = decode_header(&mut r).expect("validated");
     let mut p = &r[..h.payload_length];
     let mut items = 0usize;
     let first = p;
@@ -239,7 +239,7 @@ fn classify(span: &[u8]) -> NodeKind {
         NodeKind::Branch
     } else {
         let mut q = first;
-        let ph = Header::decode(&mut q).expect("validated");
+        let ph = decode_header(&mut q).expect("validated");
         debug_assert!(!ph.list && ph.payload_length > 0);
         if q[0] >> 4 >= 2 {
             NodeKind::Leaf
@@ -297,7 +297,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
     let mut kind = top_kind;
     loop {
         let mut p = span;
-        let h = Header::decode(&mut p).expect("validated");
+        let h = decode_header(&mut p).expect("validated");
         p = &p[..h.payload_length];
         match kind {
             NodeKind::Branch => {
@@ -323,7 +323,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
                 }
             }
             NodeKind::Extension => {
-                let ph = Header::decode(&mut p).expect("validated");
+                let ph = decode_header(&mut p).expect("validated");
                 let compact = &p[..ph.payload_length];
                 p = &p[ph.payload_length..];
                 let Some(plen) = match_path(compact, key, *depth, false) else {
@@ -331,7 +331,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
                 };
                 *depth += plen;
                 let before = p;
-                let vh = Header::decode(&mut p).expect("validated");
+                let vh = decode_header(&mut p).expect("validated");
                 if vh.list {
                     span = &before[..before.len() - p.len() + vh.payload_length];
                     kind = classify(span);
@@ -341,13 +341,13 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
                 return Step::Digest(le_words_32(p));
             }
             NodeKind::Leaf => {
-                let ph = Header::decode(&mut p).expect("validated");
+                let ph = decode_header(&mut p).expect("validated");
                 let compact = &p[..ph.payload_length];
                 p = &p[ph.payload_length..];
                 if match_path(compact, key, *depth, true).is_none() {
                     return Step::Absent;
                 }
-                let vh = Header::decode(&mut p).expect("validated");
+                let vh = decode_header(&mut p).expect("validated");
                 let start = p.as_ptr() as usize - entry.as_ptr() as usize;
                 return Step::Value(start..start + vh.payload_length);
             }
@@ -360,6 +360,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
 mod tests {
     use super::*;
     use alloc::{vec, vec::Vec};
+    use alloy_rlp::Header;
 
     /// `item_header` agrees with `Header::decode` (header/payload lengths, list
     /// flag, or error) on every 1-byte item, every 33-byte item prefix,

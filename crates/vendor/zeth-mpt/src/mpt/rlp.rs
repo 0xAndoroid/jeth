@@ -812,8 +812,8 @@ fn decode_node_zc_into<M: Memoization>(
     buf: &mut &[u8],
     out: &mut MaybeUninit<Node<M>>,
 ) -> alloy_rlp::Result<()> {
-    let h = Header::decode(buf)?;
-    // `Header::decode` checked `buf.len() >= payload_length`.
+    let h = decode_header(buf)?;
+    // `decode_header` checked `buf.len() >= payload_length`.
     let (payload, rest) = buf.split_at(h.payload_length);
     *buf = rest;
     if !h.list {
@@ -852,7 +852,7 @@ fn decode_node_zc_into<M: Memoization>(
             let (mut encode_path, v) = payload.split_at(item_len(payload)?);
             let (path, is_leaf) = decode_path(&mut encode_path)?;
             if is_leaf {
-                let value = Header::decode_bytes(&mut &v[..], false)?;
+                let value = decode_string(&mut &v[..])?;
                 out.write(Node::Leaf(path, source.slice_ref(value), M::default()));
                 Ok(())
             } else {
@@ -874,9 +874,87 @@ fn decode_node_zc_into<M: Memoization>(
     }
 }
 
+/// [`Header::decode`] with the long-form length read byte-wise: alloy copies
+/// the 1–8 length bytes into a zero-padded `[u8; 8]` and byte-swaps it
+/// (`static_left_pad` + `from_be_bytes` — a `memcpy` call and a swap per
+/// long header, ~80 rows on riscv64imac); here each byte is one `lbu` folded
+/// into the accumulator. Same checks in the same order, same errors, same
+/// buffer advance (a single byte below `0x80` is its own payload and does not
+/// advance).
+#[inline(always)]
+pub fn decode_header(buf: &mut &[u8]) -> alloy_rlp::Result<Header> {
+    let Some(&b) = buf.first() else {
+        return Err(alloy_rlp::Error::InputTooShort);
+    };
+    let (list, payload_length) = match b {
+        0..=0x7f => (false, 1),
+        EMPTY_STRING_CODE..=0xb7 => {
+            *buf = &buf[1..];
+            let payload_length = (b - EMPTY_STRING_CODE) as usize;
+            if payload_length == 1 {
+                match buf.first() {
+                    None => return Err(alloy_rlp::Error::InputTooShort),
+                    Some(&next) if next < EMPTY_STRING_CODE => {
+                        return Err(alloy_rlp::Error::NonCanonicalSingleByte)
+                    }
+                    Some(_) => {}
+                }
+            }
+            (false, payload_length)
+        }
+        0xb8..=0xbf | 0xf8..=0xff => {
+            *buf = &buf[1..];
+            let list = b >= 0xf8;
+            let len_of_len = (b - if list { 0xf7 } else { 0xb7 }) as usize;
+            if buf.len() < len_of_len {
+                return Err(alloy_rlp::Error::InputTooShort);
+            }
+            let (len_bytes, rest) = buf.split_at(len_of_len);
+            *buf = rest;
+            if len_bytes[0] == 0 {
+                return Err(alloy_rlp::Error::LeadingZero);
+            }
+            let mut len = 0u64;
+            for &x in len_bytes {
+                len = (len << 8) | x as u64;
+            }
+            let payload_length =
+                usize::try_from(len).map_err(|_| alloy_rlp::Error::Custom("Input too big"))?;
+            if payload_length < 56 {
+                return Err(alloy_rlp::Error::NonCanonicalSize);
+            }
+            (list, payload_length)
+        }
+        0xc0..=0xf7 => {
+            *buf = &buf[1..];
+            (true, (b - 0xc0) as usize)
+        }
+    };
+    if buf.len() < payload_length {
+        return Err(alloy_rlp::Error::InputTooShort);
+    }
+    Ok(Header {
+        list,
+        payload_length,
+    })
+}
+
+/// `Header::decode_bytes(buf, false)` on top of [`decode_header`]: the payload
+/// of a string item, advancing `buf` past it.
+#[inline(always)]
+fn decode_string<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<&'a [u8]> {
+    let h = decode_header(buf)?;
+    if h.list {
+        return Err(alloy_rlp::Error::UnexpectedList);
+    }
+    let (payload, rest) = buf.split_at(h.payload_length);
+    *buf = rest;
+    Ok(payload)
+}
+
 /// Header + payload length of the RLP item at the start of the non-empty
-/// `p`, validated exactly like [`Header::decode`] — which the general arm
-/// calls; the two fast paths cover the dominant branch items and cannot
+/// `p`, validated exactly like [`Header::decode`] — the general arm calls
+/// its local twin [`decode_header`]; the two fast paths cover the dominant branch items and cannot
 /// fail: `0x80` is the empty string (payload 0) and `0xa0` a 32-byte string
 /// whose payload is present when `p` holds the whole item.
 #[inline(always)]
@@ -887,7 +965,7 @@ fn item_len(p: &[u8]) -> alloy_rlp::Result<usize> {
         DIGEST_ITEM_PREFIX if p.len() >= DIGEST_RLP_LENGTH => Ok(DIGEST_RLP_LENGTH),
         _ => {
             let mut q = p;
-            let h = Header::decode(&mut q)?;
+            let h = decode_header(&mut q)?;
             Ok(p.len() - q.len() + h.payload_length)
         }
     }
@@ -1218,7 +1296,7 @@ fn encode_list_header(payload_length: usize) -> Vec<u8> {
 
 #[inline]
 fn decode_path(buf: &mut &[u8]) -> alloy_rlp::Result<(Nibbles, bool)> {
-    let compact = Header::decode_bytes(buf, false)?;
+    let compact = decode_string(buf)?;
     if compact.is_empty() {
         return Err(alloy_rlp::Error::InputTooShort);
     }
@@ -1395,6 +1473,43 @@ mod tests {
                     }
                     (Err(e), Err(g)) => assert_eq!(e, g, "{source}"),
                     (e, g) => panic!("{source}: expected {e:?}, got {g:?}"),
+                }
+            }
+        }
+    }
+
+    /// `decode_header` agrees with `Header::decode` (header or error, and the
+    /// buffer advance) for every first byte over a range of tails: short and
+    /// long lengths with and without their payload, leading zeros,
+    /// non-canonical sizes, truncated length fields.
+    #[test]
+    fn decode_header_matches_alloy() {
+        let tails: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![0x00],
+            vec![0x05],
+            vec![0x7f],
+            vec![0x80],
+            vec![0x37],
+            vec![0x38],
+            vec![0x00, 0x40],
+            vec![0x01, 0x00],
+            vec![0x01, 0x00, 0x00],
+            vec![0xff; 8],
+            vec![0x01; 9],
+        ];
+        for b in 0..=255u8 {
+            for tail in &tails {
+                for payload in [0usize, 1, 55, 56, 300] {
+                    let mut bytes = vec![b];
+                    bytes.extend_from_slice(tail);
+                    bytes.extend(core::iter::repeat_n(0x11u8, payload));
+                    let mut ours = &bytes[..];
+                    let mut theirs = &bytes[..];
+                    let got = decode_header(&mut ours);
+                    let want = Header::decode(&mut theirs);
+                    assert_eq!(got, want, "{bytes:02x?}");
+                    assert_eq!(ours.len(), theirs.len(), "{bytes:02x?}");
                 }
             }
         }
