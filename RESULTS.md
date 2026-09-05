@@ -899,3 +899,57 @@ cargo build -q --release -p jeth-host --features secp-inline
 "$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin  # first run builds the guest pair
 "$CARGO_TARGET_DIR/release/jeth" opcodes --input data/25905781/input.bin --skip-build
 ```
+
+## Campaign opt-amber wave B — word-lane fusions (LW/LWU 5→4, SW 9→7)
+
+Same vertex-sum lane architecture as wave A, specialized to the 2-vertex word
+lane: `y_2` selects word 0/1 of the aligned doubleword and the shift K∈{0,4}
+is a 1-bit XOR relabeling (`lane = y_2 XOR (K>>2)`; imm&3==0 means no carry
+into bit 2, so the eq structure survives unchanged). New tables
+ExtractWu/ExtractW (signed variant folds the eq factor into a sign suffix —
+no double counting at short suffix lengths), ClearLaneW, ShiftDataWK4; kinds
+0x00d0–0x00d6 (LookupTableKind count 109→116 < 126 cap). Expansions gated on
+word-aligned immediates (`imm.trailing_zeros() >= 2`): LW/LWU = align_addr;
+ld; extract → 4 rows; SW = align_addr; ld; clear_lane_w; shift_data_w; add;
+sd → 7 rows. Non-aligned imms keep the old sequences.
+
+Jolt commits: 7365999b4 (tables + P/S components), 053a633fe (instruction
+kinds/wiring), ef298ff96 (jolt-prover-legacy mirror), d2d9bf2e6 (fused
+expansions + 30 golden expansion hashes re-baselined: LW/LWU/SW at imm
+−8/0/12 plus LR.W/SC.W, documented in-file).
+
+### Ladder (jolt-amber @ d2d9bf2e6, jeth @ opt-amber-work)
+
+| Block | Gas | Wave-A rows | Wave-B rows | Delta rows | c/g A → B |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 838,139,317 | 834,033,235 | -4,106,082 | 18.950818 → 18.857977 |
+| 25905782 | 47,065,991 | 991,999,817 | 987,260,970 | -4,738,847 | 21.076786 → 20.976101 |
+| 25905783 | 25,320,107 | 463,599,459 | 461,310,242 | -2,289,217 | 18.309538 → 18.219127 |
+| 25905784 | 19,039,352 | 357,058,625 | 355,141,134 | -1,917,491 | 18.753717 → 18.653005 |
+| 25905785 | 47,351,982 | 895,527,215 | 890,812,958 | -4,714,257 | 18.912138 → 18.812580 |
+| 25905786 | 26,354,048 | 410,760,612 | 408,653,601 | -2,107,011 | 15.586244 → 15.506293 |
+| 25905787 | 27,961,947 | 548,047,171 | 545,552,206 | -2,494,965 | 19.599750 → 19.510523 |
+| 25905788 | 6,217,605 | 133,702,434 | 132,964,080 | -738,354 | 21.503848 → 21.385096 |
+| 25905789 | 44,608,380 | 969,527,378 | 964,216,410 | -5,310,968 | 21.734198 → 21.615141 |
+| 25905790 | 32,881,199 | 608,082,043 | 604,977,536 | -3,104,507 | 18.493305 → 18.398889 |
+| Gas-weighted | 321,027,690 | 6,216,444,071 | 6,184,922,372 | -31,521,699 | **19.364199 → 19.266009** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 19.266009 (−0.514537 c/g,
+−165,180,738 rows)**.
+
+Exact attribution on 781 (post-B `jeth opcodes` histogram): −4,106,082 =
+1 row × 1,412,347 LW + 1 row × 1,231,381 LWU + 2 rows × 731,177 SW execs,
+zero residual — every dynamic word op in the set resolved to the fused
+word-aligned path (compilers emit 4-aligned word offsets).
+
+### Gates
+
+- Native gate: all ten trace block hashes match wave-4 records bit-for-bit
+  (full-set sweep).
+- Keccak accounting: 781 permutation total 121,206 unchanged.
+- Jolt: lookup-tables + riscv + tracer suites green; jolt-prover-legacy
+  mirror + lookup-table ABI cross-check 1/1; jolt-program golden expansion
+  parity green after documented re-baseline; zk e2e + byte-parity green
+  (zk_muldiv SIGABRT is a known flake, passes standalone).
+- jeth: release workspace nextest 14/14 with `jeth-host/secp-inline`,
+  re-run after the jolt dependency bump.
