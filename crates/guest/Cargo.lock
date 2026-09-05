@@ -3780,7 +3780,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
- "arrayvec",
  "jolt-sdk",
 ]
 

@@ -22,10 +22,10 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use alloy_primitives::{hex, keccak256, map::B256IndexMap, Bytes, B256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header, PayloadView, EMPTY_STRING_CODE};
 use alloy_trie::{nodes::encode_path_leaf, Nibbles, EMPTY_ROOT_HASH};
-use arrayvec::ArrayVec;
 use core::{
     fmt,
     mem::MaybeUninit,
+    num::NonZeroUsize,
     ptr::{read_volatile, write_volatile},
 };
 
@@ -1157,10 +1157,10 @@ fn write_child_ref<M: Memoization>(buf: &mut Scratch, cursor: &mut usize, node: 
         NodeRef::Digest(digest) => unsafe {
             put_prefixed(buf, cursor, 0xa0, digest.as_ptr(), B256::len_bytes())
         },
-        // SAFETY: `rlp_node.0` is a live `ArrayVec` with `len() >= 1` bytes
-        // initialized (every encoding is non-empty); cursor bound above.
+        // SAFETY: `rlp_node` holds `len() >= 1` initialized bytes at
+        // `as_ptr()` (every encoding is non-empty); cursor bound above.
         NodeRef::Cached(rlp_node) => unsafe {
-            put_raw(buf, cursor, rlp_node.0.as_ptr(), rlp_node.0.len())
+            put_raw(buf, cursor, rlp_node.as_ptr(), rlp_node.len())
         },
         // cold: unmemoized non-digest child (unreachable after the post-order
         // walk, kept for NodeRef semantic parity)
@@ -1190,54 +1190,103 @@ fn str_item_length(bytes: &[u8]) -> usize {
     }
 }
 
-/// An RLP-encoded node.
-#[derive(Clone)]
-pub(super) struct RlpNode(ArrayVec<u8, DIGEST_RLP_LENGTH>);
+/// An RLP-encoded node reference: the node's RLP when shorter than 32
+/// bytes, else `0xa0 ++ keccak256(rlp)` ([`DIGEST_RLP_LENGTH`] bytes). The
+/// bytes live in five 8-aligned little-endian words (word `i` = bytes
+/// `8i..8i+8`): the digest form is assembled in registers and stored as five
+/// `sd` — a byte-wise construction is a `memcpy` into a misaligned buffer,
+/// and Jolt expands every sub-word store into a 6–9-row virtual sequence —
+/// and the arena encoder reads it back from an aligned source. `len` is
+/// non-zero (no encoding is empty); its zero doubles as the `None` niche of
+/// the memoization cache.
+#[derive(Clone, Copy)]
+#[repr(C, align(8))]
+pub(super) struct RlpNode {
+    words: [[u8; 8]; 5],
+    len: NonZeroUsize,
+}
 
 impl RlpNode {
     #[inline]
     fn from_rlp(rlp: impl AsRef<[u8]>) -> Self {
         let rlp = rlp.as_ref();
         if rlp.len() >= B256::len_bytes() {
-            Self(alloy_rlp::encode_fixed_size(&keccak256(rlp)))
+            Self::from_digest_words(le_words_32(keccak256(rlp).as_slice()))
         } else {
-            let mut arr = ArrayVec::new();
-            // SAFETY: rlp.len() < 32 < DIGEST_RLP_LENGTH
-            unsafe { arr.try_extend_from_slice(rlp).unwrap_unchecked() };
-            Self(arr)
+            let mut words = [[0u8; 8]; 5];
+            words.as_flattened_mut()[..rlp.len()].copy_from_slice(rlp);
+            Self {
+                words,
+                len: NonZeroUsize::new(rlp.len()).expect("MPT: empty node encoding"),
+            }
         }
     }
 
-    #[inline]
+    /// The reference to the node with `digest`: `0xa0 ++ digest`.
+    #[inline(always)]
     pub(super) fn from_digest(digest: &B256) -> Self {
-        Self(alloy_rlp::encode_fixed_size(digest))
+        Self::from_digest_words(le_words_32(digest.as_slice()))
+    }
+
+    /// [`Self::from_digest`] from the digest's little-endian words: the
+    /// 33-byte stream shifted up one byte behind the item prefix.
+    #[inline(always)]
+    fn from_digest_words(w: [u64; 4]) -> Self {
+        let words = [
+            (w[0] << 8) | DIGEST_ITEM_PREFIX as u64,
+            (w[0] >> 56) | (w[1] << 8),
+            (w[1] >> 56) | (w[2] << 8),
+            (w[2] >> 56) | (w[3] << 8),
+            w[3] >> 56,
+        ];
+        Self {
+            words: words.map(u64::to_le_bytes),
+            len: NonZeroUsize::new(DIGEST_RLP_LENGTH).unwrap(),
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn len(&self) -> usize {
+        self.len.get()
+    }
+
+    /// First byte of the encoding; 8-aligned.
+    #[inline(always)]
+    pub(super) fn as_ptr(&self) -> *const u8 {
+        self.words.as_flattened().as_ptr()
+    }
+
+    #[inline]
+    fn as_slice(&self) -> &[u8] {
+        &self.words.as_flattened()[..self.len.get()]
     }
 
     #[inline]
     fn hash(&self) -> B256 {
-        if self.0.len() == DIGEST_RLP_LENGTH {
-            B256::from_slice(&self.0[1..])
+        let rlp = self.as_slice();
+        if rlp.len() == DIGEST_RLP_LENGTH {
+            B256::from_slice(&rlp[1..])
         } else {
-            keccak256(&self.0)
+            keccak256(rlp)
         }
     }
 }
 
 impl fmt::Debug for RlpNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x{}", hex::encode(&self.0))
+        write!(f, "0x{}", hex::encode(self.as_slice()))
     }
 }
 
 impl Encodable for RlpNode {
     #[inline]
     fn encode(&self, out: &mut dyn BufMut) {
-        out.put_slice(&self.0)
+        out.put_slice(self.as_slice())
     }
 
     #[inline]
     fn length(&self) -> usize {
-        self.0.len()
+        self.len()
     }
 }
 

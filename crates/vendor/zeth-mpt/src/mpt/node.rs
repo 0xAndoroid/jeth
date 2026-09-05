@@ -97,7 +97,7 @@ impl DigestResolver for Unresolvable {
     }
 }
 
-/// jeth fork note: `Node` is ≈176 bytes ([`Children`] stores its 16
+/// jeth fork note: `Node` is 184 bytes ([`Children`] stores its 16
 /// `Option<Box<Node>>` slots inline, 128 B). Moving a decoded node by value
 /// (decode return → `?` → `Box::new`) lowers to word/byte copy loops that Jolt
 /// expands into trace rows, so decode constructs each node directly in its
