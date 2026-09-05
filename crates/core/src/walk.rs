@@ -173,7 +173,7 @@ fn validate_at(r: &mut &[u8]) -> alloy_rlp::Result<NodeKind> {
             // item 0: compact HP path (string, non-empty, flag nibble <= 3).
             let (path, path_list, plen) = first[0];
             if path_list {
-                return Err(alloy_rlp::Error::UnexpectedString);
+                return Err(alloy_rlp::Error::UnexpectedList);
             }
             if plen == 0 {
                 return Err(alloy_rlp::Error::InputTooShort);

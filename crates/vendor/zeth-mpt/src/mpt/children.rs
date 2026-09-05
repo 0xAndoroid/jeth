@@ -128,11 +128,6 @@ impl<M> Children<M> {
     }
 
     #[inline]
-    pub(super) unsafe fn get_unchecked(&self, idx: u8) -> Option<&Node<M>> {
-        self.0.get_unchecked(idx as usize).as_deref()
-    }
-
-    #[inline]
     pub(super) const fn entry(&mut self, idx: u8) -> Entry<'_, M> {
         Entry::new(&mut self.0[idx as usize])
     }

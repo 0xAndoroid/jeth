@@ -139,7 +139,9 @@ pub struct SparseState {
 
 /// One-entry memo of the address → (hashed address, storage root) chain.
 /// Pre-state storage roots are immutable during execution, so an entry never
-/// goes stale. `repr(C)` keeps `hashed` at an 8-aligned offset (whole-word
+/// goes stale. Invariant: `last_read ≡ storage_roots[hashed(address)]` — the
+/// pre-state trie mutates only in `calculate_state_root`, which never reads
+/// the memo. `repr(C)` keeps `hashed` at an 8-aligned offset (whole-word
 /// copies).
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
