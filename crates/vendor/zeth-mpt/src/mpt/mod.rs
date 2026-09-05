@@ -42,7 +42,7 @@ mod rlp;
 mod serde;
 
 pub use alloy_trie::EMPTY_ROOT_HASH;
-pub use rlp::DigestResolver;
+pub use rlp::{le_words_32, DigestResolver};
 
 /// A sparse Merkle Patricia trie storing byte values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

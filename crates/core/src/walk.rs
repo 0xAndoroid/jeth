@@ -25,6 +25,7 @@
 use alloy_primitives::B256;
 use alloy_rlp::{Header, EMPTY_STRING_CODE};
 use core::ops::Range;
+use zeth_mpt::le_words_32;
 
 /// RLP header byte of a digest item (32-byte string) and the item's length.
 const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + 32;
@@ -54,8 +55,9 @@ impl NodeKind {
 
 /// One walk step's outcome within an authenticated entry.
 pub(crate) enum Step {
-    /// Continue at a child digest (bytes copied out of the parent).
-    Digest(B256),
+    /// Continue at a child digest: its four little-endian words, gathered from
+    /// the parent's bytes ([`le_words_32`]).
+    Digest([u64; 4]),
     /// Authenticated absence (empty child / path divergence) — exclusion.
     Absent,
     /// Leaf hit: value = RLP string payload at this range of the entry bytes.
@@ -316,7 +318,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
                 }
                 match plen {
                     0 => return Step::Absent, // authenticated-empty ⇒ exclusion
-                    32 => return Step::Digest(B256::from_slice(&p[hlen..hlen + 32])),
+                    32 => return Step::Digest(le_words_32(&p[hlen..])),
                     _ => unreachable!("validated"),
                 }
             }
@@ -336,7 +338,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
                     continue;
                 }
                 debug_assert_eq!(vh.payload_length, 32);
-                return Step::Digest(B256::from_slice(&p[..32]));
+                return Step::Digest(le_words_32(p));
             }
             NodeKind::Leaf => {
                 let ph = Header::decode(&mut p).expect("validated");

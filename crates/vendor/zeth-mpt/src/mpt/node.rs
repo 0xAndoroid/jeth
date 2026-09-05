@@ -39,7 +39,7 @@ impl Digest {
     pub(super) fn from_le_limbs(limbs: [u64; 4]) -> Self {
         // SAFETY: `[[u8; 8]; 4]` and `[u8; 32]` have identical layout.
         Self(B256::new(unsafe {
-            mem::transmute(limbs.map(u64::to_le_bytes))
+            mem::transmute::<[[u8; 8]; 4], [u8; 32]>(limbs.map(u64::to_le_bytes))
         }))
     }
 }
@@ -58,7 +58,7 @@ pub(super) struct Unresolvable;
 
 impl DigestResolver for Unresolvable {
     #[inline]
-    fn resolve(&mut self, _digest: &alloy_primitives::B256) -> Option<Bytes> {
+    fn resolve(&mut self, _digest: &alloy_primitives::B256) -> Option<&Bytes> {
         None
     }
 }
@@ -328,7 +328,7 @@ impl<M: Memoization> Node<M> {
         if let Node::Digest(digest) = self {
             let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
             let digest = *digest;
-            self.decode_stub_in_place(&digest, &bytes)
+            self.decode_stub_in_place(&digest, bytes)
                 .expect("MPT: invalid witness node");
             if matches!(self, Node::Digest(_)) {
                 *self = Node::Digest(digest);

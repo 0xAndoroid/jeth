@@ -317,7 +317,7 @@ unsafe fn put_prefixed(
 /// decodes them as the node with that digest). `None` = "not available":
 /// the node stays an unresolved [`Node::Digest`] stub.
 pub trait DigestResolver {
-    fn resolve(&mut self, digest: &B256) -> Option<Bytes>;
+    fn resolve(&mut self, digest: &B256) -> Option<&Bytes>;
 }
 
 impl<M: Memoization> Node<M> {
@@ -667,7 +667,7 @@ impl<M: Memoization> Node<M> {
                     #[cfg(feature = "premeasure")]
                     super::premeasure::count(&super::premeasure::HITS);
                     let digest = *digest;
-                    self.decode_stub_in_place(&digest, &bytes)?;
+                    self.decode_stub_in_place(&digest, bytes)?;
                     // do not try to replace a node by a digest
                     if matches!(self, Node::Digest(_)) {
                         *self = Node::Digest(digest);
@@ -962,22 +962,35 @@ fn decode_child_into<M: Memoization>(
 /// exactly what [`decode_node_zc_into`] does for this item (`Header::decode`
 /// on `0xa0` is a 32-byte string, no canonicality condition applies) without
 /// the recursive call and the `memcpy(32)` of `B256::from_slice`: the 32
-/// digest bytes at `item[1..]` are gathered from the 4 or 5 aligned words
-/// containing them (`ld` + shift/or) and land as four aligned `sd`s in the
-/// 8-aligned [`Digest`] of the node slot.
+/// digest bytes at `item[1..]` are gathered word-wise ([`le_words_32`]) and
+/// land as four aligned `sd`s in the 8-aligned [`Digest`] of the node slot.
 #[inline(always)]
 fn write_digest_node<M>(item: &[u8], out: &mut MaybeUninit<Node<M>>) {
     debug_assert!(item.len() == DIGEST_RLP_LENGTH && item[0] == DIGEST_ITEM_PREFIX);
-    let src = item.as_ptr() as usize + 1;
+    out.write(Node::Digest(Digest::from_le_limbs(le_words_32(&item[1..]))));
+}
+
+/// The 32 bytes at `bytes[..32]` (any alignment) as four little-endian words
+/// (word `i` = bytes `8i..8i+8`), gathered from the aligned machine words
+/// containing them: 4 `ld` when `bytes` is 8-aligned, else 5 `ld` + shift/or
+/// — never a sub-word access, never an unaligned one (Jolt expands every
+/// `lbu` into 3 trace rows and traps on misaligned `ld`; `read_unaligned`
+/// lowers to byte loads on riscv64imac).
+///
+/// # Safety of the containing-word reads
+/// Every word read holds at least one live byte of `bytes[..32]` (word 0
+/// holds byte 0, the last word holds byte 31), and by the flat-RAM argument
+/// of the guest `mem.rs` overrides — Jolt guest RAM is flat and
+/// word-granular; natively the containing word lies in the same allocation
+/// granule / page — the aligned word containing a live byte is readable.
+/// Every load address is a multiple of 8 by construction.
+#[inline(always)]
+pub fn le_words_32(bytes: &[u8]) -> [u64; 4] {
+    assert!(bytes.len() >= 32);
+    let src = bytes.as_ptr() as usize;
     let so = src & 7;
     let base = (src & !7) as *const u64;
-    // SAFETY: `base + 8k` is a multiple of 8 by construction. Word 0 holds
-    // `item[1]` and word 3 holds `item[25..32]`; word 4 is read only when
-    // `so != 0`, in which case it holds `item[32]` — every word read contains
-    // a live byte of `item`, and by the flat-RAM argument of the guest
-    // `mem.rs` overrides (natively: same allocation granule) the aligned word
-    // containing a live byte is readable. Little-endian word view.
-    let limbs = unsafe {
+    unsafe {
         let w0 = u64::from_le(read_volatile(base));
         let w1 = u64::from_le(read_volatile(base.add(1)));
         let w2 = u64::from_le(read_volatile(base.add(2)));
@@ -995,8 +1008,7 @@ fn write_digest_node<M>(item: &[u8], out: &mut MaybeUninit<Node<M>>) {
                 (w3 >> sr) | (w4 << sl),
             ]
         }
-    };
-    out.write(Node::Digest(Digest::from_le_limbs(limbs)));
+    }
 }
 
 /// [`decode_node_zc_into`] over the whole buffer, mirroring `alloy_rlp::decode_exact`.
@@ -1384,6 +1396,22 @@ mod tests {
                     (Err(e), Err(g)) => assert_eq!(e, g, "{source}"),
                     (e, g) => panic!("{source}: expected {e:?}, got {g:?}"),
                 }
+            }
+        }
+    }
+
+    /// Word gather is byte-exact for every source alignment.
+    #[test]
+    fn le_words_32_matches_from_le_bytes() {
+        let bytes: Vec<u8> = (0..48u8)
+            .map(|i| i.wrapping_mul(29).wrapping_add(5))
+            .collect();
+        for so in 0..8 {
+            let got = le_words_32(&bytes[so..]);
+            for (i, w) in got.iter().enumerate() {
+                let mut chunk = [0u8; 8];
+                chunk.copy_from_slice(&bytes[so + 8 * i..so + 8 * i + 8]);
+                assert_eq!(*w, u64::from_le_bytes(chunk), "so={so} i={i}");
             }
         }
     }

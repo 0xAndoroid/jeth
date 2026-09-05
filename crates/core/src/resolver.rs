@@ -21,7 +21,38 @@ use crate::walk::{self, NodeKind, Step};
 use alloc::vec::Vec;
 use alloy_primitives::{keccak256, Bytes, B256, U256};
 use alloy_trie::EMPTY_ROOT_HASH;
-use zeth_mpt::DigestResolver;
+use zeth_mpt::{le_words_32, DigestResolver};
+
+/// Digests travel as four little-endian words (`[u64; 4]`, word `i` = bytes
+/// `8i..8i+8`) between the walk, the resolver memo and the storage-root
+/// anchors: `B256` is align 1, so every limb extraction from it byte-expands
+/// on riscv64imac; words are gathered once ([`le_words_32`]) and compared /
+/// copied as whole registers.
+pub(crate) fn b256_from_le_words(words: [u64; 4]) -> B256 {
+    // SAFETY: `[[u8; 8]; 4]` and `[u8; 32]` have identical layout.
+    B256::new(unsafe {
+        core::mem::transmute::<[[u8; 8]; 4], [u8; 32]>(words.map(u64::to_le_bytes))
+    })
+}
+
+const fn le_words_const(bytes: [u8; 32]) -> [u64; 4] {
+    let mut words = [0u64; 4];
+    let mut i = 0;
+    while i < 4 {
+        let mut chunk = [0u8; 8];
+        let mut j = 0;
+        while j < 8 {
+            chunk[j] = bytes[8 * i + j];
+            j += 1;
+        }
+        words[i] = u64::from_le_bytes(chunk);
+        i += 1;
+    }
+    words
+}
+
+/// [`EMPTY_ROOT_HASH`] as words.
+pub(crate) const EMPTY_ROOT_WORDS: [u64; 4] = le_words_const(EMPTY_ROOT_HASH.0);
 
 /// keccak(witness[i]) memo: 8-aligned `[u64; 4]` entries + presence bitmap —
 /// NOT `Vec<Option<B256>>` (no niche ⇒ 33-byte stride, align 1 ⇒ every limb
@@ -42,21 +73,6 @@ pub struct WitnessResolver {
     index: alloc::collections::BTreeMap<B256, u32>,
 }
 
-#[inline(always)]
-fn limbs_of(digest: &B256) -> [u64; 4] {
-    // `B256` is align-1; unaligned u64 extraction byte-expands on riscv64imac.
-    // Only paid on hits (~10% of probes) — misses never touch the digest.
-    let p = digest.as_ptr().cast::<u64>();
-    unsafe {
-        [
-            p.read_unaligned(),
-            p.add(1).read_unaligned(),
-            p.add(2).read_unaligned(),
-            p.add(3).read_unaligned(),
-        ]
-    }
-}
-
 impl WitnessResolver {
     /// `trusted_digests`: pre-computed witness-node keccaks delivered as Jolt
     /// TRUSTED ADVICE (the `--trusted-digests` variant). Seeds the memo up
@@ -72,7 +88,7 @@ impl WitnessResolver {
                 // override); presence = all set. Trust contract unchanged:
                 // digests are verifier-attested, wrong ones panic or substitute
                 // content exactly as granted. Limb byte order matches
-                // `limbs_of` (raw LE reads) on both sides.
+                // `le_words_32` (little-endian words) on both sides.
                 debug_assert_eq!(digests.len(), n);
                 verified.resize(n, [0u64; 4]);
                 unsafe {
@@ -115,21 +131,20 @@ impl WitnessResolver {
         self.verified_set[i >> 6] & (1 << (i & 63)) != 0
     }
 
-    /// Authenticate witness entry `i` as the node with digest `want`.
+    /// Authenticate witness entry `i` as the node with digest `want` (words).
     /// Memo hit: 4 aligned loads; miss: one keccak (relocated reveal hash) +
-    /// memo store. Then 4 × 1-row `VirtualAssertEQ` against the wanted limbs.
+    /// memo store. Then 4 × 1-row `VirtualAssertEQ` against the wanted words.
     #[inline(always)]
-    fn verify_slot(&mut self, i: usize, want: &B256) {
+    fn verify_slot(&mut self, i: usize, want: [u64; 4]) {
         let have = if self.is_verified(i) {
             self.verified[i]
         } else {
             let digest = keccak256(&self.witness[i]);
-            let limbs = limbs_of(&digest);
+            let limbs = le_words_32(digest.as_slice());
             self.verified[i] = limbs;
             self.verified_set[i >> 6] |= 1 << (i & 63);
             limbs
         };
-        let want = limbs_of(want);
         advice_assert_eq!(have[0], want[0]);
         advice_assert_eq!(have[1], want[1]);
         advice_assert_eq!(have[2], want[2]);
@@ -154,8 +169,8 @@ impl WitnessResolver {
     /// (INV-W3, same witness-incompleteness contract as the eager build) —
     /// and on malformed entries (refusal; see walk module docs).
     #[inline]
-    fn authenticate_walk(&mut self, digest: &B256) -> usize {
-        let hint = advice_u64!(self.slot_impl(digest));
+    fn authenticate_walk(&mut self, digest: [u64; 4]) -> usize {
+        let hint = advice_u64!(self.slot_impl(&b256_from_le_words(digest)));
         assert!(hint != 0, "MPT: unresolved node access");
         let i = (hint - 1) as usize;
         self.verify_slot(i, digest);
@@ -172,18 +187,18 @@ impl WitnessResolver {
     /// effect is memoization.
     pub(crate) fn walk_storage(
         &mut self,
-        root: &B256,
+        root: [u64; 4],
         key: &B256,
     ) -> alloy_rlp::Result<Option<U256>> {
-        if *root == EMPTY_ROOT_HASH {
+        if root == EMPTY_ROOT_WORDS {
             // Empty trie — no advice call (from_digest parity; keccak(0x80)
             // is never a witness entry, so walking it would panic).
             return Ok(None);
         }
-        let mut digest = *root;
+        let mut digest = root;
         let mut depth = 0usize;
         loop {
-            let i = self.authenticate_walk(&digest);
+            let i = self.authenticate_walk(digest);
             match walk::walk_entry(&self.witness[i], self.kind(i), key, &mut depth) {
                 Step::Digest(d) => digest = d,
                 Step::Absent => return Ok(None),
@@ -196,7 +211,10 @@ impl WitnessResolver {
 }
 
 impl DigestResolver for WitnessResolver {
-    fn resolve(&mut self, digest: &B256) -> Option<Bytes> {
+    /// Hits hand out a borrow of the witness entry (the decoder takes its
+    /// leaf-value views with `slice_ref`); the digest words are gathered from
+    /// the trie's 8-aligned stub (4 `ld`) — misses never touch the digest.
+    fn resolve(&mut self, digest: &B256) -> Option<&Bytes> {
         let hint = advice_u64!(self.slot_impl(digest));
         if hint == 0 {
             return None;
@@ -204,7 +222,7 @@ impl DigestResolver for WitnessResolver {
         // Slice indexing bounds-panics on a lying hint (tracer refuses ⇒ no
         // proof) — the explicit spec check_advice!(i < len) is subsumed.
         let i = (hint - 1) as usize;
-        self.verify_slot(i, digest);
-        Some(self.witness[i].clone())
+        self.verify_slot(i, le_words_32(digest.as_slice()));
+        Some(&self.witness[i])
     }
 }

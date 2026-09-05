@@ -47,7 +47,7 @@ pub fn set_trusted_digests(state: &'static [[u8; 32]], codes: &'static [[u8; 32]
 fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> {
     unsafe { TRUSTED_DIGESTS.take() }
 }
-use crate::resolver::WitnessResolver;
+use crate::resolver::{b256_from_le_words, WitnessResolver};
 use alloy_primitives::{
     keccak256,
     map::{indexmap::map::Entry, AddressMap, B256IndexMap},
@@ -125,9 +125,10 @@ pub struct SparseState {
     state: RlpTrie<TrieAccount>,
     /// storage tries of written accounts — created at post-root only (§4.3)
     storages: B256IndexMap<RlpTrie<U256>>,
-    /// hashed_address → storage_root, recorded on every successful `account()`
-    /// (pre-state leaves are immutable during execution, so re-records agree)
-    storage_roots: RefCell<B256IndexMap<B256>>,
+    /// hashed_address → storage_root (as words), recorded on every successful
+    /// `account()` (pre-state leaves are immutable during execution, so
+    /// re-records agree)
+    storage_roots: RefCell<B256IndexMap<[u64; 4]>>,
     /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
     resolver: RefCell<WitnessResolver>,
     address_hashes: RefCell<AddressMap<B256>>,
@@ -266,9 +267,10 @@ impl StatelessTrie for SparseState {
                 // record the storage anchor for byte-walk reads; no
                 // materialization (the account leaf is authenticated chain to
                 // pre_state_root, so the root is authenticated too)
-                self.storage_roots
-                    .borrow_mut()
-                    .insert(hashed_address, account.storage_root);
+                self.storage_roots.borrow_mut().insert(
+                    hashed_address,
+                    zeth_mpt::le_words_32(account.storage_root.as_slice()),
+                );
                 Ok(Some(account))
             }
         }
@@ -287,7 +289,7 @@ impl StatelessTrie for SparseState {
         Ok(self
             .resolver
             .borrow_mut()
-            .walk_storage(&root, &key)?
+            .walk_storage(root, &key)?
             .unwrap_or(U256::ZERO))
     }
 
@@ -322,7 +324,7 @@ impl StatelessTrie for SparseState {
             let storage_root = match state.storages.get(&hashed_address) {
                 // no storage changes → cached root passthrough, zero work
                 None => match storage_roots.get(&hashed_address) {
-                    Some(root) => *root,
+                    Some(root) => b256_from_le_words(*root),
                     // never read during execution: fall back to the (pre-state)
                     // account leaf, exactly like the old storage_trie_mut
                     None => state_trie
@@ -346,7 +348,7 @@ impl StatelessTrie for SparseState {
                                 // resolver call; everything else stays a stub
                                 // hydrated on demand by the mutations below
                                 let anchor = match storage_roots.get(&hashed_address) {
-                                    Some(root) => *root,
+                                    Some(root) => b256_from_le_words(*root),
                                     None => state_trie
                                         .get(hashed_address)
                                         .unwrap()
