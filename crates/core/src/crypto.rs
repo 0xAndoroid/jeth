@@ -99,6 +99,12 @@ impl Crypto for JoltCrypto {
     ) -> Result<[u8; 32], PrecompileHalt> {
         inline_ecrecover(sig, recid, msg).ok_or(PrecompileHalt::Secp256k1RecoverFailed)
     }
+
+    /// GLV scalar multiplication: half the doublings of revm's double-and-add.
+    #[inline]
+    fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
+        crate::bn254::g1_mul(point, scalar)
+    }
 }
 
 /// Recover `keccak(pubkey)` from a prehash signature via the Jolt secp256k1
