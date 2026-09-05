@@ -1677,7 +1677,9 @@ dependencies = [
  "jeth-core",
  "jolt-inlines-keccak256",
  "jolt-sdk",
+ "keccak",
  "serde",
+ "sha3",
 ]
 
 [[package]]

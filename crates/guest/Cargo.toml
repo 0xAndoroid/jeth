@@ -10,7 +10,12 @@ edition = "2021"
 [workspace]
 
 [features]
+default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
+# Keccak census: per-call counters + `keccak[phase]` println lines in the
+# normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
+# 21 rows per keccak call; `--no-default-features` drops it.
+keccak-census = []
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
@@ -63,6 +68,12 @@ zeth-mpt = { path = "../vendor/zeth-mpt" }
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+[dev-dependencies]
+# Native differential tests for keccak.rs (`cargo test` without `guest`, as for
+# mem.rs). Both crates are already in Cargo.lock via alloy-primitives.
+keccak = "0.2"
+sha3 = { version = "0.11", default-features = false }
 
 [lib]
 test = false

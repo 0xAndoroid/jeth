@@ -10,24 +10,27 @@
 extern crate alloc;
 
 #[cfg(any(feature = "guest", test))]
+mod keccak;
+#[cfg(any(feature = "guest", test))]
 mod mem;
 
 use jeth_core::{BlockInput, ValidationResult};
 
-/// Print keccak counters (guest builds) with a phase label.
-#[cfg(feature = "guest")]
+/// Print keccak counters with a phase label (census builds only).
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 fn keccak_stats(label: &str) {
     unsafe {
         jolt::println!(
-            "keccak[{}]: calls={} bytes={} perms={}",
+            "keccak[{}]: calls={} bytes={} perms={} unaligned={}",
             label,
             KECCAK_CALLS,
             KECCAK_BYTES,
-            KECCAK_PERMS
+            KECCAK_PERMS,
+            KECCAK_UNALIGNED
         );
     }
 }
-#[cfg(not(feature = "guest"))]
+#[cfg(not(all(feature = "guest", feature = "keccak-census")))]
 fn keccak_stats(_label: &str) {}
 
 /// Shared body: read JEF (measured), verify signatures, validate statelessly.
@@ -141,25 +144,32 @@ fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> 
     run_validation(input)
 }
 
-/// Keccak accounting: calls, input bytes, and Keccak-f permutations (rate 136).
-#[cfg(feature = "guest")]
+/// Keccak accounting (census builds only): calls, input bytes, Keccak-f
+/// permutations (rate 136), and calls whose input pointer is not 8-aligned
+/// (they take the shift/or gather path in `keccak.rs`).
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_CALLS: u64 = 0;
-#[cfg(feature = "guest")]
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_BYTES: u64 = 0;
-#[cfg(feature = "guest")]
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_PERMS: u64 = 0;
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
+pub static mut KECCAK_UNALIGNED: u64 = 0;
 
-/// alloy-primitives (feature "native-keccak") declares this extern and calls it for
-/// every keccak256. Routes to the Jolt Keccak-f[1600] inline (opcode 0x0B).
+/// alloy-primitives (feature "native-keccak") declares this extern and calls it
+/// for every keccak256. Routes to the Jolt Keccak-f[1600] inlines (opcode 0x0B);
+/// the word-wise sponge driver lives in `keccak.rs`.
 #[cfg(feature = "guest")]
 #[no_mangle]
 pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
-    KECCAK_CALLS += 1;
-    KECCAK_BYTES += len as u64;
-    KECCAK_PERMS += (len as u64) / 136 + 1;
-    let data = core::slice::from_raw_parts(bytes, len);
-    let digest = jolt_inlines_keccak256::Keccak256::digest(data);
-    core::ptr::copy_nonoverlapping(digest.as_ptr(), output, 32);
+    #[cfg(feature = "keccak-census")]
+    {
+        KECCAK_CALLS += 1;
+        KECCAK_BYTES += len as u64;
+        KECCAK_PERMS += (len / 136) as u64 + 1;
+        KECCAK_UNALIGNED += (bytes as usize & 7 != 0) as u64;
+    }
+    keccak::keccak256_into(bytes, len, output);
 }
 
 /// Phase hooks for jeth-core's instrumented trie: forward to jolt cycle markers
