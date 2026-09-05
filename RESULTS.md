@@ -1567,3 +1567,20 @@ secp256k1's sparse p. Saving ≈ −3.2M on 781 (0.48–0.69%), ≈ −3.6M on
 785/789; ≈20 h (+6 h for a fused Fp2 mul, ≈0.64%). Gate before building:
 count the two symbols' calls in the 781 trace; GO iff ≥305 / ≥515 rows per
 call. Square and Fr inlines: no gain, never build.
+
+## Campaign opt-amber wave L addendum — pippenger top-window reduction sized by digit range (review nit)
+
+Wave-K review (659e2aa9, SOUND_WITH_NITS) found `live = 1 << width` for the
+top window; the top digit is at most 2^(128 − top_shift) — 256 for w = 8 but
+4 for w = 7, so w = 7 batches walked 2 × 124 empty buckets in the reduction
+chain. Commit 7af14aa (`live = 1 << (128 - top_shift)`), plus a forged-key
+`should_panic` test on the 598-equation (w = 8) batch, which previously had
+positive-only coverage.
+
+Per-block delta rows: -25904219: -53,252 · -25904218: -43,335 · -25904217: -33,918 · -25904216: -27,963 · -25904215: -37,430 · -25904214: -30,441 · -25904213: -36,178 · -25904212: -27,743 · -25904211: -37,369 · -25904210: -42,903. Set 4,631,550,557 → 4,631,180,025 (-370,532);
+gas-weighted **14.427262 → 14.426108**. Cumulative vs wave-4 baseline:
+**19.780546 → 14.426108 (-5.354438, -27.1%; -1,718,923,085 rows)**.
+
+Gates: trace hashes + census exact on all 10 (781 calls=47504
+bytes=13417708 perms=118366); `run-native` 10/10; workspace nextest 19/19
+(new: `forged_key_in_wide_batch_must_panic`); pre-commit fmt + clippy.
