@@ -16,7 +16,7 @@ use super::{
     advice::{advice_assert_eq, advice_u64},
     children::{Children, Entry},
     memoize::Memoization,
-    node::Node,
+    node::{Digest, Node},
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use alloy_primitives::{hex, keccak256, map::B256IndexMap, Bytes, B256};
@@ -31,6 +31,9 @@ use core::{
 
 /// The length in bytes of an RLP-encoded digest, i.e. hash length + 1 byte for the RLP header.
 const DIGEST_RLP_LENGTH: usize = 1 + B256::len_bytes();
+
+/// RLP header byte of a digest item (32-byte string).
+const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + B256::len_bytes() as u8;
 
 /// Scratch capacity for the arena encoder — a branch is ≤ 3 + 17×33 = 564 B,
 /// leaves ≤ path 34 + value item ≈ 150 B; 1 KiB leaves ample margin. The
@@ -367,7 +370,7 @@ impl<M: Memoization> Node<M> {
 
                 out
             }
-            Node::Digest(digest) => alloy_rlp::encode(digest),
+            Node::Digest(digest) => alloy_rlp::encode(&digest.0),
         }
     }
 
@@ -595,7 +598,7 @@ impl<M: Memoization> Node<M> {
             Node::Digest(digest) => {
                 #[cfg(feature = "premeasure")]
                 super::premeasure::count(&super::premeasure::PROBES);
-                if let Some(bytes) = rlp_by_digest.get(digest) {
+                if let Some(bytes) = rlp_by_digest.get(&digest.0) {
                     #[cfg(feature = "premeasure")]
                     super::premeasure::count(&super::premeasure::HITS);
                     let mut node: Node<M> = alloy_rlp::decode_exact(bytes.as_ref())?;
@@ -686,7 +689,7 @@ impl<M: Memoization> Node<M> {
     /// stub again.
     pub(super) fn decode_stub_in_place(
         &mut self,
-        digest: &B256,
+        digest: &Digest,
         bytes: &Bytes,
     ) -> alloy_rlp::Result<()> {
         debug_assert!(matches!(self, Node::Digest(d) if d == digest));
@@ -714,7 +717,7 @@ impl<M: Memoization> Decodable for Node<M> {
             // if the node is not a list, it must be empty or a digest
             PayloadView::String(payload) => match payload.len() {
                 0 => Ok(Node::Null),
-                32 => Ok(Node::Digest(B256::from_slice(payload))),
+                32 => Ok(Node::Digest(Digest(B256::from_slice(payload)))),
                 _ => Err(alloy_rlp::Error::UnexpectedLength),
             },
             PayloadView::List(items) => match items.len() {
@@ -792,7 +795,7 @@ fn decode_node_zc_into<M: Memoization>(
                 Ok(())
             }
             32 => {
-                out.write(Node::Digest(B256::from_slice(payload)));
+                out.write(Node::Digest(Digest(B256::from_slice(payload))));
                 Ok(())
             }
             _ => Err(alloy_rlp::Error::UnexpectedLength),
@@ -824,7 +827,7 @@ fn decode_node_zc_into<M: Memoization>(
                     Ok(())
                 } else {
                     let mut child = Box::<Node<M>>::new_uninit();
-                    decode_node_zc_into(source, &mut v, &mut child)?;
+                    decode_child_into(source, v, &mut child)?;
                     // SAFETY: `Ok` return above ⇒ the callee wrote a fully
                     // initialized `Node` into the slot.
                     let child = unsafe { child.assume_init() };
@@ -856,7 +859,7 @@ fn decode_branch_children<M: Memoization>(
                 return Err(alloy_rlp::Error::Custom("branch node with value"));
             }
             let mut child = Box::<Node<M>>::new_uninit();
-            decode_node_zc_into(source, &mut &child_rlp[..], &mut child)?;
+            decode_child_into(source, child_rlp, &mut child)?;
             // SAFETY: `Ok` return above ⇒ the callee wrote a fully initialized
             // `Node` into the slot. On `Err`, `?` drops the `Box<MaybeUninit<..>>`
             // without reading it; the slot is untouched or `Node::Null`, so
@@ -868,6 +871,65 @@ fn decode_branch_children<M: Memoization>(
         return Err(alloy_rlp::Error::Custom("branch node without two children"));
     }
     Ok(())
+}
+
+/// Decode one child item (a complete RLP item, as cut by the parent's list
+/// scan) into `out`. Digest items — the dominant child kind — take the
+/// word-gather fast path; everything else goes through the general decoder.
+/// Same contract as [`decode_node_zc_into`].
+#[inline(always)]
+fn decode_child_into<M: Memoization>(
+    source: &Bytes,
+    item: &[u8],
+    out: &mut MaybeUninit<Node<M>>,
+) -> alloy_rlp::Result<()> {
+    if item.len() == DIGEST_RLP_LENGTH && item[0] == DIGEST_ITEM_PREFIX {
+        write_digest_node(item, out);
+        Ok(())
+    } else {
+        decode_node_zc_into(source, &mut &item[..], out)
+    }
+}
+
+/// `0xa0` + 32 bytes → [`Node::Digest`] written straight into `out`. Yields
+/// exactly what [`decode_node_zc_into`] does for this item (`Header::decode`
+/// on `0xa0` is a 32-byte string, no canonicality condition applies) without
+/// the recursive call and the `memcpy(32)` of `B256::from_slice`: the 32
+/// digest bytes at `item[1..]` are gathered from the 4 or 5 aligned words
+/// containing them (`ld` + shift/or) and land as four aligned `sd`s in the
+/// 8-aligned [`Digest`] of the node slot.
+#[inline(always)]
+fn write_digest_node<M>(item: &[u8], out: &mut MaybeUninit<Node<M>>) {
+    debug_assert!(item.len() == DIGEST_RLP_LENGTH && item[0] == DIGEST_ITEM_PREFIX);
+    let src = item.as_ptr() as usize + 1;
+    let so = src & 7;
+    let base = (src & !7) as *const u64;
+    // SAFETY: `base + 8k` is a multiple of 8 by construction. Word 0 holds
+    // `item[1]` and word 3 holds `item[25..32]`; word 4 is read only when
+    // `so != 0`, in which case it holds `item[32]` — every word read contains
+    // a live byte of `item`, and by the flat-RAM argument of the guest
+    // `mem.rs` overrides (natively: same allocation granule) the aligned word
+    // containing a live byte is readable. Little-endian word view.
+    let limbs = unsafe {
+        let w0 = u64::from_le(read_volatile(base));
+        let w1 = u64::from_le(read_volatile(base.add(1)));
+        let w2 = u64::from_le(read_volatile(base.add(2)));
+        let w3 = u64::from_le(read_volatile(base.add(3)));
+        if so == 0 {
+            [w0, w1, w2, w3]
+        } else {
+            let w4 = u64::from_le(read_volatile(base.add(4)));
+            let sr = (8 * so) as u32;
+            let sl = 64 - sr;
+            [
+                (w0 >> sr) | (w1 << sl),
+                (w1 >> sr) | (w2 << sl),
+                (w2 >> sr) | (w3 << sl),
+                (w3 >> sr) | (w4 << sl),
+            ]
+        }
+    };
+    out.write(Node::Digest(Digest::from_le_limbs(limbs)));
 }
 
 /// [`decode_node_zc_into`] over the whole buffer, mirroring `alloy_rlp::decode_exact`.
@@ -1011,7 +1073,7 @@ impl NodeRef<'_> {
     fn from_node<M: Memoization>(node: &Node<M>) -> NodeRef<'_> {
         match node {
             Node::Null => NodeRef::Empty,
-            Node::Digest(digest) => NodeRef::Digest(digest),
+            Node::Digest(digest) => NodeRef::Digest(&digest.0),
             Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => cache
                 .get()
                 .map_or_else(|| NodeRef::Rlp(node.rlp_encoded()), NodeRef::Cached),
@@ -1119,7 +1181,32 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{super::memoize::Cache, *};
+
+    /// The digest fast path yields the general decoder's node for every
+    /// source alignment.
+    #[test]
+    fn digest_fast_path_matches_generic_decode() {
+        let mut digest = [0u8; 32];
+        for (i, b) in digest.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(37).wrapping_add(11);
+        }
+        for so in 0..8 {
+            let mut buf = vec![0xeeu8; so];
+            buf.push(DIGEST_ITEM_PREFIX);
+            buf.extend_from_slice(&digest);
+            buf.extend_from_slice(&[0xdd; 9]);
+            let source = Bytes::from(buf);
+            let item = &source[so..so + DIGEST_RLP_LENGTH];
+            let mut fast = MaybeUninit::<Node<Cache>>::uninit();
+            write_digest_node(item, &mut fast);
+            let mut slow = MaybeUninit::<Node<Cache>>::uninit();
+            decode_node_zc_into(&source, &mut &item[..], &mut slow).unwrap();
+            let (fast, slow) = unsafe { (fast.assume_init(), slow.assume_init()) };
+            assert_eq!(fast, slow, "so={so}");
+            assert!(matches!(&fast, Node::Digest(d) if d.0.as_slice() == digest));
+        }
+    }
 
     /// The word writer is byte-exact for every source offset, cursor offset
     /// and length, preserves everything below the cursor and clobbers at most

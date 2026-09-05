@@ -21,9 +21,36 @@ use super::{
 use alloc::boxed::Box;
 use alloy_primitives::{Bytes, B256};
 use alloy_trie::Nibbles;
-use core::mem;
+use core::{mem, ops::Deref};
 
 pub(super) type Child<M> = Box<Node<M>>;
+
+/// The digest of an unresolved node, stored 8-aligned (`B256` itself is
+/// align 1): the decode fast path gathers a digest item from the aligned
+/// words containing it and stores it as four aligned `sd`s straight into the
+/// node slot, and the arena encoder reads it back word-wise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C, align(8))]
+pub(super) struct Digest(pub(super) B256);
+
+impl Digest {
+    /// Digest from its four little-endian words (word `i` = bytes `8i..8i+8`).
+    #[inline(always)]
+    pub(super) fn from_le_limbs(limbs: [u64; 4]) -> Self {
+        // SAFETY: `[[u8; 8]; 4]` and `[u8; 32]` have identical layout.
+        Self(B256::new(unsafe {
+            mem::transmute(limbs.map(u64::to_le_bytes))
+        }))
+    }
+}
+
+impl Deref for Digest {
+    type Target = B256;
+    #[inline(always)]
+    fn deref(&self) -> &B256 {
+        &self.0
+    }
+}
 
 /// jeth (advice-trie): resolver that never resolves — plain `insert`/`remove`
 /// keep today's panic-on-stub contract by threading this.
@@ -50,7 +77,7 @@ pub(super) enum Node<M> {
     Leaf(Nibbles, Bytes, M),
     Extension(Nibbles, Child<M>, M),
     Branch(Children<M>, M),
-    Digest(B256),
+    Digest(Digest),
 }
 
 impl<M> PartialEq for Node<M> {

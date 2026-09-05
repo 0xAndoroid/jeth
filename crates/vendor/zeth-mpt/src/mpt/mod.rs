@@ -170,7 +170,7 @@ impl Trie {
     /// Creates a new trie that only contains a digest of the root.
     #[inline]
     pub const fn from_digest(digest: B256) -> Self {
-        Self(Node::Digest(digest))
+        Self(Node::Digest(node::Digest(digest)))
     }
 
     /// Creates a new trie from the given RLP encoded nodes.
@@ -399,7 +399,7 @@ impl CachedTrie {
         if digest == EMPTY_ROOT_HASH {
             Self::default()
         } else {
-            Self { inner: Node::Digest(digest), hash: Some(digest) }
+            Self { inner: Node::Digest(node::Digest(digest)), hash: Some(digest) }
         }
     }
 
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn get_digest() {
-        let trie = Trie(Node::Digest(B256::ZERO));
+        let trie = Trie::from_digest(B256::ZERO);
         trie.get([]);
     }
 
