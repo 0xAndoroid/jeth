@@ -1276,3 +1276,62 @@ memcpy under keccak 3.77M → 0; memset total 8.29M → 2.60M.
   census block; 0 memset/memcpy/sub-word, 6 `.insn` sites.
 - jeth nextest 15/15; scratch-crate differential tests 3/3 (release +
   debug). Jolt: untouched.
+
+## Campaign opt-amber wave I — MPT decode/walk residue (jeth-only, 7 steps)
+
+Seven measured steps on the vendored zeth-mpt decoder, the memoizer and
+jeth's trie walk, each committed and gated separately (hash + census exact
+after every commit):
+
+| Step | Commit | Change | 781 Δ rows |
+|---|---|---|---:|
+| #1 | 02b2e59 | digest child items (`0xa0`+32 B) decoded straight into the child slot: aligned `Digest` wrapper, `le_words_32` containing-word gather — no recursive decode call, no memcpy(32) | -21,598,026 |
+| #2 | 197f4bb | in-place list item scan (count pass + decode pass with `0x80`/`0xa0` fast paths); the `PayloadView` Vec and its grow chain are gone | -8,614,876 |
+| #4 | e005be3 | walk.rs `item_header` fast paths; single-pass `validate_at` (was two 17-item passes) | -4,144,845 |
+| #5 | 4db8cf2 | `needs_memo` tested by the parent before descending in `memoize_arena` (`encode_dirty`) | -3,783,557 |
+| #6 | d1bb42e | `Step::Digest([u64;4])`; `verify_slot`/`walk_storage`/`storage_roots` on words; `resolve → Option<&Bytes>` (no Bytes clone/drop per hit) | -6,219,464 |
+| #7 | f4e0a15 | `zeth_mpt::decode_header`: byte-wise long-form RLP lengths (replaces alloy Header's memcpy+bswap) in decoder and walk | -2,045,766 |
+| #8 | 3783869 | `Node::get` depth cursor with a word-built packed key (no `Nibbles::unpack` per level); `SparseState::last_read` one-entry (address → hash, root) memo | -1,720,802 |
+
+(60e03bb is test-only: canonical single-byte path items in the zc parity
+corpus.) Unsafe added: `le_words_32` (aligned containing-word
+`read_volatile`, mem.rs flat-RAM argument) and two layout-identity
+transmutes (`[[u8;8];4] → [u8;32]`); removed: `read_unaligned` in
+`limbs_of`, `get_unchecked` in `Node::get`. Accept set of `validate_at` is
+unchanged (parity test vs `Node::decode`); only the reported error variant
+for entries with several coexisting defects follows scan order.
+
+### Ladder (jolt-amber @ ef89da425, jeth @ 3783869)
+
+| Block | Gas | Wave-H rows | Wave-I rows | Delta rows | c/g H → I |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 699,847,443 | 651,720,107 | -48,127,336 | 15.823958 → 14.735771 |
+| 25905782 | 47,065,991 | 839,467,790 | 787,854,076 | -51,613,714 | 17.835974 → 16.739350 |
+| 25905783 | 25,320,107 | 386,626,391 | 360,591,789 | -26,034,602 | 15.269540 → 14.241322 |
+| 25905784 | 19,039,352 | 294,892,203 | 273,306,846 | -21,585,357 | 15.488563 → 14.354840 |
+| 25905785 | 47,351,982 | 742,417,399 | 691,153,814 | -51,263,585 | 15.678697 → 14.596090 |
+| 25905786 | 26,354,048 | 342,306,032 | 318,591,298 | -23,714,734 | 12.988746 → 12.088894 |
+| 25905787 | 27,961,947 | 463,808,305 | 435,185,262 | -28,623,043 | 16.587125 → 15.563482 |
+| 25905788 | 6,217,605 | 108,365,826 | 99,794,877 | -8,570,949 | 17.428869 → 16.050373 |
+| 25905789 | 44,608,380 | 801,871,557 | 746,502,505 | -55,369,052 | 17.975805 → 16.734580 |
+| 25905790 | 32,881,199 | 504,029,365 | 467,184,434 | -36,844,931 | 15.328801 → 14.208254 |
+| Gas-weighted | 321,027,690 | 5,183,632,311 | 4,831,885,008 | -351,747,303 | **16.146994 → 15.051303** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 15.051303 (-4.729243 c/g,
+-23.9%; -1,518,218,102 rows)**.
+
+Attribution on 781: decode_node_zc_into 28.67M → 18.26M · memoize_arena
+17.25M → 12.65M · SparseState::storage 9.56M → 5.45M · validate_at 9.33M →
+5.56M · resolve_with 8.77M → 6.17M · WitnessResolver::resolve 6.11M → 3.68M
+· memcpy 41.48M → 29.05M (decode's 10.83M share gone) · RlpTrie/Node::get
+2.31M → 1.61M · hash_address 1.36M → 0.81M · storage_roots probe 1.18M →
+0.49M. #1 beat its band (the recursive call also carried sret/frame rows);
+#2/#4 landed under (the Vec cost had been measured under the size-class
+allocator; long headers stayed until #7).
+
+### Gates
+
+- Trace 781 hash + census exact after each of the 8 commits; `run-native`
+  10/10; sweep 782–790 hashes unchanged.
+- jeth workspace nextest 17/17; vendored zeth-mpt 24/24 (new parity and
+  fast-path tests). Jolt: untouched.
