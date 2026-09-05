@@ -144,6 +144,8 @@ pub fn validate_recovered_pertx(
         state: state.take_bundle(),
         result,
     };
+    // Single-shot process: leak the block state instead of tearing it down.
+    core::mem::forget(state);
 
     let root_bloom = receipt_root_bloom(&output.result.receipts);
     validate_block_post_execution(
@@ -163,11 +165,16 @@ pub fn validate_recovered_pertx(
         });
     }
 
-    Ok(ValidatedBlock {
+    let validated = ValidatedBlock {
         block_hash: current_block.hash_slow(),
         gas_used: output.result.gas_used,
         receipts: output.result.receipts,
-    })
+    };
+    core::mem::forget(trie);
+    core::mem::forget(output.state);
+    core::mem::forget(witness);
+    core::mem::forget(current_block);
+    Ok(validated)
 }
 
 fn validate_block_consensus(
