@@ -544,4 +544,155 @@ mod tests {
         }
         assert_eq!(memo.borrow().len(), addresses.len());
     }
+
+    #[test]
+    fn slot_memo_matches_direct_hashes() {
+        let memo = RefCell::new(SlotHashes::default());
+        let slots: Vec<_> = (0u64..64)
+            .flat_map(|i| {
+                [
+                    U256::from(i),
+                    U256::from_be_bytes(keccak256(i.to_be_bytes()).0),
+                ]
+            })
+            .collect();
+        for _ in 0..2 {
+            for &slot in &slots {
+                assert_eq!(hash_slot(slot, &memo), keccak256(B256::from(slot)));
+            }
+        }
+        assert_eq!(memo.borrow().len(), slots.len());
+    }
+
+    #[test]
+    fn memo_post_state_matches_from_bundle_state() {
+        use reth_evm::revm::database::{states::StorageSlot, AccountStatus};
+        use reth_trie_common::KeccakKeyHasher;
+        use revm_state::AccountInfo;
+
+        let address = |i: u8| Address::repeat_byte(i);
+        let info = |nonce: u64| AccountInfo {
+            nonce,
+            balance: U256::from(nonce) * U256::from(1_000_000_007u64),
+            code_hash: if nonce % 2 == 0 {
+                KECCAK256_EMPTY
+            } else {
+                keccak256([nonce as u8])
+            },
+            ..Default::default()
+        };
+        let mapping_slot = U256::from_be_bytes(keccak256(b"mapping").0);
+        let storage = |slots: &[(U256, u64, u64)]| {
+            slots
+                .iter()
+                .map(|&(slot, old, new)| {
+                    (
+                        slot,
+                        StorageSlot::new_changed(U256::from(old), U256::from(new)),
+                    )
+                })
+                .collect()
+        };
+        let accounts = [
+            // changed account: read slots 0/7, plus slot 9 written without a read
+            (
+                address(1),
+                BundleAccount::new(
+                    Some(info(1)),
+                    Some(info(2)),
+                    storage(&[
+                        (U256::ZERO, 1, 2),
+                        (U256::from(7), 3, 0),
+                        (U256::from(9), 0, 4),
+                    ]),
+                    AccountStatus::Changed,
+                ),
+            ),
+            // created (never in the pre-state): slots never read; shares slot 0
+            (
+                address(2),
+                BundleAccount::new(
+                    None,
+                    Some(info(3)),
+                    storage(&[(U256::ZERO, 0, 5), (mapping_slot, 0, 6)]),
+                    AccountStatus::InMemoryChange,
+                ),
+            ),
+            // destroyed: wiped storage, no slots
+            (
+                address(3),
+                BundleAccount::new(
+                    Some(info(4)),
+                    None,
+                    Default::default(),
+                    AccountStatus::Destroyed,
+                ),
+            ),
+            // destroyed and recreated in the same block
+            (
+                address(4),
+                BundleAccount::new(
+                    Some(info(5)),
+                    Some(info(6)),
+                    storage(&[(mapping_slot, 0, 8)]),
+                    AccountStatus::DestroyedChanged,
+                ),
+            ),
+            // balance-only change
+            (
+                address(5),
+                BundleAccount::new(
+                    Some(info(7)),
+                    Some(info(8)),
+                    Default::default(),
+                    AccountStatus::Changed,
+                ),
+            ),
+            // touched but non-existent
+            (
+                address(6),
+                BundleAccount::new(
+                    None,
+                    None,
+                    Default::default(),
+                    AccountStatus::LoadedNotExisting,
+                ),
+            ),
+        ];
+
+        // execution-time reads: every account but the created one was loaded,
+        // slots 0/7 of address(1) and the mapping slot of address(4) were read
+        let address_hashes = RefCell::new(AddressMap::default());
+        let slot_hashes = RefCell::new(SlotHashes::default());
+        for i in [1, 3, 4, 5, 6] {
+            hash_address(address(i), &address_hashes);
+        }
+        for slot in [U256::ZERO, U256::from(7), mapping_slot] {
+            hash_slot(slot, &slot_hashes);
+        }
+        assert_eq!(
+            (address_hashes.borrow().len(), slot_hashes.borrow().len()),
+            (5, 3)
+        );
+
+        let expected = HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+            accounts.iter().map(|(address, account)| (address, account)),
+        );
+        let got = hashed_post_state(
+            accounts.iter().map(|(address, account)| (address, account)),
+            &address_hashes,
+            &slot_hashes,
+        );
+        assert_eq!(got, expected);
+        assert_eq!(got.accounts.len(), 6);
+        assert_eq!(got.storages.len(), 4);
+        assert!(got.storages[&keccak256(address(3))].wiped);
+        assert!(got.storages[&keccak256(address(4))].wiped);
+        // misses were filled in: address(2) and slot 9; repeats (slot 0, the
+        // mapping slot) hit the existing entries
+        assert_eq!(
+            (address_hashes.borrow().len(), slot_hashes.borrow().len()),
+            (6, 4)
+        );
+    }
 }
