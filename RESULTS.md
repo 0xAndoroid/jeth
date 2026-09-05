@@ -1792,3 +1792,51 @@ Cumulative vs wave-4 baseline: **19.780546 → 13.649923 (-6.130623 c/g,
   push/dupn/swapn/exchange/pc_of with a one-line reason. Independent
   adversarial review: 4eee04c0 SOUND_WITH_NITS (inspector-only pc drift on
   DUPN/SWAPN/EXCHANGE stack errors; `unsafe fn`/`# Safety` docs — queued).
+
+## Campaign opt-amber wave P — wins lane: duplicate-key MSM terms, secp sdk outputs, flat keccak memos, storage() trims
+
+Six steps, each gated (hash 0xf691…b529 and census calls=44511
+bytes=13335528 perms=115373 exact); detail in `.journals/wave-p-wins-report.md`.
+
+| Step | Commit | Change | 781 Δ rows |
+|---|---|---|---:|
+| 0 | jeth b8dc277 | wave N review nits: `Slot::resolve_mut` clears a stub that decodes to `Node::Null` (`[0x80]`, EMPTY_ROOT_HASH) to `Slot::Empty`; `RlpNode::from_digest` == `encode_fixed_size` + 31/32-byte `from_rlp` boundary test; stale layout comments fixed | +51,195 (10,760 in-place stub decodes × ~4.8 rows) |
+| 1 | jeth 49d3a0a (+4563c46) | ecrecover batch: equal `key` points merged before pippenger (scalars summed in Fr; transcript unchanged): 781 532 → 455 terms, 782 423 → 335, 789 354 → 309; shared-key tests (both valid passes / one forged panics) | −2,182,350 (77 merged terms × ~28.3k) |
+| 2 | jolt 84e338927 | secp256k1 sdk mul/square/div outputs via `MaybeUninit<[u64; 4]>` (12 `sd zero` per affine add gone) | −506,964 |
+| 3 | — | affine-add glue reorder in `AffinePoint::add`: DROPPED (−101,412 < 0.2M; LLVM reloads limbs regardless of source order) | 0 |
+| 4 | jeth 65c78a7 | flat open-addressing memos for `address_hashes` / `slot_hashes` (pow2 table of aligned key+digest words, linear probing, folded-multiply index; growth test at 10k keys): memo cost 2.9M → 1.1M | −1,466,238 |
+| 5 | jeth 7598863 | `storage()` fixed costs: word compare vs EMPTY_ROOT_WORDS, 2-word address compare, `LastRead` built in place; keccak-from-words so `&Address` never escapes into the non-inlined miss path (an escaping borrow made revm callers repack the by-value Address, +438k) | −735,691 |
+
+Total 781 −4,840,048 (−0.81%). **Refuted:** glue reordering (step 3);
+hashbrown probe ≈ 200 rows (not 300); 532 batch equations on 781 (not 570);
+review nits are not free (+51k).
+
+### Ladder (jolt-amber @ 84e338927, jeth @ 7598863)
+
+| Block | Gas | Wave-O rows | Wave-P rows | Delta rows | c/g O → P |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 596,333,114 | 591,493,066 | -4,840,048 | 13.483439 → 13.374003 |
+| 25905782 | 47,065,991 | 714,587,202 | 709,207,370 | -5,379,832 | 15.182666 → 15.068362 |
+| 25905783 | 25,320,107 | 329,918,101 | 327,160,868 | -2,757,233 | 13.029886 → 12.920991 |
+| 25905784 | 19,039,352 | 246,786,378 | 246,310,281 | -476,097 | 12.961911 → 12.936905 |
+| 25905785 | 47,351,982 | 621,484,417 | 617,194,378 | -4,290,039 | 13.124781 → 13.034183 |
+| 25905786 | 26,354,048 | 288,467,506 | 286,011,545 | -2,455,961 | 10.945852 → 10.852661 |
+| 25905787 | 27,961,947 | 397,307,708 | 394,374,132 | -2,933,576 | 14.208871 → 14.103958 |
+| 25905788 | 6,217,605 | 91,371,953 | 90,793,431 | -578,522 | 14.695683 → 14.602637 |
+| 25905789 | 44,608,380 | 668,276,137 | 663,777,488 | -4,498,649 | 14.980955 → 14.880107 |
+| 25905790 | 32,881,199 | 427,470,870 | 424,011,714 | -3,459,156 | 13.000465 → 12.895263 |
+| Gas-weighted | 321,027,690 | 4,382,003,386 | 4,350,334,273 | -31,669,113 | **13.649923 → 13.551274** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 13.551274 (-6.229272 c/g,
+-31.5%; -1,999,768,837 rows)**.
+
+### Gates
+
+- Trace hashes + census exact on all 10; `run-native` 10/10 = trusted
+  records; sweep hashes unchanged.
+- Workspace nextest 24/24 (21 + 3 new); jolt-inlines-secp256k1 host tests
+  15/15; fmt + clippy pre-commit on every commit; no vendored Cargo.lock.
+- Unsafe: jolt sdk.rs six `assume_init` blocks with SAFETY comments (the
+  inline writes all four words before any read); jeth adds none (a
+  `read_volatile` gather in step 4 was replaced by in-bounds `from_le_bytes`
+  in step 5).
