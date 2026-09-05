@@ -1419,3 +1419,68 @@ Bytes/Vec<u8> for the memcpy/keccak gathers.
   filter, initial_tx_gas vs GasParams for all 21 specs, bswap64 vs
   swap_bytes, read_be_immediate all N × offsets, read/write_u256 all
   alignments + slice edges); guest native-tests 4/4. Jolt: untouched.
+
+## Campaign opt-amber wave K — tail lane: allocator alignment, bn254 GLV ecmul, signed-digit pippenger, memcpy gather unroll
+
+Four independent mechanisms, each committed and measured alone on 781
+(hash 0xf691…b529 and census calls=47504 bytes=13417708 perms=118366
+exact after every step):
+
+| Step | Commit | Change | 781 Δ rows |
+|---|---|---|---:|
+| 0 | jeth 83cdf44, jolt 5abd70abf | review nits (LastRead invariant doc, `UnexpectedList` message, dead `Children::get_unchecked` deleted, bump_alloc round-up no-wrap `debug_assert` + realloc contract doc, `compile_error!` for `bump-alloc` on std guests) | 0 |
+| 1 | jolt 920868471 | bump_alloc 8-byte minimum alignment: `mask = (align-1) \| 7`, one extra `or` per alloc, no size rounding (the next round-up absorbs odd tails) | −1,914,726 |
+| 2 | jeth 7c04044 | `JoltCrypto::bn254_g1_mul`: revm-identical parsing (both rejection variants), then ark's `GLVConfig::glv_mul_affine` (128 dbl + ~64 mixed + ~32 full adds vs 253 dbl + 127 mixed via `Affine::mul_bigint`), canonical affine encoding | −1,684,270 |
+| 3 | jeth b7b6098 | pippenger signed-digit buckets: low 15 windows biased by 2^(w−1) once per term (u128), digit−128 exact signed digit → 129 live buckets, reduction 2·128 instead of 2·255; top window unsigned + carry (array 257); negated points precomputed per term | −1,152,653 |
+| 4 | jeth d4e980f | misaligned memcpy gather: 4 window words per iteration, carried word rotates through registers (~25 rows/32 B vs ~10/8 B) | −1,602,932 |
+
+Attribution on 781 — step 1: memcpy −1.22M, native_keccak256 −0.87M
+(aligned Bytes/Vec<u8> sources), bump_alloc::alloc +0.17M (~167k allocs).
+**Refuted:** the ≥ −1.9M forecast from MSTORE/MLOAD (−4.2k / −5.4k
+measured): their five-word path is EVM-offset-driven (offsets ≡ 4 mod 8
+from selector packing), not buffer-alignment-driven; the total matched
+the forecast by coincidence. Step 2: −210k rows/ecmul (8 ecmuls; Fq
+`mul_assign` −675k, `square_in_place` −731k), below the 2–3M forecast;
+JSF/all-affine-table refinement evaluated and skipped (≈ +0.45M net after
+the BEA inversion cost, under the 0.5M rule). Step 3: the 3.3M forecast
+double-counted — 3,808 reduction adds saved, but fewer buckets halve the
+first-add copies (4,080 → 2,176), so 1,904 copies became full adds
+(~540 virtual rows each ≈ 1.02M); measured −1.02M virtual + glue −0.14M.
+A `flat_map/collect` first version measured only −0.30M (152-byte `Term`
+moves +0.73M); explicit push loop landed. Step 4: memcpy −1.79M, memcmp
++0.13M attribution shift; ≈ 3.8 MB of misaligned bulk per block at 15 rows
+saved per 32 B.
+
+### Ladder (jolt-amber @ 920868471, jeth @ d4e980f)
+
+| Block | Gas | Wave-J rows | Wave-K rows | Delta rows | c/g J → K |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 636,207,016 | 629,852,435 | -6,354,581 | 14.385011 → 14.241330 |
+| 25905782 | 47,065,991 | 764,755,471 | 755,248,283 | -9,507,188 | 16.248579 → 16.046582 |
+| 25905783 | 25,320,107 | 352,672,764 | 348,518,980 | -4,153,784 | 13.928565 → 13.764515 |
+| 25905784 | 19,039,352 | 265,684,444 | 262,030,857 | -3,653,587 | 13.954490 → 13.762593 |
+| 25905785 | 47,351,982 | 673,227,692 | 661,716,123 | -11,511,569 | 14.217519 → 13.974412 |
+| 25905786 | 26,354,048 | 310,214,938 | 306,039,431 | -4,175,507 | 11.771055 → 11.612616 |
+| 25905787 | 27,961,947 | 422,441,198 | 418,876,331 | -3,564,867 | 15.107718 → 14.980228 |
+| 25905788 | 6,217,605 | 98,211,703 | 96,999,978 | -1,211,725 | 15.795745 → 15.600859 |
+| 25905789 | 44,608,380 | 726,953,345 | 714,461,354 | -12,491,991 | 16.296340 → 16.016304 |
+| 25905790 | 32,881,199 | 456,164,853 | 452,385,419 | -3,779,434 | 13.873121 → 13.758179 |
+| Gas-weighted | 321,027,690 | 4,706,533,424 | 4,646,129,191 | -60,404,233 | **14.660833 → 14.472674** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 14.472674 (-5.307872 c/g,
+-26.8%; -1,703,973,919 rows)**.
+
+### Gates
+
+- Trace 781 hash + census exact after each step; `run-native` 10/10
+  hashes = records; sweep 782–790 hashes unchanged.
+- jeth nextest 18/18 (new: bn254 GLV parity vs `DefaultCrypto` — 66 points
+  × 9 edge scalars {0, 1, 2, r−1, r, r+1, 2^128, 2^128−1, 2^256−1} + 10k
+  random raw scalars + off-curve / x = p rejections; pippenger batch test
+  widened to 598 equations so w = 7 and w = 8 both run natively); guest
+  native-tests 4/4 (memcpy fuzz over n/soff/doff); jolt-platform nextest
+  2/2 + clippy `-D warnings`.
+- No new `unsafe`: mem.rs loads sw+1..sw+4 live inside the existing
+  `memcpy_impl` block (liveness argument `rem ≥ 32` in the comment);
+  bn254.rs / recovery_batch.rs are safe code. New jeth-core deps
+  ark-bn254/ark-ec/ark-ff 0.5 (already in the graph via revm-precompile).
