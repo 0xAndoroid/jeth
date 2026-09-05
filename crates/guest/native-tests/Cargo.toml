@@ -1,0 +1,30 @@
+# Native differential tests for the guest's word-wise shims (`src/keccak.rs`,
+# `src/mem.rs`), included by path. The guest crate itself is `test = false`
+# (built only through the `jolt` CLI for riscv64imac), so this standalone
+# package is the one place their `#[cfg(test)]` modules compile and run:
+#
+#     cargo test --manifest-path crates/guest/native-tests/Cargo.toml
+#
+# Own [workspace] table: not a member of the jeth workspace (no riscv-only
+# deps leak into native builds; no `guest` feature exists here, so `permute`
+# falls back to `keccak::f1600` and the shim is checked against `sha3`).
+[package]
+name = "jeth-guest-native-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+# Declared so the shims' `#[cfg(feature = "guest")]` gates are known cfgs here;
+# never enabled (the guest paths need the riscv target and the Jolt inlines).
+[features]
+guest = []
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+keccak = "0.2"
+sha3 = { version = "0.11", default-features = false }

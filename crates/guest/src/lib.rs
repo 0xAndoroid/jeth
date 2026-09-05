@@ -9,9 +9,12 @@
 
 extern crate alloc;
 
-#[cfg(any(feature = "guest", test))]
+// Guest-only shims. Their native differential tests live in the standalone
+// `native-tests` crate (`cargo test --manifest-path
+// crates/guest/native-tests/Cargo.toml`), which includes these files by path.
+#[cfg(feature = "guest")]
 mod keccak;
-#[cfg(any(feature = "guest", test))]
+#[cfg(feature = "guest")]
 mod mem;
 
 use jeth_core::{BlockInput, ValidationResult};
@@ -159,8 +162,15 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 /// alloy-primitives (feature "native-keccak") declares this extern and calls it
 /// for every keccak256. Routes to the Jolt Keccak-f[1600] inlines (opcode 0x0B);
 /// the word-wise sponge driver lives in `keccak.rs`.
+///
+/// `#[inline(never)]`: keeps the shim one out-of-line body. Its misaligned
+/// digest store is a five-word read-modify-write of the caller's `[u8; 32]`
+/// neighbourhood; inlined into a caller whose surrounding stores LTO can see,
+/// that RMW would become a fusion candidate instead of the volatile sequence
+/// the containing-word argument in `keccak.rs` is made for.
 #[cfg(feature = "guest")]
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
     #[cfg(feature = "keccak-census")]
     {

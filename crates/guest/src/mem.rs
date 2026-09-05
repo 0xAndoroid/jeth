@@ -293,9 +293,9 @@ mod exports {
     }
 }
 
-/// Native tests (run with `cargo nextest` in this crate WITHOUT the `guest`
-/// feature): the implementations are pure LE 64-bit word logic, identical on
-/// aarch64, so we fuzz them against the std implementations.
+/// Native tests (`cargo test --manifest-path crates/guest/native-tests/Cargo.toml`,
+/// no `guest` feature): the implementations are pure LE 64-bit word logic,
+/// identical on aarch64, so we fuzz them against the std implementations.
 #[cfg(all(test, not(feature = "guest")))]
 mod tests {
     use super::{memcmp_impl as jmemcmp, memcpy_impl as jmemcpy, memset_impl as jmemset};

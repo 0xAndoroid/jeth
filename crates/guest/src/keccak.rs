@@ -24,9 +24,16 @@
 //! Containing-word reads: for a byte range `[p, p + n)` with `n >= 1` the
 //! aligned words touched are exactly those holding at least one live byte, so
 //! on the guest (flat, word-granular RAM — see `mem.rs`) they are addressable.
-//! In Rust terms the extra bytes lie outside the caller's slice; the native
-//! tests place every buffer inside an allocation with word-sized slack on
-//! both ends so the same code stays in bounds there.
+//! In Rust's abstract machine those reads (and the five-word RMW of a
+//! misaligned digest slot) touch bytes outside the caller's slice, which is
+//! undefined behaviour: nothing in the language guarantees them. What keeps
+//! LLVM from exploiting that here is (1) every such access is a volatile op,
+//! which it must emit as written and may not reorder, widen or fold, and (2)
+//! the pointers arrive through the `extern "C"` boundary of `native_keccak256`
+//! (`#[inline(never)]`), so no provenance or allocation bound is visible to
+//! the optimiser. The native tests place every buffer inside an allocation
+//! with word-sized slack on both ends so the same code stays in bounds there;
+//! they live in `crates/guest/native-tests`.
 
 use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
@@ -259,7 +266,8 @@ pub(crate) unsafe fn keccak256_into(bytes: *const u8, len: usize, out: *mut u8) 
     store_digest(state, out);
 }
 
-// Native differential tests (`cargo test`, no `guest` feature): `permute` and
+// Native differential tests (`cargo test --manifest-path
+// crates/guest/native-tests/Cargo.toml`, no `guest` feature): `permute` and
 // `absorb_permute` fall back to `keccak::f1600`, so the alignment dispatch,
 // containing-word loads, gather, padding, first-block write, XOR merge and
 // digest store under test are the production code. Reference: `sha3` — alloy's

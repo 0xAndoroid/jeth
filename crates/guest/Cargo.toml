@@ -69,12 +69,6 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-[dev-dependencies]
-# Native differential tests for keccak.rs (`cargo test` without `guest`, as for
-# mem.rs). Both crates are already in Cargo.lock via alloy-primitives.
-keccak = "0.2"
-sha3 = { version = "0.11", default-features = false }
-
 [lib]
 test = false
 doctest = false
