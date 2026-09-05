@@ -14,9 +14,9 @@
 
 use super::{
     advice::{advice_assert_eq, advice_u64},
-    children::{Children, Entry},
+    children::{Children, Slot},
     memoize::Memoization,
-    node::{Digest, Node},
+    node::{Child, Digest, Node},
 };
 use alloc::{boxed::Box, vec, vec::Vec};
 use alloy_primitives::{hex, keccak256, map::B256IndexMap, Bytes, B256};
@@ -352,15 +352,10 @@ impl<M: Memoization> Node<M> {
                 let mut child_refs: [NodeRef<'_>; 16] = Default::default();
                 let mut payload_length = 1; // start with 1 for the EMPTY_STRING_CODE at the end
 
-                for (i, child) in children.iter().enumerate() {
-                    match child {
-                        Some(node) => {
-                            let node_ref = NodeRef::from_node(node);
-                            payload_length += node_ref.length();
-                            child_refs[i] = node_ref;
-                        }
-                        None => payload_length += 1,
-                    }
+                for (i, slot) in children.iter().enumerate() {
+                    let node_ref = NodeRef::from_slot(slot);
+                    payload_length += node_ref.length();
+                    child_refs[i] = node_ref;
                 }
 
                 let mut out = encode_list_header(payload_length);
@@ -465,14 +460,8 @@ impl<M: Memoization> Node<M> {
                 write_child_ref(scratch, &mut cursor, child);
             }
             Node::Branch(children, _) => {
-                for child in children.iter() {
-                    match child {
-                        Some(node) => write_child_ref(scratch, &mut cursor, node),
-                        None => {
-                            scratch.0[cursor] = EMPTY_STRING_CODE;
-                            cursor += 1;
-                        }
-                    }
+                for slot in children.iter() {
+                    write_slot_ref(scratch, &mut cursor, slot);
                 }
                 // EMPTY_STRING_CODE for the missing branch value
                 scratch.0[cursor] = EMPTY_STRING_CODE;
@@ -502,11 +491,8 @@ impl<M: Memoization> Node<M> {
             }
             Node::Branch(children, _) => {
                 let mut payload_length = 1; // EMPTY_STRING_CODE value slot
-                for child in children.iter() {
-                    payload_length += match child {
-                        Some(node) => NodeRef::from_node(node).length(),
-                        None => 1,
-                    };
+                for slot in children.iter() {
+                    payload_length += NodeRef::from_slot(slot).length();
                 }
                 payload_length
             }
@@ -527,9 +513,12 @@ impl<M: Memoization> Node<M> {
                 }
                 Node::Branch(children, _) => {
                     let mut list = Vec::with_capacity(17);
-                    for child in children.iter() {
-                        let node_ref = child.as_ref().map_or(NodeRef::Empty, |c| rec(c, nodes));
-                        list.push(node_ref);
+                    for slot in children.iter() {
+                        list.push(match slot {
+                            Slot::Empty => NodeRef::Empty,
+                            Slot::Digest(digest) => NodeRef::Digest(digest),
+                            Slot::Node(child) => rec(child, nodes),
+                        });
                     }
                     list.push(NodeRef::Empty);
                     NodeRef::Rlp(encode_list(&list))
@@ -605,9 +594,20 @@ impl<M: Memoization> Node<M> {
                 }
             }
             Node::Branch(children, _) => {
-                for entry in children.entries() {
-                    if let Entry::Occupied(mut entry) = entry {
-                        entry.get_mut().resolve_digests(rlp_by_digest)?;
+                for slot in children.iter_mut() {
+                    if let Slot::Digest(digest) = slot {
+                        // resolve the stub as a node, then take it into the
+                        // slot unless it stayed a digest
+                        let mut node = Node::Digest(*digest);
+                        node.resolve_digests(rlp_by_digest)?;
+                        match node {
+                            Node::Digest(_) => {}
+                            Node::Null => *slot = Slot::Empty,
+                            node => *slot = Slot::from_child(node.into()),
+                        }
+                    } else if let Slot::Node(child) = slot {
+                        child.resolve_digests(rlp_by_digest)?;
+                        slot.clear_null();
                     }
                 }
             }
@@ -655,24 +655,22 @@ impl<M: Memoization> Node<M> {
             }
             Node::Branch(children, _) => {
                 for slot in children.iter_mut() {
-                    let Some(child) = slot else { continue };
-                    // Digest stubs are the bulk of the children and most of
-                    // them miss (boundary siblings): resolve them here instead
-                    // of through a recursive call per stub, whose frame and
-                    // dispatch cost more than the resolver's miss.
-                    if let Node::Digest(digest) = &**child {
+                    // Digest stubs are the bulk of the slots and most of them
+                    // miss (boundary siblings): they are probed here, without
+                    // a call per stub, and a hit decodes into a fresh heap
+                    // node that takes the slot.
+                    if let Slot::Digest(digest) = slot {
                         #[cfg(feature = "premeasure")]
                         super::premeasure::count(&super::premeasure::PROBES);
                         let Some(bytes) = r.resolve(digest) else { continue };
-                        let digest = *digest;
-                        if !child.hydrate(digest, bytes)? {
-                            continue;
+                        match Node::decode_child(digest, bytes)? {
+                            Some(child) => *slot = Slot::Node(child),
+                            None => continue, // digest for digest: the stub stays
                         }
                     }
+                    let Slot::Node(child) = slot else { continue };
                     child.resolve_with(r)?;
-                    if matches!(**child, Node::Null) {
-                        *slot = None;
-                    }
+                    slot.clear_null();
                 }
             }
             Node::Digest(digest) => {
@@ -708,6 +706,29 @@ impl<M: Memoization> Node<M> {
         super::premeasure::count(&super::premeasure::DECODES);
         self.cache_set(RlpNode::from_digest(&digest));
         Ok(true)
+    }
+
+    /// [`Self::hydrate`] for a branch slot: decode `bytes`, the authenticated
+    /// encoding of the node with `digest`, into a fresh heap node carrying the
+    /// digest as its cached reference. `Ok(None)` is the digest-for-digest
+    /// refusal.
+    pub(super) fn decode_child(digest: &Digest, bytes: &Bytes) -> alloy_rlp::Result<Option<Child<M>>> {
+        #[cfg(feature = "premeasure")]
+        super::premeasure::count(&super::premeasure::HITS);
+        let mut child = Box::<Node<M>>::new_uninit();
+        decode_node_zc_exact_into(bytes, &mut child)?;
+        // SAFETY: `Ok` return above ⇒ the callee wrote a fully initialized
+        // `Node` into the slot. On `Err`, `?` dropped the `Box<MaybeUninit<..>>`
+        // without reading it (the slot was untouched or `Node::Null`, which
+        // owns nothing).
+        let mut child = unsafe { child.assume_init() };
+        if matches!(*child, Node::Digest(_)) {
+            return Ok(None);
+        }
+        #[cfg(feature = "premeasure")]
+        super::premeasure::count(&super::premeasure::DECODES);
+        child.cache_set(RlpNode::from_digest(digest));
+        Ok(Some(child))
     }
 
     #[inline]
@@ -815,10 +836,11 @@ impl<M: Memoization> Decodable for Node<M> {
 /// Out-param form: the string/leaf/extension arms write `out` once at the arm
 /// end; the branch arm writes the empty branch first and decodes the children
 /// into its slots in place (`Children` is never moved), reassigning
-/// `Node::Null` on failure. Children are decoded straight into their final
-/// heap slot (`Box::new_uninit`), deleting the by-value move chain (return →
-/// `?` → `Box::new`, ≈3 × 176-byte memcpy per node on riscv64; 49.6M trace
-/// rows on block 25905781 before this change).
+/// `Node::Null` on failure. Digest children are stored inline in their
+/// [`Slot`]; other children are decoded straight into their final heap slot
+/// (`Box::new_uninit`), deleting the by-value move chain (return → `?` →
+/// `Box::new`, ≈3 × 176-byte memcpy per node on riscv64; 49.6M trace rows on
+/// block 25905781 before this change).
 ///
 /// List payloads are scanned in place instead of through
 /// `Header::decode_raw`'s `PayloadView` `Vec` (allocation + 3 grows + 17
@@ -860,7 +882,7 @@ fn decode_node_zc_into<M: Memoization>(
         // branch node: 17-item node [ v0 ... v15, value ]
         17 => {
             // Write the empty branch first and decode the children into
-            // its slots, so the 128-byte `Children` is never moved.
+            // its slots, so the 640-byte `Children` is never moved.
             let node = out.write(Node::Branch(Children::default(), M::default()));
             let Node::Branch(children, _) = &mut *node else {
                 unreachable!()
@@ -1012,31 +1034,40 @@ fn count_items(mut p: &[u8]) -> alloy_rlp::Result<usize> {
 
 /// Decode the 16 child items of the 17-item branch payload `p` straight into
 /// `children` (the slots of a freshly written empty [`Node::Branch`]); item
-/// 16 must be the empty value. Children decoded before an `Err` stay owned
-/// by the branch.
+/// 16 must be the empty value. Digest items — the dominant child kind — land
+/// inline as [`Slot::Digest`] (a tag and four aligned `sd`, no allocation);
+/// other items are decoded into a fresh heap node. Every slot is written only
+/// once its item is fully decoded, so the branch is a valid node at every
+/// point; children decoded before an `Err` stay owned by it.
 fn decode_branch_children<M: Memoization>(
     source: &Bytes,
     mut p: &[u8],
     children: &mut Children<M>,
 ) -> alloy_rlp::Result<()> {
     let mut count = 0usize;
-    for i in 0..17usize {
+    for slot in children.iter_mut() {
         // pass 1 counted exactly 17 validated items over `p`
         let (item, rest) = p.split_at(item_len(p)?);
         p = rest;
-        if item != [EMPTY_STRING_CODE] {
-            if i == 16 {
-                return Err(alloy_rlp::Error::Custom("branch node with value"));
-            }
+        if item == [EMPTY_STRING_CODE] {
+            continue;
+        }
+        if is_digest_item(item) {
+            slot.fill_digest(digest_item(item));
+        } else {
             let mut child = Box::<Node<M>>::new_uninit();
-            decode_child_into(source, item, &mut child)?;
+            decode_node_zc_into(source, &mut &item[..], &mut child)?;
             // SAFETY: `Ok` return above ⇒ the callee wrote a fully initialized
             // `Node` into the slot. On `Err`, `?` drops the `Box<MaybeUninit<..>>`
             // without reading it; the slot is untouched or `Node::Null`, so
             // nothing leaks.
-            children.insert(i as u8, unsafe { child.assume_init() });
-            count += 1;
+            *slot = Slot::from_child(unsafe { child.assume_init() });
         }
+        count += 1;
+    }
+    // the 17th item is the value, which this MPT never carries
+    if p != [EMPTY_STRING_CODE] {
+        return Err(alloy_rlp::Error::Custom("branch node with value"));
     }
     if count < 2 {
         return Err(alloy_rlp::Error::Custom("branch node without two children"));
@@ -1045,33 +1076,39 @@ fn decode_branch_children<M: Memoization>(
 }
 
 /// Decode one child item (a complete RLP item, as cut by the parent's list
-/// scan) into `out`. Digest items — the dominant child kind — take the
-/// word-gather fast path; everything else goes through the general decoder.
-/// Same contract as [`decode_node_zc_into`].
+/// scan) into `out`. Digest items take the word-gather fast path; everything
+/// else goes through the general decoder. Same contract as
+/// [`decode_node_zc_into`].
 #[inline(always)]
 fn decode_child_into<M: Memoization>(
     source: &Bytes,
     item: &[u8],
     out: &mut MaybeUninit<Node<M>>,
 ) -> alloy_rlp::Result<()> {
-    if item.len() == DIGEST_RLP_LENGTH && item[0] == DIGEST_ITEM_PREFIX {
-        write_digest_node(item, out);
+    if is_digest_item(item) {
+        out.write(Node::Digest(digest_item(item)));
         Ok(())
     } else {
         decode_node_zc_into(source, &mut &item[..], out)
     }
 }
 
-/// `0xa0` + 32 bytes → [`Node::Digest`] written straight into `out`. Yields
-/// exactly what [`decode_node_zc_into`] does for this item (`Header::decode`
-/// on `0xa0` is a 32-byte string, no canonicality condition applies) without
-/// the recursive call and the `memcpy(32)` of `B256::from_slice`: the 32
-/// digest bytes at `item[1..]` are gathered word-wise ([`le_words_32`]) and
-/// land as four aligned `sd`s in the 8-aligned [`Digest`] of the node slot.
+/// Whether `item` is `0xa0` + 32 bytes: a 32-byte string can only be encoded
+/// this way, and `Header::decode` on `0xa0` applies no canonicality condition.
 #[inline(always)]
-fn write_digest_node<M>(item: &[u8], out: &mut MaybeUninit<Node<M>>) {
-    debug_assert!(item.len() == DIGEST_RLP_LENGTH && item[0] == DIGEST_ITEM_PREFIX);
-    out.write(Node::Digest(Digest::from_le_limbs(le_words_32(&item[1..]))));
+fn is_digest_item(item: &[u8]) -> bool {
+    item.len() == DIGEST_RLP_LENGTH && item[0] == DIGEST_ITEM_PREFIX
+}
+
+/// The digest of the `0xa0` + 32 bytes item `item`: exactly the
+/// [`Node::Digest`] payload [`decode_node_zc_into`] yields for it, without the
+/// recursive call and the `memcpy(32)` of `B256::from_slice` — the 32 bytes
+/// at `item[1..]` are gathered word-wise ([`le_words_32`]) and land as four
+/// aligned `sd`s in the 8-aligned [`Digest`].
+#[inline(always)]
+fn digest_item(item: &[u8]) -> Digest {
+    debug_assert!(is_digest_item(item));
+    Digest::from_le_limbs(le_words_32(&item[1..]))
 }
 
 /// The 32 bytes at `bytes[..32]` (any alignment) as four little-endian words
@@ -1174,6 +1211,31 @@ fn write_child_ref<M: Memoization>(buf: &mut Scratch, cursor: &mut usize, node: 
                 *cursor += rlp.len();
             }
         }
+    }
+}
+
+/// [`write_child_ref`] for a branch slot: the inline digest of an unresolved
+/// child is written from its 8-aligned words.
+#[inline(always)]
+fn write_slot_ref<M: Memoization>(buf: &mut Scratch, cursor: &mut usize, slot: &Slot<M>) {
+    debug_assert!(*cursor + DIGEST_RLP_LENGTH <= MAX_NODE_ENCODING);
+    match slot {
+        Slot::Empty => {
+            buf.0[*cursor] = EMPTY_STRING_CODE;
+            *cursor += 1;
+        }
+        // SAFETY: `digest` is a live 32-byte `Digest`; cursor bound as in
+        // `write_child_ref`.
+        Slot::Digest(digest) => unsafe {
+            put_prefixed(
+                buf,
+                cursor,
+                DIGEST_ITEM_PREFIX,
+                digest.as_ptr(),
+                B256::len_bytes(),
+            )
+        },
+        Slot::Node(child) => write_child_ref(buf, cursor, child),
     }
 }
 
@@ -1309,6 +1371,15 @@ impl NodeRef<'_> {
             Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => cache
                 .get()
                 .map_or_else(|| NodeRef::Rlp(node.rlp_encoded()), NodeRef::Cached),
+        }
+    }
+
+    #[inline]
+    fn from_slot<M: Memoization>(slot: &Slot<M>) -> NodeRef<'_> {
+        match slot {
+            Slot::Empty => NodeRef::Empty,
+            Slot::Digest(digest) => NodeRef::Digest(digest),
+            Slot::Node(child) => NodeRef::from_node(child),
         }
     }
 
@@ -1621,13 +1692,13 @@ mod tests {
             buf.extend_from_slice(&[0xdd; 9]);
             let source = Bytes::from(buf);
             let item = &source[so..so + DIGEST_RLP_LENGTH];
-            let mut fast = MaybeUninit::<Node<Cache>>::uninit();
-            write_digest_node(item, &mut fast);
+            assert!(is_digest_item(item));
+            let fast = digest_item(item);
             let mut slow = MaybeUninit::<Node<Cache>>::uninit();
             decode_node_zc_into(&source, &mut &item[..], &mut slow).unwrap();
-            let (fast, slow) = unsafe { (fast.assume_init(), slow.assume_init()) };
-            assert_eq!(fast, slow, "so={so}");
-            assert!(matches!(&fast, Node::Digest(d) if d.0.as_slice() == digest));
+            let slow = unsafe { slow.assume_init() };
+            assert_eq!(Node::<Cache>::Digest(fast), slow, "so={so}");
+            assert_eq!(fast.0.as_slice(), digest, "so={so}");
         }
     }
 

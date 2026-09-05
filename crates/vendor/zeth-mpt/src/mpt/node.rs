@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    children::{Children, Entry},
+    children::{Children, Slot},
     memoize::Memoization,
     nibbles::NibbleSlice,
     rlp::{le_words_32, DigestResolver},
@@ -97,14 +97,18 @@ impl DigestResolver for Unresolvable {
     }
 }
 
-/// jeth fork note: `Node` is 184 bytes ([`Children`] stores its 16
-/// `Option<Box<Node>>` slots inline, 128 B). Moving a decoded node by value
-/// (decode return → `?` → `Box::new`) lowers to word/byte copy loops that Jolt
-/// expands into trace rows, so decode constructs each node directly in its
-/// final heap slot instead ([`super::rlp`]'s `decode_node_zc_into`). Boxing
-/// the children instead (and the arena layout) measured WORSE: +155M rows —
-/// the representation stays, only the moves were deleted.
+/// jeth fork note: `Node<Cache>` is 688 bytes — [`Children`] stores its 16
+/// [`Slot`]s inline (640 B; the first slot's tag word doubles as the node's
+/// discriminant), with unresolved children held as bare digests instead of
+/// one heap `Node` per stub (145k stub boxes of 176 B on a mainnet block,
+/// 33 B live each). Moving a node by value (decode return →
+/// `?` → `Box::new`, or a split's `*self = branch`) lowers to word copy loops
+/// that Jolt expands into trace rows, so nodes are constructed directly in
+/// their final slot instead ([`super::rlp`]'s `decode_node_zc_into`,
+/// [`Self::replace_with_branch`]). Boxing the children array (and the arena
+/// layout) measured WORSE: +155M rows — hence the variant size spread.
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::large_enum_variant)]
 pub(super) enum Node<M> {
     #[default]
     Null,
@@ -166,8 +170,9 @@ impl<M: Memoization> Node<M> {
                     let nib = key_nibble(key, depth);
                     depth += 1;
                     match children.get(nib) {
-                        Some(child) => node = child,
-                        None => return None,
+                        Slot::Node(child) => node = child,
+                        Slot::Empty => return None,
+                        Slot::Digest(_) => panic!("MPT: Unresolved node access"),
                     }
                 }
                 Node::Digest(_) => panic!("MPT: Unresolved node access"),
@@ -205,29 +210,15 @@ impl<M: Memoization> Node<M> {
                     panic!("MPT: Value in branch");
                 }
 
-                let mut children = Children::default();
-                match prefix_rem.split_first() {
-                    Some((nib, tail)) => {
-                        children.insert(
-                            nib,
-                            Node::Leaf(tail.into(), mem::take(leaf_val), M::default()).into(),
-                        );
-                    }
-                    None => unreachable!(), // mid < prefix.len()
-                }
-                match key_rem.split_first() {
-                    Some((nib, tail)) => {
-                        children.insert(nib, Node::Leaf(tail.into(), value, M::default()).into())
-                    }
-                    None => unreachable!(), // mid < key.len()
-                };
-                let branch = Node::Branch(children, M::default());
-
-                *self = if common.is_empty() {
-                    branch
-                } else {
-                    Node::Extension(common.into(), branch.into(), M::default())
-                };
+                let (nib, tail) = prefix_rem.split_first().expect("mid < prefix.len()");
+                let leaf = Node::Leaf(tail.into(), mem::take(leaf_val), M::default());
+                let (new_nib, new_tail) = key_rem.split_first().expect("mid < key.len()");
+                let children = self.replace_with_branch(common);
+                children.insert(nib, leaf.into());
+                children.insert(
+                    new_nib,
+                    Node::Leaf(new_tail.into(), value, M::default()).into(),
+                );
             }
             Node::Extension(prefix, child, cache) => {
                 let (common, key_rem, prefix_rem) = key.split_common_prefix(*prefix);
@@ -239,41 +230,33 @@ impl<M: Memoization> Node<M> {
                     panic!("MPT: Value in branch");
                 }
 
-                let mut children = Children::default();
                 let (nib, tail) = prefix_rem.split_first().expect("mid < prefix.len()");
-                if tail.is_empty() {
-                    children.insert(nib, mem::take(child));
+                let old_child = if tail.is_empty() {
+                    mem::take(child)
                 } else {
-                    children.insert(
-                        nib,
-                        Node::Extension(tail.into(), mem::take(child), M::default()).into(),
-                    );
-                }
-                match key_rem.split_first() {
-                    Some((nib, tail)) => {
-                        children.insert(nib, Node::Leaf(tail.into(), value, M::default()).into())
-                    }
-                    None => unreachable!(), // mid < key.len()
+                    Node::Extension(tail.into(), mem::take(child), M::default()).into()
                 };
-                let branch = Node::Branch(children, M::default());
-
-                *self = if common.is_empty() {
-                    branch
-                } else {
-                    Node::Extension(common.into(), branch.into(), M::default())
-                };
+                let (new_nib, new_tail) = key_rem.split_first().expect("mid < key.len()");
+                let children = self.replace_with_branch(common);
+                children.insert(nib, old_child);
+                children.insert(
+                    new_nib,
+                    Node::Leaf(new_tail.into(), value, M::default()).into(),
+                );
             }
             Node::Branch(children, cache) => match key.split_first() {
-                Some((nib, tail)) => match children.entry(nib) {
-                    Entry::Occupied(mut entry) => {
-                        entry.get_mut().insert_with(tail, value, r);
-                        cache.clear();
+                Some((nib, tail)) => {
+                    let slot = children.slot_mut(nib);
+                    match slot.resolve_mut(r) {
+                        Some(child) => child.insert_with(tail, value, r),
+                        None => {
+                            *slot = Slot::from_child(
+                                Node::Leaf(tail.into(), value, M::default()).into(),
+                            )
+                        }
                     }
-                    Entry::Vacant(entry) => {
-                        entry.insert(Node::Leaf(tail.into(), value, M::default()).into());
-                        cache.clear();
-                    }
-                },
+                    cache.clear();
+                }
                 None => panic!("MPT: Value in branch"),
             },
             Node::Digest(_) => {
@@ -281,6 +264,28 @@ impl<M: Memoization> Node<M> {
                 self.insert_with(key, value, r);
             }
         }
+    }
+
+    /// Replace `*self` with an empty branch — behind an extension carrying
+    /// `prefix` when it is non-empty — and return its children. The branch is
+    /// built in its final slot: a `Node::Branch` is 688 B, and building it
+    /// on the stack first would copy it there by value.
+    fn replace_with_branch(&mut self, prefix: NibbleSlice) -> &mut Children<M> {
+        let branch = if prefix.is_empty() {
+            *self = Node::Branch(Children::default(), M::default());
+            self
+        } else {
+            let branch = Box::new(Node::Branch(Children::default(), M::default()));
+            *self = Node::Extension(prefix.into(), branch, M::default());
+            let Node::Extension(_, child, _) = self else {
+                unreachable!()
+            };
+            &mut **child
+        };
+        let Node::Branch(children, _) = branch else {
+            unreachable!()
+        };
+        children
     }
 
     /// Removes a key-value pair from the trie.
@@ -326,17 +331,19 @@ impl<M: Memoization> Node<M> {
                 true
             }
             Node::Branch(children, cache) => {
-                match key.split_first() {
-                    Some((nib, tail)) => match children.entry(nib) {
-                        Entry::Occupied(mut entry) => {
-                            if !entry.get_mut().remove_with(tail, r) {
-                                return false;
-                            }
-                        }
-                        Entry::Vacant(_) => return false,
-                    },
-                    None => return false, // branch nodes don't have values in our MPT version
+                // branch nodes don't have values in our MPT version
+                let Some((nib, tail)) = key.split_first() else {
+                    return false;
                 };
+                let slot = children.slot_mut(nib);
+                let removed = match slot.resolve_mut(r) {
+                    Some(child) => child.remove_with(tail, r),
+                    None => false,
+                };
+                if !removed {
+                    return false;
+                }
+                slot.clear_null();
                 cache.clear();
 
                 if let Some((nib, mut only_child)) = children.take_single_child() {
@@ -404,10 +411,33 @@ impl<M: Memoization> Node<M> {
             Node::Branch(children, ..) => {
                 1 + children
                     .iter()
-                    .filter_map(Option::as_deref)
-                    .map(Node::size)
+                    .map(|slot| match slot {
+                        Slot::Node(child) => child.size(),
+                        Slot::Empty | Slot::Digest(_) => 0,
+                    })
                     .sum::<usize>()
             }
+        }
+    }
+}
+
+impl<M: Memoization> Slot<M> {
+    /// The child behind an occupied slot, resolving a digest stub through `r`
+    /// first; `None` for an empty slot. Panics on a resolver miss and on the
+    /// digest-for-digest refusal ("MPT: Unresolved node access" — INV-W3) and
+    /// on malformed bytes, exactly like [`Node::resolve_stub`].
+    pub(super) fn resolve_mut<R: DigestResolver>(&mut self, r: &mut R) -> Option<&mut Node<M>> {
+        if let Slot::Digest(digest) = self {
+            let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
+            let child = Node::decode_child(digest, bytes)
+                .expect("MPT: invalid witness node")
+                .expect("MPT: Unresolved node access"); // digest-for-digest refusal
+            *self = Slot::Node(child);
+        }
+        match self {
+            Slot::Node(child) => Some(child),
+            Slot::Empty => None,
+            Slot::Digest(_) => unreachable!(), // resolved above
         }
     }
 }

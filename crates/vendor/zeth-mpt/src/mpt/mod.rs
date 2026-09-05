@@ -19,7 +19,7 @@ use alloy_primitives::{keccak256, map::B256IndexMap, Bytes, B256};
 #[allow(unused_imports)]
 use alloc::vec;
 use alloy_trie::Nibbles;
-use children::Children;
+use children::{Children, Slot};
 use core::{cmp::PartialEq, fmt::Debug};
 use memoize::{Cache, NoCache};
 use nibbles::NibbleSlice;
@@ -144,10 +144,12 @@ impl Trie {
                 }
                 Node::Branch(children, _) => {
                     let mut cached_children = Children::default();
-                    for (i, child) in children.into_iter().enumerate() {
-                        if let Some(child) = child {
-                            cached_children.insert(i as u8, rec(*child).into());
-                        }
+                    for (i, slot) in children.into_iter().enumerate() {
+                        *cached_children.slot_mut(i as u8) = match slot {
+                            Slot::Empty => Slot::Empty,
+                            Slot::Digest(digest) => Slot::Digest(digest),
+                            Slot::Node(child) => Slot::Node(rec(*child).into()),
+                        };
                     }
                     Node::Branch(cached_children, Cache::default())
                 }
