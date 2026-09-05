@@ -55,7 +55,8 @@ use alloy_primitives::{
 };
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_trie::{TrieAccount, EMPTY_ROOT_HASH};
-use reth_trie_common::HashedPostState;
+use reth_evm::revm::database::BundleAccount;
+use reth_trie_common::{HashedPostState, HashedStorage};
 use revm_bytecode::Bytecode;
 use zeth_mpt::CachedTrie;
 
@@ -162,6 +163,18 @@ impl SparseState {
     fn remove_account(&mut self, hashed_address: &B256) {
         self.state.remove(hashed_address);
         self.storages.remove(hashed_address);
+    }
+
+    /// `HashedPostState::from_bundle_state::<KeccakKeyHasher>` with the address
+    /// and slot digests taken from the execution-time memos: every changed
+    /// account went through `account()` and every SSTORE'd slot was first
+    /// SLOADed through `storage()`. Memo misses (slots of created accounts,
+    /// never read) fall back to keccak.
+    pub fn hashed_post_state<'a>(
+        &self,
+        state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
+    ) -> HashedPostState {
+        hashed_post_state(state, &self.address_hashes, &self.slot_hashes)
     }
 }
 
@@ -459,6 +472,32 @@ fn hash_address(address: Address, memo: &RefCell<AddressMap<B256>>) -> B256 {
     #[cfg(test)]
     debug_assert_eq!(digest, keccak256(address));
     digest
+}
+
+fn hashed_post_state<'a>(
+    state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
+    address_hashes: &RefCell<AddressMap<B256>>,
+    slot_hashes: &RefCell<SlotHashes>,
+) -> HashedPostState {
+    state
+        .into_iter()
+        .map(|(address, account)| {
+            let hashed_address = hash_address(*address, address_hashes);
+            let hashed_account = account.info.as_ref().map(Into::into);
+            let hashed_storage = HashedStorage::from_iter(
+                account.status.was_destroyed(),
+                account
+                    .storage
+                    .iter()
+                    .map(|(slot, value)| (hash_slot(*slot, slot_hashes), value.present_value)),
+            );
+            (
+                hashed_address,
+                hashed_account,
+                (!hashed_storage.is_empty()).then_some(hashed_storage),
+            )
+        })
+        .collect()
 }
 
 fn hash_slot(slot: U256, memo: &RefCell<SlotHashes>) -> B256 {

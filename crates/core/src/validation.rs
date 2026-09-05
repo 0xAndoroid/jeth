@@ -37,7 +37,6 @@ use reth_evm::{
     ConfigureEvm,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_trie_common::{HashedPostState, KeccakKeyHasher};
 use revm_bytecode::Bytecode;
 use revm_database_interface::Database;
 use revm_state::AccountInfo;
@@ -156,7 +155,7 @@ pub fn validate_recovered_pertx(
     )
     .map_err(StatelessValidationError::ConsensusValidationFailed)?;
 
-    let hashed_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(&output.state.state);
+    let hashed_state = trie.hashed_post_state(&output.state.state);
     let state_root = trie.calculate_state_root(hashed_state)?;
     if state_root != current_block.state_root {
         return Err(StatelessValidationError::PostStateRootMismatch {
