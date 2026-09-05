@@ -189,12 +189,14 @@ impl<M: Memoization> Children<M> {
     }
 
     /// jeth (advice-trie Phase 3a): [`Self::memoize`] through the reused
-    /// arena scratch buffer.
+    /// arena scratch buffer. Clean and digest children are filtered here,
+    /// without a call.
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
-        self.0
-            .iter_mut()
-            .flatten()
-            .for_each(|child| child.memoize_arena(scratch))
+        for child in self.0.iter_mut().flatten() {
+            if child.needs_memo() {
+                child.encode_dirty(scratch);
+            }
+        }
     }
 }
 

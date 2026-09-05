@@ -414,18 +414,34 @@ impl<M: Memoization> Node<M> {
     /// the writer's capacity asserts and slice indexing bounds-panics close the
     /// understated one (both = refusal, no proof).
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
-        // early termination for already memoized nodes or Null/Digest
-        match self {
-            Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache)
-                if cache.get().is_some() =>
-            {
-                return;
-            }
-            Node::Null | Node::Digest(_) => return,
-            _ => {}
+        if self.needs_memo() {
+            self.encode_dirty(scratch);
         }
+    }
+
+    /// Whether this node still needs an encoding — an unmemoized Leaf,
+    /// Extension or Branch. Parents test this before descending, so clean and
+    /// digest children cost a tag/cache test instead of a call.
+    #[inline(always)]
+    pub(super) fn needs_memo(&self) -> bool {
         match self {
-            Node::Extension(_, child, _) => child.memoize_arena(scratch),
+            Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => {
+                cache.get().is_none()
+            }
+            Node::Null | Node::Digest(_) => false,
+        }
+    }
+
+    /// [`Self::memoize_arena`] for a node that [`Self::needs_memo`]: memoize
+    /// the dirty children, then encode this node into the scratch.
+    pub(super) fn encode_dirty(&mut self, scratch: &mut Scratch) {
+        debug_assert!(self.needs_memo());
+        match self {
+            Node::Extension(_, child, _) => {
+                if child.needs_memo() {
+                    child.encode_dirty(scratch);
+                }
+            }
             Node::Branch(children, _) => children.memoize_arena(scratch),
             _ => {}
         }
