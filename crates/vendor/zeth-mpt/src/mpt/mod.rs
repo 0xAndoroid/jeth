@@ -355,7 +355,7 @@ impl CachedTrie {
         *self.hash.get_or_insert_with(|| {
             // Phase 3a: dirty nodes encode into one reused scratch buffer
             // (single-pass, sealed length advice) instead of per-node Vecs.
-            let mut scratch = alloc::vec![0u8; rlp::MAX_NODE_ENCODING];
+            let mut scratch = rlp::Scratch::new();
             self.inner.memoize_arena(&mut scratch);
             self.inner.hash()
         })
