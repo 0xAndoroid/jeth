@@ -1582,6 +1582,7 @@ bytes=13417708 perms=118366); `run-native` 10/10; workspace nextest 19/19
 | I (MPT walk/decode fixes) | 82bebd8a | SOUND_WITH_NITS | none |
 | J + L (interpreter: SWAR, PUSH gather, u256 words, static gas + `addi`) | b601b2a7 | SOUND_WITH_NITS | none |
 | K (GLV ecmul parsing, signed-digit pippenger, memcpy unroll, bump alignment) | 659e2aa9 | SOUND_WITH_NITS | none |
+| N (MPT resolver inline miss path, aligned RlpNode, Slot children layout) | cda74652 | SOUND_WITH_NITS | none |
 | M (keccak memos, HashedPostState from memos) | — (safe code, memo reuse; covered by the parity test) | — | — |
 | N (MPT resolver inline, aligned RlpNode, Slot layout) | cda74652 | SOUND_WITH_NITS | none |
 
