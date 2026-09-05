@@ -1335,3 +1335,25 @@ allocator; long headers stayed until #7).
   10/10; sweep 782–790 hashes unchanged.
 - jeth workspace nextest 17/17; vendored zeth-mpt 24/24 (new parity and
   fast-path tests). Jolt: untouched.
+
+## Killed: block-level journal finalize (revm per-tx finalize+commit)
+
+Audit (R1) sized the per-tx `finalize` + `State::commit` churn at ~4–7M
+rows on 781 (per-(tx,account) `State::basic` reloads, per-(tx,slot)
+`State::storage` re-probes, journal map teardown/rebuild). A drafting pass
+(design + consensus argument, /tmp/journal-fix1/) found that the obvious
+fix — `transact_one` × N, one `finalize`, one `State::commit` — is NOT
+semantics-preserving in revm 38 + revm-database 13: (a)
+`EvmStorageSlot.original_value` is reset to the present value on every
+cross-tx cold load and `apply_account_state` keeps only `is_changed()`
+slots, so a slot written in tx i and read in tx j drops out of the bundle
+(wrong root); (b) the global `SelfDestructed` flag short-circuits
+`apply_account_state`, so a contract destroyed in tx i and re-created in tx
+j is deleted; (c) EIP-161 deletion of pre-state empty accounts is only
+reproducible per tx. The draft repairs (a)/(b) driver-side and falls back to
+per-tx finalize for (c). Verdict: killed. Any residual divergence in a
+hand-patched bundle assembly is a deterministic, attacker-triggerable
+semantic difference — a soundness hole, not a completeness one — and the
+10-block gate cannot exclude it. Not worth ~0.7–1% of rows. Remaining
+journal items (witness presize ~0.25M, `#[inline(never)]` removal ~0.6M,
+fused warm-SLOAD pointer cache ~1.3M/medium-high risk) are tail.
