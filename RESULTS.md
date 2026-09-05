@@ -1554,3 +1554,16 @@ already ≈310 dynamic rows per `mul_assign` (≈520 per
 ≈ 0.51% (785/789 ≈ 0.58%; +fused Fp2 ≈ 0.64%) for ~20 h (+6 h). Marginal
 against the 0.5% bar; pre-gate (count calls in the trace: GO only if
 ≥ 305 / ≥ 515 rows per call) before committing effort.
+
+## Documented, not built: bn254 Fq Montgomery inline (design only)
+
+Design in `.journals/bn254-inline-design.md` (shard c9bc0c3e, 06:01).
+ark-ff bn254 Fq arithmetic is ≈19.7M rows on 781 (3.1%; ~2× on 785/789):
+compiled `mul_assign` ≈310 dynamic rows, `sum_of_products::<2>` ≈520,
+`square` ≈270 (no-carry CIOS from `#[derive(MontConfig)]`). A jolt inline
+(deterministic product-scanning REDC, no advice) reaches ≈285 / ≈419 rows —
+q has four full limbs, so the m·q reduction costs as much as a·b, unlike
+secp256k1's sparse p. Saving ≈ −3.2M on 781 (0.48–0.69%), ≈ −3.6M on
+785/789; ≈20 h (+6 h for a fused Fp2 mul, ≈0.64%). Gate before building:
+count the two symbols' calls in the 781 trace; GO iff ≥305 / ≥515 rows per
+call. Square and Fr inlines: no gain, never build.
