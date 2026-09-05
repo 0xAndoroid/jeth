@@ -1582,6 +1582,8 @@ bytes=13417708 perms=118366); `run-native` 10/10; workspace nextest 19/19
 | I (MPT walk/decode fixes) | 82bebd8a | SOUND_WITH_NITS | none |
 | J + L (interpreter: SWAR, PUSH gather, u256 words, static gas + `addi`) | b601b2a7 | SOUND_WITH_NITS | none |
 | K (GLV ecmul parsing, signed-digit pippenger, memcpy unroll, bump alignment) | 659e2aa9 | SOUND_WITH_NITS | none |
+| M (keccak memos, HashedPostState from memos) | — (safe code, memo reuse; covered by the parity test) | — | — |
+| N (MPT resolver inline, aligned RlpNode, Slot layout) | cda74652 | SOUND_WITH_NITS | none |
 
 Open nits not applied (docs/upstream): jolt `heap_end` inherits the
 alignment of the ELF `program_end` — a containing-word access on a live byte
@@ -1722,4 +1724,4 @@ Cumulative vs wave-4 baseline: **19.780546 → 13.806895 (-5.973651 c/g,
   `write_child_ref`); −3 `unwrap_unchecked` removed. `Slot::fill_digest`
   = `mem::forget(mem::replace(..))` on an Empty slot (leak, never UB, if
   the debug_assert precondition were violated). Independent adversarial
-  review: pending (see review inventory).
+  review cda74652: SOUND_WITH_NITS (nits: `resolve_mut` Null → Empty on the `[0x80]` stub; `from_digest` parity test; stale layout comments; release assert in `write_str_item`).
