@@ -953,3 +953,51 @@ word-aligned path (compilers emit 4-aligned word offsets).
   (zk_muldiv SIGABRT is a known flake, passes standalone).
 - jeth: release workspace nextest 14/14 with `jeth-host/secp-inline`,
   re-run after the jolt dependency bump.
+
+## Campaign opt-amber wave C — receipt bloom/root single pass with memoized accrue hashes (jeth-only)
+
+`validate_block_post_execution(.., None)` recomputed every log bloom
+internally: keccak256 of the address and of each topic per accrue, all
+through the 2,511-row keccak inline (the "bloom accrue 11.9M" profile line
+was this, LTO-inlined). Replaced with one `receipt_root_bloom` pass that
+memoizes `keccak256(address)` and `keccak256(topic)` in fb-hashed maps and
+feeds `Some((root, bloom))` to the consensus check. Dedup only — every
+unique hash is still computed in-guest and both root and bloom are still
+checked against the header, so a wrong memo cannot validate (receipts-root
+mismatch panics before any output). Origin: wave-4 reveal candidate
+(measured −3.61M topics-only, killed then by the 5M lane floor), extended
+here to addresses. jeth commit 199c470; no jolt changes.
+
+### Ladder (jolt-amber @ d2d9bf2e6, jeth @ 199c470)
+
+| Block | Gas | Wave-B rows | Wave-C rows | Delta rows | c/g B → C | Proven perms |
+|---|---:|---:|---:|---:|---|---:|
+| 25905781 | 44,227,079 | 834,033,235 | 828,666,884 | -5,366,351 | 18.857977 → 18.736641 | 121,206 → 118,366 |
+| 25905782 | 47,065,991 | 987,260,970 | 982,452,956 | -4,808,014 | 20.976101 → 20.873946 | 127,181 |
+| 25905783 | 25,320,107 | 461,310,242 | 459,509,635 | -1,800,607 | 18.219127 → 18.148013 | 63,420 |
+| 25905784 | 19,039,352 | 355,141,134 | 353,543,859 | -1,597,275 | 18.653005 → 18.569112 | 52,681 |
+| 25905785 | 47,351,982 | 890,812,958 | 884,651,698 | -6,161,260 | 18.812580 → 18.682464 | 124,865 |
+| 25905786 | 26,354,048 | 408,653,601 | 407,200,516 | -1,453,085 | 15.506293 → 15.451156 | 60,455 |
+| 25905787 | 27,961,947 | 545,552,206 | 542,512,306 | -3,039,900 | 19.510523 → 19.401807 | 71,728 |
+| 25905788 | 6,217,605 | 132,964,080 | 132,720,275 | -243,805 | 21.385096 → 21.345884 | 19,665 |
+| 25905789 | 44,608,380 | 964,216,410 | 958,875,633 | -5,340,777 | 21.615141 → 21.495415 | 137,177 |
+| 25905790 | 32,881,199 | 604,977,536 | 601,526,875 | -3,450,661 | 18.398889 → 18.293946 | 92,005 |
+| Gas-weighted | 321,027,690 | 6,184,922,372 | 6,151,660,637 | -33,261,735 | **19.266009 → 19.162399** | 867,543 |
+
+Cumulative vs wave-4 baseline: **19.780546 → 19.162399 (−0.618147 c/g,
+−198,442,473 rows)**.
+
+Keccak accounting: set proven-pass perms 886,763 → 867,543 (−19,220 =
+exactly the deduplicated address/topic accrue hashes; every remaining perm
+is a unique preimage). 781 consistency: −2,840 perms × 2,511 = 7,131,240
+gross, net −5,366,351 ⇒ 1,764,889 rows of memo-map overhead, matching the
+R2 shard's estimate.
+
+### Gates
+
+- Native gate: `run-native` all ten blocks, hashes match records bit-for-bit.
+- Traces: all ten in-guest hashes match (receipts root + bloom consensus
+  check exercised on every block).
+- jeth: release workspace nextest 15/15 (new `receipt_root_bloom` parity
+  test vs direct `with_bloom_ref` hashing over 0/1/32/96-receipt slices).
+- Jolt: untouched this wave.
