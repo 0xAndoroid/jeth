@@ -192,7 +192,7 @@ fn recovered_equation(i: u64) -> Equation {
 fn signed_equation(signing_key: &SigningKey, z: u64) -> Equation {
     let msg = U256::from(z).to_be_bytes();
     let (sig, recid) = signing_key.sign_prehash_recoverable(&msg).unwrap();
-    let sig: [u8; 64] = sig.to_bytes().as_slice().try_into().unwrap();
+    let sig: [u8; 64] = sig.to_bytes().into();
     let mut equation = prepare_recovery(&sig, recid.to_byte(), &msg).unwrap();
     equation.key = key_point(signing_key.verifying_key());
     equation
