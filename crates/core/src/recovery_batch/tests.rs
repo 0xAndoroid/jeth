@@ -164,28 +164,31 @@ fn transcript_binds_count_order_and_every_component() {
     assert_ne!(lambda, challenge(batch.transcript(), 1).e());
 }
 
+fn recovered_equation(i: u64) -> Equation {
+    let msg = U256::from(i).to_be_bytes();
+    let sig = signature(generator_r(), U256::from(i % 11 + 1));
+    let mut equation = prepare_recovery(&sig, (i % 2) as u8, &msg).unwrap();
+    let key = VerifyingKey::recover_from_prehash(
+        &msg,
+        &KSignature::from_slice(&sig).unwrap(),
+        RecoveryId::from_byte((i % 2) as u8).unwrap(),
+    )
+    .unwrap()
+    .to_encoded_point(false);
+    let bytes = key.as_bytes();
+    let mut limbs = [0; 8];
+    limbs[..4].copy_from_slice(U256::from_be_slice(&bytes[1..33]).as_limbs());
+    limbs[4..].copy_from_slice(U256::from_be_slice(&bytes[33..]).as_limbs());
+    equation.key = Secp256k1Point::from_u64_arr(&limbs).unwrap();
+    equation
+}
+
 #[test]
 fn pippenger_batch_matches_independent_recovery() {
-    let r = generator_r();
     let mut equations = Vec::new();
     // 99 equations at the mid-check (w = 7 windows), 598 at the end (w = 8).
     for i in 2..600u64 {
-        let msg = U256::from(i).to_be_bytes();
-        let sig = signature(r, U256::from(i % 11 + 1));
-        let mut equation = prepare_recovery(&sig, (i % 2) as u8, &msg).unwrap();
-        let key = VerifyingKey::recover_from_prehash(
-            &msg,
-            &KSignature::from_slice(&sig).unwrap(),
-            RecoveryId::from_byte((i % 2) as u8).unwrap(),
-        )
-        .unwrap()
-        .to_encoded_point(false);
-        let bytes = key.as_bytes();
-        let mut limbs = [0; 8];
-        limbs[..4].copy_from_slice(U256::from_be_slice(&bytes[1..33]).as_limbs());
-        limbs[4..].copy_from_slice(U256::from_be_slice(&bytes[33..]).as_limbs());
-        equation.key = Secp256k1Point::from_u64_arr(&limbs).unwrap();
-        equations.push(equation);
+        equations.push(recovered_equation(i));
         if i == 100 {
             Batch {
                 equations: equations.clone(),
@@ -193,6 +196,15 @@ fn pippenger_batch_matches_independent_recovery() {
             .verify();
         }
     }
+    Batch { equations }.verify();
+}
+
+#[test]
+#[should_panic(expected = "invalid recovery batch")]
+fn forged_key_in_wide_batch_must_panic() {
+    // 598 equations select the w = 8 window path.
+    let mut equations: Vec<_> = (2..600u64).map(recovered_equation).collect();
+    equations[300].key = Secp256k1Point::generator();
     Batch { equations }.verify();
 }
 

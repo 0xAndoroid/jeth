@@ -185,8 +185,8 @@ struct Term {
 /// per digit recodes each `w`-bit digit into [-2^(w-1), 2^(w-1)) exactly
 /// (the carries are absorbed by the bias addition), so a window's buckets
 /// span 1..=2^(w-1) and its reduction chain halves. The top window keeps its
-/// unsigned digit plus the bias carry (≤ 2^w, hence 2^w + 1 buckets) so no
-/// extra window is needed.
+/// unsigned digit plus the bias carry, which is at most 2^(128 - top_shift)
+/// (2^w for w = 8, 4 for w = 7), so no extra window is needed.
 fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
     let width = if terms.len() < 512 { 7 } else { 8 };
     let windows = 128usize.div_ceil(width);
@@ -216,7 +216,7 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
             result = result.double();
         }
         let top = window == windows - 1;
-        let live = if top { 1 << width } else { half };
+        let live = if top { 1 << (128 - top_shift) } else { half };
         buckets[1..=live].fill(Secp256k1Point::infinity());
         if top {
             for term in &split {
