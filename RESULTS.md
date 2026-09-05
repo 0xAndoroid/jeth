@@ -1484,3 +1484,60 @@ Cumulative vs wave-4 baseline: **19.780546 → 14.472674 (-5.307872 c/g,
   `memcpy_impl` block (liveness argument `rem ≥ 32` in the comment);
   bn254.rs / recovery_batch.rs are safe code. New jeth-core deps
   ark-bn254/ark-ec/ark-ff 0.5 (already in the graph via revm-precompile).
+
+## Campaign opt-amber wave L — static gas charged inside each instruction (jeth-only, vendored revm-interpreter)
+
+`Interpreter::step` loaded a 16-byte table entry {fn_, static_gas} and
+charged gas in the loop (ld static_gas, ld remaining, bltu, sub, sd).
+Commit 82e2b8e: `Instruction` is a `#[repr(transparent)]` fn pointer; one
+authoritative `const fn static_gas(opcode, spec)` reproduces the legacy
+base table + spec repricings; every instruction charges first via
+`static_gas!` — spec-independent opcodes take a const path
+`Gas::record_static_cost::<COST>()`, the repriced ones (SLOAD, BALANCE,
+EXTCODESIZE/COPY/HASH, CALL/CALLCODE/DELEGATECALL/STATICCALL,
+SELFDESTRUCT) a runtime spec switch. `instruction_table_gas_changes_spec`
+is now the identity (kept for revm-handler API compatibility); dead
+`Gas::record_cost_unsafe` deleted. No static+dynamic folding: every
+spec-dependent op pops before its dynamic charge, so folding would flip
+OOG/underflow priority (follow-up, ~5 rows × rare ops).
+
+**Refuted first:** the plain relocation is row-neutral (first build
+−202,454 on 781): RISC-V has no compare-immediate-branch, so `li; bltu`
+replaced the table's `ld static_gas` 1:1 — only ~40k zero-gas ops
+(STOP/RETURN/REVERT/SSTORE/CREATE) saved 5 each. Landed form: the
+remaining−COST subtraction is an opaque `addi` (inline asm, riscv64 only,
+COST ≤ 2047, wrapping_sub otherwise) so the OOG test is one
+`bltu rem, new` → 4 rows per op instead of 5 (disassembly-confirmed:
+ld/li/bltu/addi/sd → ld/addi/bltu/sd). Handler::execution 35,142,651 →
+26,171,091 (−8.97M ≈ 5 rows × 1.79M ops); instructions +7.18M ≈ 4 rows/op.
+
+### Ladder (jolt-amber @ 920868471, jeth @ 82e2b8e)
+
+| Block | Gas | Wave-K rows | Wave-L rows | Delta rows | c/g K → L |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 629,852,435 | 628,057,124 | -1,795,311 | 14.241330 → 14.200737 |
+| 25905782 | 47,065,991 | 755,248,283 | 752,824,321 | -2,423,962 | 16.046582 → 15.995081 |
+| 25905783 | 25,320,107 | 348,518,980 | 347,551,111 | -967,869 | 13.764515 → 13.726289 |
+| 25905784 | 19,039,352 | 262,030,857 | 261,286,739 | -744,118 | 13.762593 → 13.723510 |
+| 25905785 | 47,351,982 | 661,716,123 | 659,523,299 | -2,192,824 | 13.974412 → 13.928103 |
+| 25905786 | 26,354,048 | 306,039,431 | 305,065,240 | -974,191 | 11.612616 → 11.575650 |
+| 25905787 | 27,961,947 | 418,876,331 | 417,399,516 | -1,476,815 | 14.980228 → 14.927412 |
+| 25905788 | 6,217,605 | 96,999,978 | 96,747,647 | -252,331 | 15.600859 → 15.560276 |
+| 25905789 | 44,608,380 | 714,461,354 | 712,067,679 | -2,393,675 | 16.016304 → 15.962644 |
+| 25905790 | 32,881,199 | 452,385,419 | 451,027,881 | -1,357,538 | 13.758179 → 13.716893 |
+| Gas-weighted | 321,027,690 | 4,646,129,191 | 4,631,550,557 | -14,578,634 | **14.472674 → 14.427262** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 14.427262 (-5.353284 c/g,
+-27.1%; -1,718,552,553 rows)**.
+
+### Gates
+
+- Native oracle: `static_gas(op, spec) == legacy_table(spec)[op]` for all
+  256 opcodes × every SpecId; new test: every opcode halts OutOfGas at
+  cost−1 and never at cost, under every spec (catches wrong-opcode
+  charges). Vendored revm-interpreter 49/49; workspace nextest 18/18.
+- Trace 781 hash + census exact; `run-native` 10/10; sweep 782–790 hashes
+  unchanged.
+- Unsafe: one new block — `asm!("addi {r}, {x}, {neg}")` in gas.rs
+  `sub_const`, `cfg(target_arch = "riscv64")`, `options(pure, nomem,
+  nostack)`, register-only.
