@@ -1217,3 +1217,62 @@ baseline: **19.780546 → 16.599962 (−3.180584 c/g, −16.1%;
 - Follow-ups: residual memcmp 6.8M is B256 `==`/`Ord` spread across
   revm/alloy (no single hot site); a guest-owned `#[global_allocator]` with
   const-folded layouts would take alloc ~15.6 → ~6 rows (≈ −1.8M more).
+
+## Campaign opt-amber wave H — word-wise keccak256 shim on the plain-permutation inline (jeth-only)
+
+The guest keccak shim (`native_keccak256` → `jolt_inlines_keccak256::digest`)
+spent ~613 rows/call outside the permutations on 781: two memsets (200-B
+state + 136-B block), a memcpy of the tail, byte-wise padding, and a
+byte-wise 32-byte digest store (32 × SB + 28 shifts = 224 rows). New
+`crates/guest/src/keccak.rs`: 25 SD zero state; block 1 written into the
+zeroed rate lanes and run through the PLAIN permutation inline (funct3 = 0,
+emitted via `.insn` — no SDK wrapper existed), aligned middle blocks through
+the absorb inline, the final block assembled word-wise into an aligned
+`[u64; 17]` with the padding folded in and XORed into the state by the shim
++ plain permute; digest 4 LD + 4 SD when `out % 8 == 0`, else a 5-word RMW.
+Built shim = 567 straight-line instructions, no memset/memcpy/sub-word ops.
+Differential test vs `keccak`/`sha3` over lengths 0..=600 × 8 input × 8
+output alignments + random ≤ 20 kB (scratch crate; crates/guest cannot
+build natively as a lib test, pre-existing). jeth commit 3927376.
+
+Permutation count is unchanged by construction (`len/136 + 1` per call);
+the absorb → plain switch on first/final blocks also saves 34 inline rows
+each (2.56M on 781). The `keccak-census` counters (calls/bytes/perms lines
+the accounting gate reads) stay on by default: 1,053,359 rows on 781
+(0.15%), removable with `--no-default-features` on the guest.
+
+### Ladder (jolt-amber @ ef89da425, jeth @ 3927376)
+
+| Block | Gas | Wave-G rows | Wave-H rows | Delta rows | c/g G → H |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 720,149,112 | 699,847,443 | -20,301,669 | 16.282991 → 15.823958 |
+| 25905782 | 47,065,991 | 860,674,308 | 839,467,790 | -21,206,518 | 18.286544 → 17.835974 |
+| 25905783 | 25,320,107 | 397,513,426 | 386,626,391 | -10,887,035 | 15.699516 → 15.269540 |
+| 25905784 | 19,039,352 | 303,717,352 | 294,892,203 | -8,825,149 | 15.952085 → 15.488563 |
+| 25905785 | 47,351,982 | 763,225,683 | 742,417,399 | -20,808,284 | 16.118136 → 15.678697 |
+| 25905786 | 26,354,048 | 352,150,653 | 342,306,032 | -9,844,621 | 13.362298 → 12.988746 |
+| 25905787 | 27,961,947 | 475,966,151 | 463,808,305 | -12,157,846 | 17.021925 → 16.587125 |
+| 25905788 | 6,217,605 | 111,654,533 | 108,365,826 | -3,288,707 | 17.957804 → 17.428869 |
+| 25905789 | 44,608,380 | 824,188,440 | 801,871,557 | -22,316,883 | 18.476090 → 17.975805 |
+| 25905790 | 32,881,199 | 519,807,872 | 504,029,365 | -15,778,507 | 15.808665 → 15.328801 |
+| Gas-weighted | 321,027,690 | 5,329,047,530 | 5,183,632,311 | -145,415,219 | **16.599962 → 16.146994** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 16.146994 (−3.633552 c/g,
+−18.4%; −1,166,470,799 rows)**.
+
+Attribution on 781: native_keccak256 self 316,868,938 → 307,744,048, of
+which inline rows 298,681,814 (118,366 × 2,511 + 34 × 43,082 aligned middle
+blocks); non-permutation shim rows 9,062,234 = 190.8/call with census
+(~169 without; the drafter's ~128 assumed a shorter tail mix — 58.5% of
+calls are multi-block with ~15-word tails); memset under keccak 5.70M → 0,
+memcpy under keccak 3.77M → 0; memset total 8.29M → 2.60M.
+
+### Gates
+
+- Native gate: `run-native` all ten blocks match records.
+- Traces: all ten hashes match; census exact (calls 47,504, bytes
+  13,417,708, perms 118,366; new `unaligned=1691` counter).
+- Disassembly of the built shim: 567 instrs = reference 546 + 21-instr
+  census block; 0 memset/memcpy/sub-word, 6 `.insn` sites.
+- jeth nextest 15/15; scratch-crate differential tests 3/3 (release +
+  debug). Jolt: untouched.
