@@ -16,6 +16,8 @@ pub mod control;
 pub mod host;
 /// Signed 256-bit integer operations.
 pub mod i256;
+/// Intrinsic transaction gas (word-at-a-time calldata token count).
+pub mod initial_gas;
 /// Memory operations (MLOAD, MSTORE, MSIZE, etc.).
 pub mod memory;
 /// Stack operations (PUSH, POP, DUP, SWAP, etc.).
@@ -28,6 +30,9 @@ pub mod tx_info;
 pub mod utility;
 
 pub use context_interface::cfg::gas::{self, *};
+// Explicit import: shadows the glob's `calculate_initial_tx_gas_for_tx` (this
+// is the name revm-handler's validation imports from `instructions`).
+pub use initial_gas::calculate_initial_tx_gas_for_tx;
 
 use crate::{interpreter_types::InterpreterTypes, Host, InstructionContext};
 use primitives::hardfork::SpecId;
