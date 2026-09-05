@@ -1155,3 +1155,65 @@ well under the memcpy removed); memcpy total 60,227,867 → 45,217,177; net
   `word_writer_matches_byte_copy`); workspace clippy `--all-targets
   -D warnings` clean.
 - Jolt: untouched this wave.
+
+## Campaign opt-amber wave G — secp256k1 limb compares, memcmp sign path, bump allocator
+
+Three sub-lanes, measured and committed separately (builder lane, all gates
+per sub-lane).
+
+- **1a — secp256k1 equality without memcmp** (jolt e371ecd4e). LLVM lowers
+  every 32-byte `==` on `[u64;4]` to a memcmp libcall on riscv64imac; the
+  inline-SDK `AffinePoint::add` did three per bucket add (`is_infinity`
+  ×2, `x == x`) at ~75 rows each inside `recovery_batch::pippenger`
+  (9.0M rows on 781). Manual `PartialEq`/`is_zero` for `Secp256k1Fq/Fr` as
+  `((a0^b0)|(a1^b1)|(a2^b2)|(a3^b3)) == 0`; every add branch kept
+  (infinity / P==Q / P==−Q), exact on canonical limbs (from_u64_arr checks,
+  inline outputs reduced). 781 −10,556,696 (memcmp 18.9M → 9.6M, pippenger
+  call-site rows −0.8M, recover()/is_on_curve compares −0.4M).
+- **1b — memcmp sign from the lowest differing byte** (jeth 20aaf76). The
+  word-RMW memcmp byte-swapped both words (48 rows) to order them; now
+  `t = d & −d`, `mask = ((t|(t−1)) & 0x0101…01) × 0xFF`, unsigned compare
+  of the masked words. Fuzz test extended (bytes after the flipped one
+  randomized, 200k iterations). 781 −2,738,891 (estimate −4M had
+  double-counted the compares 1a removed).
+- **2 — bump allocator** (jolt ef89da425 `jolt-platform::bump_alloc` +
+  jolt-sdk feature `bump-alloc`; jeth 342c8d1 enables it in the guest).
+  alloc = align round-up + checked bound (~15.6 rows incl. fn-ptr dispatch
+  vs 66–74), dealloc no-op (1 row), realloc in place for the newest block
+  else alloc+copy. size_class_alloc stays the jolt default. Peak heap
+  measured with a temporary print (reverted): 781 46.7 MiB, 782 53.8, 785
+  52.7, 789 57.8 MiB of the 1.5 GiB heap. 781 −15,788,648 (allocator
+  21.1M → 3.4M; memcpy +1.9M from realloc copies of non-newest blocks).
+
+### Ladder (jolt-amber @ ef89da425, jeth @ 342c8d1)
+
+| Block | Gas | Wave-F rows | Wave-G rows | Delta rows | c/g F → G |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 749,233,347 | 720,149,112 | -29,084,235 | 16.940602 → 16.282991 |
+| 25905782 | 47,065,991 | 890,175,181 | 860,674,308 | -29,500,873 | 18.913342 → 18.286544 |
+| 25905783 | 25,320,107 | 414,886,377 | 397,513,426 | -17,372,951 | 16.385649 → 15.699516 |
+| 25905784 | 19,039,352 | 315,845,472 | 303,717,352 | -12,128,120 | 16.589087 → 15.952085 |
+| 25905785 | 47,351,982 | 792,751,133 | 763,225,683 | -29,525,450 | 16.741667 → 16.118136 |
+| 25905786 | 26,354,048 | 366,438,325 | 352,150,653 | -14,287,672 | 13.904442 → 13.362298 |
+| 25905787 | 27,961,947 | 494,122,962 | 475,966,151 | -18,156,811 | 17.671265 → 17.021925 |
+| 25905788 | 6,217,605 | 117,757,192 | 111,654,533 | -6,102,659 | 18.939317 → 17.957804 |
+| 25905789 | 44,608,380 | 855,305,307 | 824,188,440 | -31,116,867 | 19.173646 → 18.476090 |
+| 25905790 | 32,881,199 | 541,444,076 | 519,807,872 | -21,636,204 | 16.466677 → 15.808665 |
+| Gas-weighted | 321,027,690 | 5,537,959,372 | 5,329,047,530 | -208,911,842 | **17.250722 → 16.599962** |
+
+Per sub-lane set deltas: 1a −72,719,096 (→ 17.024202), 1b −19,775,684
+(→ 16.962601), 2 −116,417,062 (→ 16.599962). Cumulative vs wave-4
+baseline: **19.780546 → 16.599962 (−3.180584 c/g, −16.1%;
+−1,021,055,580 rows)**.
+
+### Gates (each sub-lane)
+
+- Trace 781 hash + perms 118,366 exact ×3; sweep 782–790 hashes unchanged
+  ×3; `run-native` 10/10 ×3 (secp-inline host path exercises the new
+  compares natively).
+- jeth nextest 15/15 ×3; jolt secp256k1 inline tests 15/15
+  (`--features host`), jolt-platform 2/2 (bump + size_class); clippy/fmt
+  clean in both worktrees.
+- Follow-ups: residual memcmp 6.8M is B256 `==`/`Ord` spread across
+  revm/alloy (no single hot site); a guest-owned `#[global_allocator]` with
+  const-folded layouts would take alloc ~15.6 → ~6 rows (≈ −1.8M more).
