@@ -34,21 +34,28 @@ pub use context_interface::cfg::gas::{self, *};
 // is the name revm-handler's validation imports from `instructions`).
 pub use initial_gas::calculate_initial_tx_gas_for_tx;
 
-use crate::{interpreter_types::InterpreterTypes, Host, InstructionContext};
+use crate::{
+    interpreter_types::{InterpreterTypes, Ip},
+    Host, InstructionContext,
+};
 use primitives::hardfork::SpecId;
 
 /// EVM opcode function pointer. The table entry is a bare pointer: static gas is charged
 /// by each instruction through [`static_gas!`] so the dispatch loop never touches gas.
+///
+/// An instruction receives the [`Ip`] of the byte after its opcode and returns the [`Ip`]
+/// of the next opcode, or null once it has halted or yielded the frame (see [`Ip`]). The
+/// pointer travels in the first argument/return register, so the run loop never stores it.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Instruction<W: InterpreterTypes, H: ?Sized> {
-    fn_: fn(InstructionContext<'_, H, W>),
+    fn_: fn(Ip, InstructionContext<'_, H, W>) -> Ip,
 }
 
 impl<W: InterpreterTypes, H: Host + ?Sized> Instruction<W, H> {
     /// Creates a new instruction from its function.
     #[inline]
-    pub const fn new(fn_: fn(InstructionContext<'_, H, W>)) -> Self {
+    pub const fn new(fn_: fn(Ip, InstructionContext<'_, H, W>) -> Ip) -> Self {
         Self { fn_ }
     }
 
@@ -60,10 +67,10 @@ impl<W: InterpreterTypes, H: Host + ?Sized> Instruction<W, H> {
         }
     }
 
-    /// Executes the instruction with the given context.
+    /// Executes the instruction at `ip` (the byte after its opcode) and returns the next [`Ip`].
     #[inline(always)]
-    pub fn execute(self, ctx: InstructionContext<'_, H, W>) {
-        (self.fn_)(ctx)
+    pub fn execute(self, ip: Ip, ctx: InstructionContext<'_, H, W>) -> Ip {
+        (self.fn_)(ip, ctx)
     }
 }
 

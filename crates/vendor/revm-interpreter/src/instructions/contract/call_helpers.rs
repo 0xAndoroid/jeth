@@ -124,10 +124,10 @@ pub fn load_account_delegated_handle_error<H: Host + ?Sized>(
     ) {
         Ok(out) => return Some(out),
         Err(LoadError::ColdLoadSkipped) => {
-            context.interpreter.halt_oog();
+            let _ = context.interpreter.halt_oog();
         }
         Err(LoadError::DBError) => {
-            context.interpreter.halt_fatal();
+            let _ = context.interpreter.halt_fatal();
         }
     }
     None

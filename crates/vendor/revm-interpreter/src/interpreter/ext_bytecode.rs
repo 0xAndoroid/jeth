@@ -1,5 +1,8 @@
 use super::{Immediates, Jumps, LegacyBytecode};
-use crate::{interpreter_types::LoopControl, InterpreterAction};
+use crate::{
+    interpreter_types::{Ip, LoopControl},
+    InterpreterAction,
+};
 use bytecode::{utils::read_u16, Bytecode};
 use core::ops::Deref;
 use primitives::B256;
@@ -118,7 +121,8 @@ impl LoopControl for ExtBytecode {
         debug_assert!(
             self.continue_execution != 0,
             "action already set;\nold: {:#?}\nnew: {:#?}",
-            self.action, action,
+            self.action,
+            action,
         );
         self.continue_execution = 0;
         self.action = Some(action);
@@ -156,12 +160,32 @@ impl Jumps for ExtBytecode {
 
     #[inline]
     fn pc(&self) -> usize {
-        // SAFETY: `instruction_pointer` should be at an offset from the start of the bytes.
+        self.pc_of(self.instruction_pointer)
+    }
+
+    #[inline]
+    fn ip(&self) -> Ip {
+        self.instruction_pointer
+    }
+
+    #[inline]
+    fn set_ip(&mut self, ip: Ip) {
+        self.instruction_pointer = ip;
+    }
+
+    #[inline]
+    fn jump_target(&self, offset: usize) -> Ip {
+        // SAFETY: the caller validated `offset` against the jump table, so it is in bounds.
+        unsafe { self.base.bytes_ref().as_ptr().add(offset) }
+    }
+
+    // `ip` is the run loop's pointer into this bytecode (see [`Ip`]).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    #[inline]
+    fn pc_of(&self, ip: Ip) -> usize {
+        // SAFETY: `ip` should be at an offset from the start of the bytes.
         // In practice this is always true unless a caller modifies the `instruction_pointer` field manually.
-        unsafe {
-            self.instruction_pointer
-                .offset_from_unsigned(self.base.bytes_ref().as_ptr())
-        }
+        unsafe { ip.offset_from_unsigned(self.base.bytes_ref().as_ptr()) }
     }
 }
 

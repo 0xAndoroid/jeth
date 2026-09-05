@@ -1,131 +1,165 @@
 use crate::{
-    interpreter_types::{Immediates, InterpreterTypes, Jumps, RuntimeFlag, StackTr},
+    interpreter_types::{InterpreterTypes, RuntimeFlag, StackTr},
     InstructionResult,
 };
 use primitives::U256;
 
-use crate::InstructionContext;
+use crate::{InstructionContext, Ip};
 
 /// Implements the POP instruction.
 ///
 /// Removes the top item from the stack.
-pub fn pop<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+pub fn pop<WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
+    context: InstructionContext<'_, H, WIRE>,
+) -> Ip {
     static_gas!(context.interpreter, POP);
     // Can ignore return. as relative N jump is safe operation.
     popn!([_i], context.interpreter);
+    ip
 }
 
 /// EIP-3855: PUSH0 instruction
 ///
 /// Introduce a new instruction which pushes the constant value 0 onto the stack.
-pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
+    context: InstructionContext<'_, H, WIRE>,
+) -> Ip {
     static_gas!(context.interpreter, PUSH0);
     check!(context.interpreter, SHANGHAI);
     push!(context.interpreter, U256::ZERO);
+    ip
 }
 
 /// Implements the PUSH1-PUSH32 instructions.
 ///
 /// Pushes N bytes from bytecode onto the stack as a 32-byte value.
+// `ip` is the run loop's pointer into analysed bytecode (see [`Ip`]).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     // PUSH1..=PUSH32 share one static gas.
     static_gas!(context.interpreter, PUSH1);
-    let imm = context.interpreter.bytecode.read_slice(N);
-    // SAFETY: `imm` is the N immediate bytes at the instruction pointer, and
-    // analysed bytecode has at least one byte after them (see
-    // `read_be_immediate`).
-    let value = unsafe { crate::interpreter::words::read_be_immediate::<N>(imm.as_ptr()) };
+    // SAFETY: `ip` points at the N immediate bytes, and analysed bytecode has at
+    // least one byte after them (see `read_be_immediate`).
+    let value = unsafe { crate::interpreter::words::read_be_immediate::<N>(ip) };
     if !context.interpreter.stack.push(value) {
-        context.interpreter.halt(InstructionResult::StackOverflow);
-        return;
+        return context.interpreter.halt(InstructionResult::StackOverflow);
     }
 
-    context.interpreter.bytecode.relative_jump(N as isize);
+    // SAFETY: skips the immediate bytes, which are inside the bytecode (see above).
+    unsafe { ip.add(N) }
 }
 
 /// Implements the DUP1-DUP16 instructions.
 ///
 /// Duplicates the Nth stack item to the top of the stack.
 pub fn dup<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     // DUP1..=DUP16 share one static gas.
     static_gas!(context.interpreter, DUP1);
     if !context.interpreter.stack.dup(N) {
-        context.interpreter.halt(InstructionResult::StackOverflow);
+        return context.interpreter.halt(InstructionResult::StackOverflow);
     }
+    ip
 }
 
 /// Implements the SWAP1-SWAP16 instructions.
 ///
 /// Swaps the top stack item with the Nth stack item.
 pub fn swap<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     // SWAP1..=SWAP16 share one static gas.
     static_gas!(context.interpreter, SWAP1);
     assert!(N != 0);
     if !context.interpreter.stack.exchange(0, N) {
-        context.interpreter.halt(InstructionResult::StackUnderflow);
+        return context.interpreter.halt(InstructionResult::StackUnderflow);
     }
+    ip
 }
 
 /// Implements the DUPN instruction.
 ///
 /// Duplicates the Nth stack item to the top of the stack, with N given by an immediate.
-pub fn dupn<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+// `ip` is the run loop's pointer into analysed bytecode (see [`Ip`]).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn dupn<WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
+    context: InstructionContext<'_, H, WIRE>,
+) -> Ip {
     static_gas!(context.interpreter, DUPN);
     check!(context.interpreter, AMSTERDAM);
-    let x: usize = context.interpreter.bytecode.read_u8().into();
+    // SAFETY: `ip` points at the immediate byte (see `read_be_immediate`).
+    let x: usize = unsafe { *ip }.into();
     if let Some(n) = decode_single(x) {
         if !context.interpreter.stack.dup(n) {
-            context.interpreter.halt(InstructionResult::StackOverflow);
+            return context.interpreter.halt(InstructionResult::StackOverflow);
         }
-        context.interpreter.bytecode.relative_jump(1);
+        // SAFETY: skips the immediate byte, which is inside the bytecode.
+        unsafe { ip.add(1) }
     } else {
         context
             .interpreter
-            .halt(InstructionResult::InvalidImmediateEncoding);
+            .halt(InstructionResult::InvalidImmediateEncoding)
     }
 }
 
 /// Implements the SWAPN instruction.
 ///
 /// Swaps the top stack item with the N+1th stack item, with N given by an immediate.
-pub fn swapn<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+// `ip` is the run loop's pointer into analysed bytecode (see [`Ip`]).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn swapn<WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
+    context: InstructionContext<'_, H, WIRE>,
+) -> Ip {
     static_gas!(context.interpreter, SWAPN);
     check!(context.interpreter, AMSTERDAM);
-    let x: usize = context.interpreter.bytecode.read_u8().into();
+    // SAFETY: `ip` points at the immediate byte (see `read_be_immediate`).
+    let x: usize = unsafe { *ip }.into();
     if let Some(n) = decode_single(x) {
         if !context.interpreter.stack.exchange(0, n) {
-            context.interpreter.halt(InstructionResult::StackUnderflow);
+            return context.interpreter.halt(InstructionResult::StackUnderflow);
         }
-        context.interpreter.bytecode.relative_jump(1);
+        // SAFETY: skips the immediate byte, which is inside the bytecode.
+        unsafe { ip.add(1) }
     } else {
         context
             .interpreter
-            .halt(InstructionResult::InvalidImmediateEncoding);
+            .halt(InstructionResult::InvalidImmediateEncoding)
     }
 }
 
 /// Implements the EXCHANGE instruction.
 ///
 /// Swaps the N+1th stack item with the M+1th stack item, with N, M given by an immediate.
-pub fn exchange<WIRE: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, WIRE>) {
+// `ip` is the run loop's pointer into analysed bytecode (see [`Ip`]).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn exchange<WIRE: InterpreterTypes, H: ?Sized>(
+    ip: Ip,
+    context: InstructionContext<'_, H, WIRE>,
+) -> Ip {
     static_gas!(context.interpreter, EXCHANGE);
     check!(context.interpreter, AMSTERDAM);
-    let x: usize = context.interpreter.bytecode.read_u8().into();
+    // SAFETY: `ip` points at the immediate byte (see `read_be_immediate`).
+    let x: usize = unsafe { *ip }.into();
     if let Some((n, m)) = decode_pair(x) {
         if !context.interpreter.stack.exchange(n, m - n) {
-            context.interpreter.halt(InstructionResult::StackUnderflow);
+            return context.interpreter.halt(InstructionResult::StackUnderflow);
         }
-        context.interpreter.bytecode.relative_jump(1);
+        // SAFETY: skips the immediate byte, which is inside the bytecode.
+        unsafe { ip.add(1) }
     } else {
         context
             .interpreter
-            .halt(InstructionResult::InvalidImmediateEncoding);
+            .halt(InstructionResult::InvalidImmediateEncoding)
     }
 }
 

@@ -8,7 +8,7 @@ pub use call_helpers::{
 use crate::{
     instructions::utility::IntoAddress,
     interpreter_action::FrameInput,
-    interpreter_types::{InputsTr, InterpreterTypes, LoopControl, MemoryTr, RuntimeFlag, StackTr},
+    interpreter_types::{InputsTr, InterpreterTypes, MemoryTr, RuntimeFlag, StackTr},
     CallInput, CallInputs, CallScheme, CallValue, CreateInputs, Host, InstructionResult,
     InterpreterAction,
 };
@@ -16,14 +16,15 @@ use context_interface::CreateScheme;
 use primitives::{hardfork::SpecId, Address, Bytes, B256, U256};
 use std::boxed::Box;
 
-use crate::InstructionContext;
+use crate::{InstructionContext, Ip};
 
 /// Implements the CREATE/CREATE2 instruction.
 ///
 /// Creates a new contract with provided bytecode.
 pub fn create<WIRE: InterpreterTypes, const IS_CREATE2: bool, H: Host + ?Sized>(
+    ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     // Static call check is before gas charging (unlike execution-specs where it's
     // inside generic_create). This is safe because CREATE in a static context is
     // always an error regardless of gas accounting.
@@ -48,10 +49,9 @@ pub fn create<WIRE: InterpreterTypes, const IS_CREATE2: bool, H: Host + ?Sized>(
         {
             // Limit is set as double of max contract bytecode size
             if len > context.host.max_initcode_size() {
-                context
+                return context
                     .interpreter
                     .halt(InstructionResult::CreateInitCodeSizeLimit);
-                return;
             }
             gas!(
                 context.interpreter,
@@ -121,20 +121,19 @@ pub fn create<WIRE: InterpreterTypes, const IS_CREATE2: bool, H: Host + ?Sized>(
         gas_limit,
         context.interpreter.gas.reservoir(),
     );
-    context
-        .interpreter
-        .bytecode
-        .set_action(InterpreterAction::NewFrame(FrameInput::Create(Box::new(
-            create_inputs,
-        ))));
+    context.interpreter.set_action_at(
+        ip,
+        InterpreterAction::NewFrame(FrameInput::Create(Box::new(create_inputs))),
+    )
 }
 
 /// Implements the CALL instruction.
 ///
 /// Message call with value transfer to another account.
 pub fn call<WIRE: InterpreterTypes, H: Host + ?Sized>(
+    ip: Ip,
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     static_gas!(context.interpreter, CALL);
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = to.into_address();
@@ -143,51 +142,49 @@ pub fn call<WIRE: InterpreterTypes, H: Host + ?Sized>(
     let has_transfer = !value.is_zero();
 
     if context.interpreter.runtime_flag.is_static() && has_transfer {
-        context
+        return context
             .interpreter
             .halt(InstructionResult::CallNotAllowedInsideStatic);
-        return;
     }
 
     let Some((input, return_memory_offset)) =
         get_memory_input_and_out_ranges(context.interpreter, context.host.gas_params())
     else {
-        return;
+        return core::ptr::null();
     };
 
     let Some((gas_limit, bytecode, bytecode_hash)) =
         load_acc_and_calc_gas(&mut context, to, has_transfer, true, local_gas_limit)
     else {
-        return;
+        return core::ptr::null();
     };
 
     // Call host to interact with target contract
-    context
-        .interpreter
-        .bytecode
-        .set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(
-            CallInputs {
-                input: CallInput::SharedBuffer(input),
-                gas_limit,
-                target_address: to,
-                caller: context.interpreter.input.target_address(),
-                bytecode_address: to,
-                known_bytecode: (bytecode_hash, bytecode),
-                value: CallValue::Transfer(value),
-                scheme: CallScheme::Call,
-                is_static: context.interpreter.runtime_flag.is_static(),
-                return_memory_offset,
-                reservoir: context.interpreter.gas.reservoir(),
-            },
-        ))));
+    context.interpreter.set_action_at(
+        ip,
+        InterpreterAction::NewFrame(FrameInput::Call(Box::new(CallInputs {
+            input: CallInput::SharedBuffer(input),
+            gas_limit,
+            target_address: to,
+            caller: context.interpreter.input.target_address(),
+            bytecode_address: to,
+            known_bytecode: (bytecode_hash, bytecode),
+            value: CallValue::Transfer(value),
+            scheme: CallScheme::Call,
+            is_static: context.interpreter.runtime_flag.is_static(),
+            return_memory_offset,
+            reservoir: context.interpreter.gas.reservoir(),
+        }))),
+    )
 }
 
 /// Implements the CALLCODE instruction.
 ///
 /// Message call with alternative account's code.
 pub fn call_code<WIRE: InterpreterTypes, H: Host + ?Sized>(
+    ip: Ip,
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     static_gas!(context.interpreter, CALLCODE);
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = Address::from_word(B256::from(to));
@@ -198,42 +195,41 @@ pub fn call_code<WIRE: InterpreterTypes, H: Host + ?Sized>(
     let Some((input, return_memory_offset)) =
         get_memory_input_and_out_ranges(context.interpreter, context.host.gas_params())
     else {
-        return;
+        return core::ptr::null();
     };
 
     let Some((gas_limit, bytecode, bytecode_hash)) =
         load_acc_and_calc_gas(&mut context, to, has_transfer, false, local_gas_limit)
     else {
-        return;
+        return core::ptr::null();
     };
 
     // Call host to interact with target contract
-    context
-        .interpreter
-        .bytecode
-        .set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(
-            CallInputs {
-                input: CallInput::SharedBuffer(input),
-                gas_limit,
-                target_address: context.interpreter.input.target_address(),
-                caller: context.interpreter.input.target_address(),
-                bytecode_address: to,
-                known_bytecode: (bytecode_hash, bytecode),
-                value: CallValue::Transfer(value),
-                scheme: CallScheme::CallCode,
-                is_static: context.interpreter.runtime_flag.is_static(),
-                return_memory_offset,
-                reservoir: context.interpreter.gas.reservoir(),
-            },
-        ))));
+    context.interpreter.set_action_at(
+        ip,
+        InterpreterAction::NewFrame(FrameInput::Call(Box::new(CallInputs {
+            input: CallInput::SharedBuffer(input),
+            gas_limit,
+            target_address: context.interpreter.input.target_address(),
+            caller: context.interpreter.input.target_address(),
+            bytecode_address: to,
+            known_bytecode: (bytecode_hash, bytecode),
+            value: CallValue::Transfer(value),
+            scheme: CallScheme::CallCode,
+            is_static: context.interpreter.runtime_flag.is_static(),
+            return_memory_offset,
+            reservoir: context.interpreter.gas.reservoir(),
+        }))),
+    )
 }
 
 /// Implements the DELEGATECALL instruction.
 ///
 /// Message call with alternative account's code but same sender and value.
 pub fn delegate_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
+    ip: Ip,
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     static_gas!(context.interpreter, DELEGATECALL);
     check!(context.interpreter, HOMESTEAD);
     popn!([local_gas_limit, to], context.interpreter);
@@ -244,42 +240,41 @@ pub fn delegate_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
     let Some((input, return_memory_offset)) =
         get_memory_input_and_out_ranges(context.interpreter, context.host.gas_params())
     else {
-        return;
+        return core::ptr::null();
     };
 
     let Some((gas_limit, bytecode, bytecode_hash)) =
         load_acc_and_calc_gas(&mut context, to, false, false, local_gas_limit)
     else {
-        return;
+        return core::ptr::null();
     };
 
     // Call host to interact with target contract
-    context
-        .interpreter
-        .bytecode
-        .set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(
-            CallInputs {
-                input: CallInput::SharedBuffer(input),
-                gas_limit,
-                target_address: context.interpreter.input.target_address(),
-                caller: context.interpreter.input.caller_address(),
-                bytecode_address: to,
-                known_bytecode: (bytecode_hash, bytecode),
-                value: CallValue::Apparent(context.interpreter.input.call_value()),
-                scheme: CallScheme::DelegateCall,
-                is_static: context.interpreter.runtime_flag.is_static(),
-                return_memory_offset,
-                reservoir: context.interpreter.gas.reservoir(),
-            },
-        ))));
+    context.interpreter.set_action_at(
+        ip,
+        InterpreterAction::NewFrame(FrameInput::Call(Box::new(CallInputs {
+            input: CallInput::SharedBuffer(input),
+            gas_limit,
+            target_address: context.interpreter.input.target_address(),
+            caller: context.interpreter.input.caller_address(),
+            bytecode_address: to,
+            known_bytecode: (bytecode_hash, bytecode),
+            value: CallValue::Apparent(context.interpreter.input.call_value()),
+            scheme: CallScheme::DelegateCall,
+            is_static: context.interpreter.runtime_flag.is_static(),
+            return_memory_offset,
+            reservoir: context.interpreter.gas.reservoir(),
+        }))),
+    )
 }
 
 /// Implements the STATICCALL instruction.
 ///
 /// Static message call (cannot modify state).
 pub fn static_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
+    ip: Ip,
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> Ip {
     static_gas!(context.interpreter, STATICCALL);
     check!(context.interpreter, BYZANTIUM);
     popn!([local_gas_limit, to], context.interpreter);
@@ -290,32 +285,30 @@ pub fn static_call<WIRE: InterpreterTypes, H: Host + ?Sized>(
     let Some((input, return_memory_offset)) =
         get_memory_input_and_out_ranges(context.interpreter, context.host.gas_params())
     else {
-        return;
+        return core::ptr::null();
     };
 
     let Some((gas_limit, bytecode, bytecode_hash)) =
         load_acc_and_calc_gas(&mut context, to, false, false, local_gas_limit)
     else {
-        return;
+        return core::ptr::null();
     };
 
     // Call host to interact with target contract
-    context
-        .interpreter
-        .bytecode
-        .set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(
-            CallInputs {
-                input: CallInput::SharedBuffer(input),
-                gas_limit,
-                target_address: to,
-                caller: context.interpreter.input.target_address(),
-                bytecode_address: to,
-                known_bytecode: (bytecode_hash, bytecode),
-                value: CallValue::Transfer(U256::ZERO),
-                scheme: CallScheme::StaticCall,
-                is_static: true,
-                return_memory_offset,
-                reservoir: context.interpreter.gas.reservoir(),
-            },
-        ))));
+    context.interpreter.set_action_at(
+        ip,
+        InterpreterAction::NewFrame(FrameInput::Call(Box::new(CallInputs {
+            input: CallInput::SharedBuffer(input),
+            gas_limit,
+            target_address: to,
+            caller: context.interpreter.input.target_address(),
+            bytecode_address: to,
+            known_bytecode: (bytecode_hash, bytecode),
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::StaticCall,
+            is_static: true,
+            return_memory_offset,
+            reservoir: context.interpreter.gas.reservoir(),
+        }))),
+    )
 }

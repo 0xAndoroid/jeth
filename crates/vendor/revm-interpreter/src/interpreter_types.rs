@@ -5,6 +5,14 @@ use core::{
 };
 use primitives::{hardfork::SpecId, Address, Bytes, B256, U256};
 
+/// Instruction pointer threaded through the run loop in a register.
+///
+/// An instruction receives the pointer to the byte after its opcode and returns the pointer
+/// to the next opcode. A null pointer means the frame halted or yielded: an
+/// [`InterpreterAction`] has been set (`Interpreter::halt*` / `Interpreter::set_action_at`)
+/// and the loop stops. Only those helpers produce a null.
+pub type Ip = *const u8;
+
 /// Helper function to read immediates data from the bytecode
 pub trait Immediates {
     /// Reads next 16 bits as signed integer from the bytecode.
@@ -77,6 +85,15 @@ pub trait Jumps {
     fn pc(&self) -> usize;
     /// Returns instruction opcode.
     fn opcode(&self) -> u8;
+    /// Returns the persisted instruction pointer (where a frame starts or resumes).
+    fn ip(&self) -> Ip;
+    /// Persists the instruction pointer (where a yielding frame resumes).
+    fn set_ip(&mut self, ip: Ip);
+    /// Pointer to the instruction at `offset`, already validated with
+    /// [`is_valid_legacy_jump`](Self::is_valid_legacy_jump).
+    fn jump_target(&self, offset: usize) -> Ip;
+    /// Program counter of `ip`.
+    fn pc_of(&self, ip: Ip) -> usize;
 }
 
 /// Trait for Interpreter memory operations.

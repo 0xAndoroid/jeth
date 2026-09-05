@@ -47,4 +47,4 @@ pub use interpreter_action::{
     CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
     FrameInput, InterpreterAction,
 };
-pub use interpreter_types::InterpreterTypes;
+pub use interpreter_types::{InterpreterTypes, Ip};
