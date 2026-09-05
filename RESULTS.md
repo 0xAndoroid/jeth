@@ -809,3 +809,93 @@ subject type; use `chore` for code integration merges.
 Cleanup candidates, now merged: `w4-interp`, `w4-predecoded`, `w4-reveal`.
 No lane worktrees removed. Keep the frozen Jolt dependency and leave
 `w5-keccak-repin` untouched.
+
+## Campaign opt-amber wave A — fused sub-word lane lookups (2026-09-04)
+
+SELF gas-weighted **19.780546 → 19.364199 c/g** (−0.416347, −2.10%); plain mean
+19.703913 → 19.292034. All ten blocks improve; native/trace block hashes and
+keccak permutation totals unchanged (781: 121,206 · 786: 61,356 · 788: 19,861
+— spot-checked exact). Total −133,659,039 rows. Guest ELF unchanged: both cuts
+are Jolt expansion-layer changes in the jolt-amber worktree (base `9340a777d` +
+`661d8e268..d79d89c84`); jeth tree unchanged except journal/tooling.
+
+### Mechanism
+
+New vertex-sum lookup-table families over interleaved (data, base-register)
+operands, with the load/store immediate's mod-8 residue K baked into the table
+(`(base + imm) mod 8 = ((base mod 8) + K) mod 8` — no carry into bit 3, so the
+K-shift is a pure relabeling of the 8 lane vertices and all K variants share
+one prefix/suffix component family):
+
+- **LBU 4 → 3 rows** (`0efdf9725`): `window_mask_b + pext` collapse into one
+  `VirtualExtractByu{K}` lookup (`rd = zext byte (base+K)&7 of dword`).
+- **SB 8 → 6 rows** (`d79d89c84`): the effective-address `ADDI/ANDI` pair and
+  the window-mask row collapse — `align_addr; ld; clear_lane_b{K}(dword,base);
+  shift_data_b[k{K}](src,base); add; sd`.
+
+Decomposition (new): shared prefixes ExtractEqLane0-7 / ExtractByteLsb0-7 /
+ExtractBytePlace0-7 / ExtractXPass; suffixes ExtractEqLane0-7, per-K Tail/Rest
+(length-gated at suffix_len 5, where the three lane-select bits sit fully in
+the suffix), ClearRest0-7, joint ExtractEqLaneLow0-7 (no length gating —
+store-data low byte sits below every other operand bit). combine() stays
+linear in suffixes; prefix products carry the vertex pairing. 31 new tables
+(78 → 109 of 126 table-ID slots), 25 prefixes, 41 suffixes, 23 instruction
+kinds (0x00b9..0x00cf), legacy MAX_SUFFIXES 5 → 16.
+
+**Soundness:** each new table is a total function of its two committed
+register operands, MLE-tested against materialization (mle_random, full
+hypercube at XLEN=8, prefix-suffix contract incl. 2-round phase boundaries
+that split the lane-select bits, 637 lookup-table tests). Old and new
+expansions compute identical rd/memory effects for all inputs (RAM ops
+unchanged: same aligned address, same merged value); forged operands fail the
+instruction lookup exactly as for every existing lookup instruction. The
+prover-legacy mirror is pinned by the ABI cross-check; ShiftDataBK{0} is
+random-tested equal to the original ShiftDataB.
+
+### Ladder (jolt-amber @ d79d89c84, jeth @ campaign-2x 329e20a)
+
+| Block | Gas | Wave-4 rows | Wave-A rows | Delta rows | c/g wave-4 → A |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 856,491,307 | 838,139,317 | -18,351,990 | 19.365767 → 18.950818 |
+| 25905782 | 47,065,991 | 1,012,323,673 | 991,999,817 | -20,323,856 | 21.508602 → 21.076786 |
+| 25905783 | 25,320,107 | 473,117,938 | 463,599,459 | -9,518,479 | 18.685464 → 18.309538 |
+| 25905784 | 19,039,352 | 364,751,467 | 357,058,625 | -7,692,842 | 19.157767 → 18.753717 |
+| 25905785 | 47,351,982 | 915,054,927 | 895,527,215 | -19,527,712 | 19.324533 → 18.912138 |
+| 25905786 | 26,354,048 | 420,011,691 | 410,760,612 | -9,251,079 | 15.937274 → 15.586244 |
+| 25905787 | 27,961,947 | 559,788,641 | 548,047,171 | -11,741,470 | 20.019659 → 19.599750 |
+| 25905788 | 6,217,605 | 136,331,705 | 133,702,434 | -2,629,271 | 21.926723 → 21.503848 |
+| 25905789 | 44,608,380 | 990,428,932 | 969,527,378 | -20,901,554 | 22.202755 → 21.734198 |
+| 25905790 | 32,881,199 | 621,802,829 | 608,082,043 | -13,720,786 | 18.910589 → 18.493305 |
+| Gas-weighted | 321,027,690 | 6,350,103,110 | 6,216,444,071 | -133,659,039 | **19.780546 → 19.364199** |
+
+Exact attribution on 781 (measured stepwise): LBU cut −11,666,586 =
+1 row × 11,666,586 LBU execs; SB cut −6,685,404 = 2 rows × 3,342,702 SB
+execs; zero residual. Dynamic op counts from the new `jeth opcodes` exact
+histogram (`data/25905781/opcodes-baseline.log`).
+
+### Gates
+
+- Native gate: guest/ELF unchanged; all ten trace block hashes match wave-4
+  records bit-for-bit.
+- Keccak accounting: proven-pass permutation totals unchanged (spot-checked
+  781/786/788 exact).
+- Jolt: 811/811 new-stack (lookup-tables 637 + riscv 37 + tracer 137),
+  jolt-prover-legacy 683/683 (+1 pre-existing skip), lookup-table ABI
+  cross-check 1/1 (`--features prover-abi-tests`), jolt-program 55/55 (12 LBU
+  + 8 SB golden hashes re-baselined, documented in-file), workspace check +
+  clippy clean, x86 backend cross-target check clean (difftests are
+  linux-gated, run in CI).
+- jeth: release workspace nextest 14/14 with `jeth-host/secp-inline`.
+
+### Reproduce
+
+```sh
+cd /Volumes/Dev/worktrees/jolt/jolt-amber   # branch jolt-amber @ d79d89c84
+CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jolt-cli-amber cargo build -q --release -p jolt
+cd /Volumes/Dev/worktrees/jeth/opt-amber    # branch opt-amber-work
+export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/opt-amber
+export JOLT_PATH=/Volumes/Dev/cargo-target/jolt-cli-amber/release/jolt
+cargo build -q --release -p jeth-host --features secp-inline
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin  # first run builds the guest pair
+"$CARGO_TARGET_DIR/release/jeth" opcodes --input data/25905781/input.bin --skip-build
+```
