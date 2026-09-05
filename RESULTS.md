@@ -1591,3 +1591,56 @@ heap full to within 7 bytes (peak 58 MiB of 1.5 GiB); fix upstream with
 depends on revm-handler importing `calculate_initial_tx_gas_for_tx` from
 `instructions::` (a future handler bump importing from `gas::` silently
 falls back to the upstream byte filter — correct, slower).
+
+## Campaign opt-amber wave M — keccak reuse: slot memo, HashedPostState from the trie memos, bloom addresses (jeth-only)
+
+Measured natively: `SparseState::storage` runs 2,832 times on 781 (= distinct
+(address, slot) pairs; revm's State cache dedupes perfectly) over only 2,221
+distinct slot values; `HashedPostState::from_bundle_state::<KeccakKeyHasher>`
+then re-hashed every changed address and slot (5.7M rows of keccak) although
+every one had been hashed during execution; the bloom kept a third memo.
+Four commits (hash 0xf691…b529 exact after each):
+
+| Step | Commit | Change | 781 Δ rows | Census Δ |
+|---|---|---|---:|---|
+| 1 | c902e8a | `slot_hashes: HashMap<U256, B256, FbBuildHasher<32>>` in SparseState (U256-limb key, `B256::from(slot)` only on miss, presized `witness.state.len()/8`) | −729,896 | −611 calls/perms |
+| 2 | 1dc6abb | `SparseState::hashed_post_state(&self, bundle)` — upstream `from_bundle_state` body with memo lookups + keccak fallback (~8 true misses), forwarded by `InstrumentedTrie`; validation.rs uses it | −5,486,828 | −2,175 |
+| 3 | f776a8a | `receipt_root_bloom(receipts, impl FnMut(Address) -> B256)` on the trie's address memo; own AddressMap deleted, topic memo kept | −271,085 | −207 |
+| 4 | 9b159c6 | tests: memo-built HashedPostState == `from_bundle_state::<KeccakKeyHasher>` on a synthetic bundle (changed / created / destroyed / destroyed+recreated / balance-only / non-existent; written-never-read slot + created account exercise the miss path); `hash_slot` memo test | 0 | — |
+
+Total 781 −6,487,809 (−1.03%); census 47,504 → 44,511 calls, 118,366 →
+115,373 perms (−2,993 = 611 + 2,175 + 207). **Refuted:** the ≈ −1.2M /
+−0.5M forecasts for steps 1/3 assumed a near-free memo; a hashbrown+foldhash
+probe costs ≈ 300 rows on Jolt (unaligned 8-byte ctrl-group loads, SB
+ctrl-byte stores, 4-word fold hash, second probe on insert) — break-even hit
+rate ≈ 12% (781: 21.6%). A first B256-keyed, unsized memo was net +668,921
+(reserve_rehash +972k, memcpy +244k, probes +1.0M vs keccak −1.6M); presizing
++ U256 key fixed it. Follow-up: a flat open-addressing memo (pow2 array of
+(limbs, digest), one folded multiply, aligned LD) would cut the ≈ 2.4M rows
+781 now spends in `hash_address` + `hash_slot` by 3–4×.
+
+### Ladder (jolt-amber @ 920868471, jeth @ 9b159c6)
+
+| Block | Gas | Wave-L rows | Wave-M rows | Delta rows | c/g L → M | perms |
+|---|---:|---:|---:|---:|---|---:|
+| 25905781 | 44,227,079 | 628,003,872 | 621,516,063 | -6,487,809 | 14.199533 → 14.052840 | 115,373 |
+| 25905782 | 47,065,991 | 752,780,986 | 746,246,283 | -6,534,703 | 15.994160 → 15.855319 | 124,117 |
+| 25905783 | 25,320,107 | 347,517,193 | 344,098,040 | -3,419,153 | 13.724950 → 13.589913 | 61,886 |
+| 25905784 | 19,039,352 | 261,258,776 | 258,483,702 | -2,775,074 | 13.722041 → 13.576287 | 51,424 |
+| 25905785 | 47,351,982 | 659,485,869 | 652,444,117 | -7,041,752 | 13.927313 → 13.778602 | 121,623 |
+| 25905786 | 26,354,048 | 305,034,799 | 301,848,361 | -3,186,438 | 11.574495 → 11.453586 | 59,024 |
+| 25905787 | 27,961,947 | 417,363,338 | 413,777,091 | -3,586,247 | 14.926119 → 14.797864 | 70,085 |
+| 25905788 | 6,217,605 | 96,719,904 | 95,785,107 | -934,797 | 15.555814 → 15.405467 | 19,238 |
+| 25905789 | 44,608,380 | 712,030,310 | 704,480,470 | -7,549,840 | 15.961806 → 15.792559 | 133,642 |
+| 25905790 | 32,881,199 | 450,984,978 | 446,879,249 | -4,105,729 | 13.715588 → 13.590722 | 90,051 |
+| Gas-weighted | 321,027,690 | 4,631,180,025 | 4,585,558,483 | -45,621,542 | **14.426108 → 14.283997** | |
+
+Cumulative vs wave-4 baseline: **19.780546 → 14.283997 (-5.496549 c/g,
+-27.8%; -1,764,544,627 rows)**.
+
+### Gates
+
+- Trace hashes exact on all 10 (= records and `run-native` 10/10); census
+  deltas reconciled per block (new perms in the table).
+- Workspace nextest 21/21 (19 + 2 new); clippy `-D warnings` on every
+  commit; no `unsafe` added; no cfg divergence between native and guest.
