@@ -1660,3 +1660,66 @@ Decision rule if built: fixture `row_count` ≤ 720 AND measured
 `recovery_msm` drop ≥ 4M AND `run-native` unchanged. Cheaper first:
 duplicate-key term merging (−1.5…−2.3M), `MaybeUninit` outputs in the secp
 sdk (−0.5…−0.8M), `add` restructure (−0.6M), `add_nonzero` (−0.23M).
+
+## Campaign opt-amber wave N — MPT resolver and node representation (jeth-only, vendored zeth-mpt)
+
+Re-derived from the current code (plan: `.journals/mpt9-children-layout-plan.md`):
+11,612 branch decodes, ≈14.3k node decodes and 145.4k digest-child boxes
+(176 B each, 33 B live) on 781; 84,693 resolve misses / 8,648 hits in the
+state trie. Four commits, each gated (hash 0xf691…b529 and census
+calls=44511 bytes=13335528 perms=115373 exact):
+
+| Step | Commit | Change | 781 Δ rows |
+|---|---|---|---:|
+| 1 | 04353be | `resolve_with` Branch arm resolves `Node::Digest` children directly (no recursion per stub): per miss 58 → 16 rows | −3,607,803 |
+| 2 | 9437471 | `WitnessResolver::resolve` decides misses inline (`ADVICE_LD` + `beqz` in the caller's loop); hit path out of line as `resolve_hit` (`#[cold] #[inline(never)]`) | −2,884,042 |
+| 3 | a5c8fbd | `RlpNode` = `[[u8; 8]; 5]` + `NonZeroUsize` len, `repr(C, align(8))`; `from_digest` shifts the digest in registers (5 `sd` + len); the align-8 cache widened `Node`'s tag to u64 (every node write `sw`→`sd`, every dispatch `lw`→`ld`); `from_rlp` lost `encode_fixed_size` + memcpy per dirty node; arrayvec dependency dropped | −5,345,406 |
+| 4 | a8b4a10 | `Slot<M> { Empty, Digest(Digest), Node(Box<Node<M>>) }` `repr(u64)`, `Children<M>([Slot<M>; 16])` (640 B): unresolved children held inline, boxes only for decoded/embedded children; `Slot::resolve_mut` carries INV-W3 for insert/remove; `take_single_child` boxes a digest stub for `resolve_stub`; splits built in place; Entry/OccupiedEntry removed | −7,097,612 |
+
+Total 781 −18,934,863 (−3.05%). Attribution: decode_node_zc_into 17.25M →
+14.95M, encode_dirty 12.02M → 9.82M, resolve_with 6.17M → 1.36M,
+bump_alloc 2.84M → 0.58M (167,070 → 33,860 allocations), memset 2.38M →
+1.75M, memcpy −2.7M (from_rlp). **Refuted / corrected:** the plan's 130-row
+`cache_set` path was the digest-for-digest refusal path — the real hit path
+was `sw, sw, sb` + memcpy(32) into a misaligned ArrayVec, and fixing the
+representation paid 3.5× the estimate; `[const { Slot::Empty }; 16]`
+compiled to memset(640) (+1.26M) because LLVM folds the undef payload bytes
+— an explicit 16-element literal (16 `sd`) is required and commented.
+Codegen gate held: no memset/memcpy in the branch arm, alloc size 0x2b0,
+digest-child path ≈ 60 rows, no 640/688-byte moves. Heap: ≈ −17 MB
+(145.4k stub boxes gone; ≈ 20k node boxes grow 184 → 688 B).
+
+### Ladder (jolt-amber @ 920868471, jeth @ a8b4a10)
+
+| Block | Gas | Wave-M rows | Wave-N rows | Delta rows | c/g M → N |
+|---|---:|---:|---:|---:|---|
+| 25905781 | 44,227,079 | 621,516,063 | 602,581,200 | -18,934,863 | 14.052840 → 13.624712 |
+| 25905782 | 47,065,991 | 746,246,283 | 722,730,753 | -23,515,530 | 15.855319 → 15.355690 |
+| 25905783 | 25,320,107 | 344,098,040 | 333,270,545 | -10,827,495 | 13.589913 → 13.162288 |
+| 25905784 | 19,039,352 | 258,483,702 | 249,345,032 | -9,138,670 | 13.576287 → 13.096298 |
+| 25905785 | 47,351,982 | 652,444,117 | 629,164,492 | -23,279,625 | 13.778602 → 13.286973 |
+| 25905786 | 26,354,048 | 301,848,361 | 291,826,406 | -10,021,955 | 11.453586 → 11.073305 |
+| 25905787 | 27,961,947 | 413,777,091 | 402,255,180 | -11,521,911 | 14.797864 → 14.385807 |
+| 25905788 | 6,217,605 | 95,785,107 | 92,257,240 | -3,527,867 | 15.405467 → 14.838067 |
+| 25905789 | 44,608,380 | 704,480,470 | 676,714,323 | -27,766,147 | 15.792559 → 15.170117 |
+| 25905790 | 32,881,199 | 446,879,249 | 432,250,301 | -14,628,948 | 13.590722 → 13.145819 |
+| Gas-weighted | 321,027,690 | 4,585,558,483 | 4,432,395,472 | -153,163,011 | **14.283997 → 13.806895** |
+
+Cumulative vs wave-4 baseline: **19.780546 → 13.806895 (-5.973651 c/g,
+-30.2%; -1,917,707,638 rows)**.
+
+### Gates
+
+- Trace hashes + census exact on all 10; `run-native` 10/10; sweep hashes
+  = records (each block's hash appears as parent in the next witness).
+- zeth-mpt nextest 24/24 after every step; workspace nextest 21/21;
+  pre-commit fmt + clippy on all four commits; zeth-mpt standalone clippy
+  only the 2 pre-existing warnings; `#[allow(clippy::large_enum_variant)]`
+  on `Node` with the boxing-measured-worse rationale.
+- Unsafe: +2 blocks with SAFETY comments (`Node::decode_child`
+  `assume_init` after `Ok`, same contract as the branch decoder;
+  `write_slot_ref` `put_prefixed(.., digest.as_ptr(), 32)` mirroring
+  `write_child_ref`); −3 `unwrap_unchecked` removed. `Slot::fill_digest`
+  = `mem::forget(mem::replace(..))` on an Empty slot (leak, never UB, if
+  the debug_assert precondition were violated). Independent adversarial
+  review: pending (see review inventory).
