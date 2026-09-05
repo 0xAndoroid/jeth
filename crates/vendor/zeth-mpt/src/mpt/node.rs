@@ -36,12 +36,13 @@ impl DigestResolver for Unresolvable {
     }
 }
 
-/// jeth fork note: `Branch` boxes its [`Children`] (upstream stores the 128-byte
-/// child array inline, making `size_of::<Node>()` ≈ 176). Every decoded node is
-/// moved ~3× (decode return → `Box::new` → `*slot = node`); on riscv64 those
-/// moves lower to word/byte copy loops that Jolt expands into trace rows, so
-/// node size is directly proportional to decode cost. Boxing the children
-/// shrinks `Node` to the Leaf-variant size (~112 bytes).
+/// jeth fork note: `Node` is ≈176 bytes ([`Children`] stores its 16
+/// `Option<Box<Node>>` slots inline, 128 B). Moving a decoded node by value
+/// (decode return → `?` → `Box::new`) lowers to word/byte copy loops that Jolt
+/// expands into trace rows, so decode constructs each node directly in its
+/// final heap slot instead ([`super::rlp`]'s `decode_node_zc_into`). Boxing
+/// the children instead (and the arena layout) measured WORSE: +155M rows —
+/// the representation stays, only the moves were deleted.
 #[derive(Debug, Clone, Default)]
 pub(super) enum Node<M> {
     #[default]
@@ -99,7 +100,12 @@ impl<M: Memoization> Node<M> {
     /// insertion path is resolved on demand through `r` (post-root lazy
     /// materialization). A resolver miss panics — same witness-incompleteness
     /// contract as the eager build (INV-W3).
-    pub(super) fn insert_with<R: DigestResolver>(&mut self, key: NibbleSlice, value: Bytes, r: &mut R) {
+    pub(super) fn insert_with<R: DigestResolver>(
+        &mut self,
+        key: NibbleSlice,
+        value: Bytes,
+        r: &mut R,
+    ) {
         assert!(!value.is_empty());
         match self {
             Node::Null => {
@@ -211,7 +217,10 @@ impl<M: Memoization> Node<M> {
             }
             Node::Leaf(..) => false,
             Node::Extension(prefix, child, cache) => {
-                if !key.strip_prefix(prefix).is_some_and(|tail| child.remove_with(tail, r)) {
+                if !key
+                    .strip_prefix(prefix)
+                    .is_some_and(|tail| child.remove_with(tail, r))
+                {
                     return false;
                 }
                 cache.clear();
@@ -308,7 +317,11 @@ impl<M: Memoization> Node<M> {
             Node::Leaf(..) => 1,
             Node::Extension(_, child, ..) => 1 + child.size(),
             Node::Branch(children, ..) => {
-                1 + children.iter().filter_map(Option::as_deref).map(Node::size).sum::<usize>()
+                1 + children
+                    .iter()
+                    .filter_map(Option::as_deref)
+                    .map(Node::size)
+                    .sum::<usize>()
             }
         }
     }
