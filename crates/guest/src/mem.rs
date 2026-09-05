@@ -150,11 +150,28 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
         s = sw as *const u8;
     } else {
         // Relatively misaligned: aligned window loads + shift-combine (LE).
-        // The window word containing `s` holds live bytes, and `rem >= 8`
-        // guarantees the `next` word also holds live bytes.
+        // The window word containing `s` holds live bytes; `rem >= 32`
+        // guarantees the next four window words hold live bytes (the live
+        // range reaches past `sw + 32`), `rem >= 8` the next one. Unrolled 4×
+        // with the carried word rotating through registers: ~25 rows per 32 B
+        // instead of ~10 per 8 B.
         let shift = (src_misalign * 8) as u32;
         let mut sw = ((s as usize) & !7) as *const u64;
         let mut cur = read_volatile(sw);
+        while rem >= 32 {
+            let w1 = read_volatile(sw.add(1));
+            let w2 = read_volatile(sw.add(2));
+            let w3 = read_volatile(sw.add(3));
+            let w4 = read_volatile(sw.add(4));
+            write_volatile(dw, gather(cur, w1, shift));
+            write_volatile(dw.add(1), gather(w1, w2, shift));
+            write_volatile(dw.add(2), gather(w2, w3, shift));
+            write_volatile(dw.add(3), gather(w3, w4, shift));
+            cur = w4;
+            sw = sw.add(4);
+            dw = dw.add(4);
+            rem -= 32;
+        }
         while rem >= 8 {
             let next = read_volatile(sw.add(1));
             write_volatile(dw, gather(cur, next, shift));
