@@ -535,8 +535,10 @@ impl<M: Memoization> Decodable for Node<M> {
 /// `Box::new`, ≈3 × 176-byte memcpy per node on riscv64; 49.6M trace rows on
 /// block 25905781 before this change).
 ///
-/// Contract: `out` is initialized if and only if the return is `Ok(())`. On
-/// `Err` — and at every panic point — `out` has not been written.
+/// Contract: on `Ok(())`, `out` holds the decoded node. On `Err`, `out` is
+/// either untouched or holds the resource-free [`Node::Null`] (a branch whose
+/// children failed to decode is dropped and replaced) — never partially
+/// written. At every panic point `out` is untouched or holds a valid node.
 fn decode_node_zc_into<M: Memoization>(
     source: &Bytes,
     buf: &mut &[u8],
@@ -558,27 +560,17 @@ fn decode_node_zc_into<M: Memoization>(
         PayloadView::List(items) => match items.len() {
             // branch node: 17-item node [ v0 ... v15, value ]
             17 => {
-                let mut children = Children::default();
-                for (i, child_rlp) in items.iter().enumerate() {
-                    if child_rlp != &[EMPTY_STRING_CODE] {
-                        if i == 16 {
-                            return Err(alloy_rlp::Error::Custom("branch node with value"));
-                        }
-                        let mut child = Box::<Node<M>>::new_uninit();
-                        decode_node_zc_into(source, &mut &child_rlp[..], &mut child)?;
-                        // SAFETY: `Ok` return above ⇒ the callee wrote a fully
-                        // initialized `Node` into the slot (every `Ok` arm ends
-                        // in `out.write`). On `Err`, `?` drops the
-                        // `Box<MaybeUninit<..>>` without reading it.
-                        children.insert(i as u8, unsafe { child.assume_init() });
-                    }
+                // Write the empty branch first and decode the children into
+                // its slots, so the 128-byte `Children` is never moved.
+                let node = out.write(Node::Branch(Children::default(), M::default()));
+                let Node::Branch(children, _) = &mut *node else {
+                    unreachable!()
+                };
+                let filled = decode_branch_children(source, &items, children);
+                if filled.is_err() {
+                    *node = Node::Null; // drops the partial branch
                 }
-                if children.len() < 2 {
-                    return Err(alloy_rlp::Error::Custom("branch node without two children"));
-                }
-
-                out.write(Node::Branch(children, M::default()));
-                Ok(())
+                filled
             }
             // leaf or extension node: 2-item node [ encodedPath, v ]
             2 => {
@@ -610,12 +602,41 @@ fn decode_node_zc_into<M: Memoization>(
     }
 }
 
+/// Decode the 16 child items of a branch node straight into `children` (the
+/// slots of a freshly written empty [`Node::Branch`]); item 16 must be the
+/// empty value. Children decoded before an `Err` stay owned by the branch.
+fn decode_branch_children<M: Memoization>(
+    source: &Bytes,
+    items: &[&[u8]],
+    children: &mut Children<M>,
+) -> alloy_rlp::Result<()> {
+    for (i, child_rlp) in items.iter().enumerate() {
+        if child_rlp != &[EMPTY_STRING_CODE] {
+            if i == 16 {
+                return Err(alloy_rlp::Error::Custom("branch node with value"));
+            }
+            let mut child = Box::<Node<M>>::new_uninit();
+            decode_node_zc_into(source, &mut &child_rlp[..], &mut child)?;
+            // SAFETY: `Ok` return above ⇒ the callee wrote a fully initialized
+            // `Node` into the slot. On `Err`, `?` drops the `Box<MaybeUninit<..>>`
+            // without reading it; the slot is untouched or `Node::Null`, so
+            // nothing leaks.
+            children.insert(i as u8, unsafe { child.assume_init() });
+        }
+    }
+    if children.len() < 2 {
+        return Err(alloy_rlp::Error::Custom("branch node without two children"));
+    }
+    Ok(())
+}
+
 /// [`decode_node_zc_into`] over the whole buffer, mirroring `alloy_rlp::decode_exact`.
 ///
 /// Contract: on `Ok`, `out` holds the decoded node. On `Err`, `out` is either
-/// untouched or holds [`Node::Null`] (trailing-bytes refusal of a complete
-/// decode) — never partially written, so a caller may alias `out` with a live
-/// `&mut Node<M>` slot ([`Node::decode_stub_in_place`]).
+/// untouched or holds [`Node::Null`] (inherited from [`decode_node_zc_into`],
+/// plus the trailing-bytes refusal of a complete decode) — never partially
+/// written, so a caller may alias `out` with a live `&mut Node<M>` slot
+/// ([`Node::decode_stub_in_place`]).
 fn decode_node_zc_exact_into<M: Memoization>(
     source: &Bytes,
     out: &mut MaybeUninit<Node<M>>,
