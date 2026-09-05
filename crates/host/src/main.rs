@@ -92,6 +92,10 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
+        /// Comma-separated kind prefixes (e.g. "LBU,SB") to attribute to ELF
+        /// symbols (uses the symbols guest build).
+        #[arg(long)]
+        symbols_for: Option<String>,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -197,7 +201,11 @@ fn main() -> Result<()> {
                 .collect();
             trace::run(&input, skip_build, variant, &features)
         }
-        Command::Opcodes { input, skip_build } => opcodes::run(&input, skip_build),
+        Command::Opcodes {
+            input,
+            skip_build,
+            symbols_for,
+        } => opcodes::run(&input, skip_build, symbols_for),
         Command::Profile {
             input,
             every,
