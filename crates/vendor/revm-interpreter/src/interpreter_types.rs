@@ -292,16 +292,17 @@ pub trait ReturnData {
 }
 
 /// Trait controls execution of the loop.
+///
+/// The run loop itself stops on the null [`Ip`] returned by the instruction that set the
+/// action; these methods serve single-stepping callers such as inspectors.
 pub trait LoopControl {
-    /// Returns `true` if the loop should continue.
+    /// Returns `true` while no action is set.
     fn is_not_end(&self) -> bool;
     /// Is end of the loop.
     #[inline]
     fn is_end(&self) -> bool {
         !self.is_not_end()
     }
-    /// Sets the `end` flag internally. Action should be taken after.
-    fn reset_action(&mut self);
     /// Set return action.
     fn set_action(&mut self, action: InterpreterAction);
     /// Returns the current action.

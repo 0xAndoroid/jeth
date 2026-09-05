@@ -13,13 +13,10 @@ mod serde;
 /// Extended bytecode structure that wraps base bytecode with additional execution metadata.
 #[derive(Debug)]
 pub struct ExtBytecode {
-    /// The current instruction pointer.
+    /// The instruction pointer where the next run starts: the bytecode start for a new frame,
+    /// the instruction after the yielding CALL/CREATE for a resumed one. The run loop keeps
+    /// the live pointer in a register ([`Ip`]) and only writes it back when the frame yields.
     instruction_pointer: *const u8,
-    /// Whether the execution should continue: `1` while running, `0` once an
-    /// action is set. A full word rather than a `bool` because the run loop
-    /// reloads it after every instruction, and on the RV64 Jolt target a byte
-    /// load (`LBU`) expands to a 3-row virtual sequence where `LD` is one row.
-    continue_execution: u64,
     /// Bytecode Keccak-256 hash.
     /// This is `None` if it hasn't been calculated yet.
     /// Since it's not necessary for execution, it's not calculated by default.
@@ -70,7 +67,6 @@ impl ExtBytecode {
             instruction_pointer,
             bytecode_hash: hash,
             action: None,
-            continue_execution: 1,
         }
     }
 
@@ -103,28 +99,17 @@ impl ExtBytecode {
 impl LoopControl for ExtBytecode {
     #[inline]
     fn is_not_end(&self) -> bool {
-        self.continue_execution != 0
-    }
-
-    #[inline]
-    fn reset_action(&mut self) {
-        self.continue_execution = 1;
+        self.action.is_none()
     }
 
     #[inline]
     fn set_action(&mut self, action: InterpreterAction) {
-        debug_assert_eq!(
-            self.continue_execution == 0,
-            self.action.is_some(),
-            "has_set_action out of sync"
-        );
         debug_assert!(
-            self.continue_execution != 0,
+            self.action.is_none(),
             "action already set;\nold: {:#?}\nnew: {:#?}",
             self.action,
             action,
         );
-        self.continue_execution = 0;
         self.action = Some(action);
     }
 

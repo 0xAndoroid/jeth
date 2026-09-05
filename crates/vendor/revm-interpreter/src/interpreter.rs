@@ -197,10 +197,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     /// Takes the next action from the control and returns it.
     #[inline]
     pub fn take_next_action(&mut self) -> InterpreterAction {
-        self.bytecode.reset_action();
-        // Return next action if it is some.
-        let action = core::mem::take(self.bytecode.action()).expect("Interpreter to set action");
-        action
+        core::mem::take(self.bytecode.action()).expect("Interpreter to set action")
     }
 
     /// Halt the interpreter with the given result.
@@ -353,7 +350,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         host: &mut H,
     ) -> InterpreterAction {
         let mut ip = self.bytecode.ip();
-        while self.bytecode.is_not_end() {
+        loop {
             // SAFETY: analysed bytecode is padded with STOP, so `ip` stays inside it (see `step`).
             let (opcode, next) = unsafe { (*ip, ip.add(1)) };
             let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
@@ -362,6 +359,10 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
                 host,
             };
             ip = instruction.execute(next, context);
+            // Null: the instruction halted or yielded and set the action.
+            if ip.is_null() {
+                break;
+            }
         }
         self.take_next_action()
     }
