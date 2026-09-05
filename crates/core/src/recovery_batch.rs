@@ -144,11 +144,20 @@ impl Batch {
         }
         let digest = self.transcript();
         let mut terms = Vec::with_capacity(2 * self.equations.len() + 1);
+        let mut keys = KeyIndex::new(self.equations.len());
         let mut generator_scalar = Secp256k1Fr::zero();
         for (index, equation) in self.equations.iter().enumerate() {
             let lambda = challenge(digest, index);
             terms.push((lambda.mul(&equation.s), equation.nonce.clone()));
-            terms.push((lambda.mul(&equation.r).neg(), equation.key.clone()));
+            // Equations sharing a key point (one sender, several signatures)
+            // share one term carrying the sum of their scalars: the verified
+            // sum Σ λ_i(s_i R_i − r_i Q_i) − (Σ λ_i z_i) G is the same, and the
+            // transcript above already commits to every equation.
+            let key_scalar = lambda.mul(&equation.r).neg();
+            match keys.find_or_insert(&terms, &equation.key, terms.len()) {
+                Some(term) => terms[term].0 = terms[term].0.add(&key_scalar),
+                None => terms.push((key_scalar, equation.key.clone())),
+            }
             generator_scalar = generator_scalar.sub(&lambda.mul(&scalar(equation.message)));
         }
         terms.push((generator_scalar, Secp256k1Point::generator()));
@@ -157,6 +166,53 @@ impl Batch {
         assert!(pippenger(&terms).is_infinity(), "invalid recovery batch");
         #[cfg(target_arch = "riscv64")]
         jolt::end_cycle_tracking("recovery_msm");
+    }
+}
+
+/// Term index of each distinct key point, open-addressed on the low word of
+/// the key's x-coordinate (a hash-like value for honest keys). Merging is an
+/// optimization only — a probe that runs past `PROBE_LIMIT` occupied slots
+/// leaves the key as its own term — so a colliding batch costs rows, never
+/// soundness.
+struct KeyIndex {
+    slots: Vec<u32>,
+    mask: usize,
+}
+
+impl KeyIndex {
+    const EMPTY: u32 = u32::MAX;
+    const PROBE_LIMIT: usize = 8;
+
+    fn new(equations: usize) -> Self {
+        let capacity = (2 * equations).next_power_of_two().max(16);
+        Self {
+            slots: alloc::vec![Self::EMPTY; capacity],
+            mask: capacity - 1,
+        }
+    }
+
+    /// The index of the term already holding `key`, or `None` after recording
+    /// `index` as the term about to be pushed for it.
+    fn find_or_insert(
+        &mut self,
+        terms: &[(Secp256k1Fr, Secp256k1Point)],
+        key: &Secp256k1Point,
+        index: usize,
+    ) -> Option<usize> {
+        let mut slot = key.x().e()[0] as usize & self.mask;
+        for _ in 0..Self::PROBE_LIMIT {
+            let held = self.slots[slot];
+            if held == Self::EMPTY {
+                self.slots[slot] = index as u32;
+                return None;
+            }
+            let held_key = &terms[held as usize].1;
+            if held_key.x() == key.x() && held_key.y() == key.y() {
+                return Some(held as usize);
+            }
+            slot = (slot + 1) & self.mask;
+        }
+        None
     }
 }
 

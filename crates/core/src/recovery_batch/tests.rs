@@ -1,7 +1,7 @@
 use super::*;
 use crate::crypto::inline_ecrecover;
 use alloy_primitives::Signature;
-use k256::ecdsa::{RecoveryId, Signature as KSignature, VerifyingKey};
+use k256::ecdsa::{RecoveryId, Signature as KSignature, SigningKey, VerifyingKey};
 use reth_evm::revm::precompile::secp256k1::k256::ecrecover;
 
 fn signature(r: U256, s: U256) -> [u8; 64] {
@@ -164,6 +164,15 @@ fn transcript_binds_count_order_and_every_component() {
     assert_ne!(lambda, challenge(batch.transcript(), 1).e());
 }
 
+fn key_point(key: &VerifyingKey) -> Secp256k1Point {
+    let bytes = key.to_encoded_point(false);
+    let bytes = bytes.as_bytes();
+    let mut limbs = [0; 8];
+    limbs[..4].copy_from_slice(U256::from_be_slice(&bytes[1..33]).as_limbs());
+    limbs[4..].copy_from_slice(U256::from_be_slice(&bytes[33..]).as_limbs());
+    Secp256k1Point::from_u64_arr(&limbs).unwrap()
+}
+
 fn recovered_equation(i: u64) -> Equation {
     let msg = U256::from(i).to_be_bytes();
     let sig = signature(generator_r(), U256::from(i % 11 + 1));
@@ -173,14 +182,44 @@ fn recovered_equation(i: u64) -> Equation {
         &KSignature::from_slice(&sig).unwrap(),
         RecoveryId::from_byte((i % 2) as u8).unwrap(),
     )
-    .unwrap()
-    .to_encoded_point(false);
-    let bytes = key.as_bytes();
-    let mut limbs = [0; 8];
-    limbs[..4].copy_from_slice(U256::from_be_slice(&bytes[1..33]).as_limbs());
-    limbs[4..].copy_from_slice(U256::from_be_slice(&bytes[33..]).as_limbs());
-    equation.key = Secp256k1Point::from_u64_arr(&limbs).unwrap();
+    .unwrap();
+    equation.key = key_point(&key);
     equation
+}
+
+/// An equation signed by `signing_key` over message `z`; equations from one
+/// signing key share their key point.
+fn signed_equation(signing_key: &SigningKey, z: u64) -> Equation {
+    let msg = U256::from(z).to_be_bytes();
+    let (sig, recid) = signing_key.sign_prehash_recoverable(&msg).unwrap();
+    let sig: [u8; 64] = sig.to_bytes().as_slice().try_into().unwrap();
+    let mut equation = prepare_recovery(&sig, recid.to_byte(), &msg).unwrap();
+    equation.key = key_point(signing_key.verifying_key());
+    equation
+}
+
+fn shared_key_batch() -> Vec<Equation> {
+    let signing_key = SigningKey::from_slice(&U256::from(7).to_be_bytes::<32>()).unwrap();
+    alloc::vec![
+        signed_equation(&signing_key, 2),
+        recovered_equation(5),
+        signed_equation(&signing_key, 3),
+    ]
+}
+
+#[test]
+fn shared_key_equations_verify() {
+    let equations = shared_key_batch();
+    assert_eq!(equations[0].key.to_u64_arr(), equations[2].key.to_u64_arr());
+    Batch { equations }.verify();
+}
+
+#[test]
+#[should_panic(expected = "invalid recovery batch")]
+fn forged_equation_behind_a_shared_key_must_panic() {
+    let mut equations = shared_key_batch();
+    equations[2].message[31] ^= 1;
+    Batch { equations }.verify();
 }
 
 #[test]
