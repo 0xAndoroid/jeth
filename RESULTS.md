@@ -1584,3 +1584,23 @@ gas-weighted **14.427262 → 14.426108**. Cumulative vs wave-4 baseline:
 Gates: trace hashes + census exact on all 10 (781 calls=47504
 bytes=13417708 perms=118366); `run-native` 10/10; workspace nextest 19/19
 (new: `forged_key_in_wide_batch_must_panic`); pre-commit fmt + clippy.
+
+## Review inventory (independent fable-max adversarial reviews)
+
+| Waves | Reviewer | Verdict | Blockers |
+|---|---|---|---|
+| D (in-place MPT decode) | fa3b6de6 | SOUND_WITH_NITS | none |
+| G (memcmp sign path, alloc) | 7bbb9f38 | SOUND_WITH_NITS | none |
+| H (keccak shim) | 9129b0a7 | SOUND_WITH_NITS | none |
+| I (MPT walk/decode fixes) | 82bebd8a | SOUND_WITH_NITS | none |
+| J + L (interpreter: SWAR, PUSH gather, u256 words, static gas + `addi`) | b601b2a7 | SOUND_WITH_NITS | none |
+| K (GLV ecmul parsing, signed-digit pippenger, memcpy unroll, bump alignment) | 659e2aa9 | SOUND_WITH_NITS | none |
+
+Open nits not applied (docs/upstream): jolt `heap_end` inherits the
+alignment of the ELF `program_end` — a containing-word access on a live byte
+in the heap's final partial word would trip the tracer bound only with the
+heap full to within 7 bytes (peak 58 MiB of 1.5 GiB); fix upstream with
+`align_up(program_size, 8)` or a boot assert. The SWAR initial-gas path
+depends on revm-handler importing `calculate_initial_tx_gas_for_tx` from
+`instructions::` (a future handler bump importing from `gas::` silently
+falls back to the upstream byte filter — correct, slower).

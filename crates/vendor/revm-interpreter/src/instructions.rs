@@ -220,6 +220,8 @@ pub const fn static_gas(opcode: u8, spec: SpecId) -> u64 {
 pub const fn static_gas_is_spec_independent(opcode: u8) -> bool {
     use SpecId::*;
     let base = static_gas(opcode, FRONTIER);
+    // `static_gas` branches only on the TANGERINE / ISTANBUL / BERLIN thresholds; with
+    // `is_enabled_in` monotone, these four specs plus FRONTIER cover every value it can take.
     let specs = [TANGERINE, ISTANBUL, BERLIN, AMSTERDAM];
     let mut i = 0;
     while i < specs.len() {
