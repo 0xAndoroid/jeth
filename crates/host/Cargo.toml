@@ -47,3 +47,6 @@ object = "0.36"
 rustc-demangle = "0.1"
 # txprofile: cycle-marker report parsing
 regex-lite = "0.1"
+
+# synth (dev tool): synthetic-block harness for the per-opcode max c/g study (src/bin/synth.rs)
+zeth-mpt.workspace = true
