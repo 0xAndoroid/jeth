@@ -64,7 +64,7 @@ serde.workspace = true
 # native builds never touch jolt-sdk — the native gate calls advice bodies
 # directly (see src/advice.rs build matrix).
 [target.'cfg(target_arch = "riscv64")'.dependencies]
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber/jolt-sdk", default-features = false }
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", default-features = false }
 
 [dev-dependencies]
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
