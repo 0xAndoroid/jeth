@@ -1,5 +1,7 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
+**Latest (2026-09-09, branch `amber-nolane`): the ten-block set 25905781–25905790 validates at 13.814672 c/g gas-weighted SELF (wave-4 baseline 19.780546, −30.16%) — jeth-side amber waves C–P on a16z/jolt main plus the keccak/bump-alloc/secp sdk commits, without the Jolt ISA lane tables; see the last section.**
+
 **Headline (after Workstream A — JEF zero-parse input, 2026-08-18): recent mainnet
 blocks validate inside the Jolt RV64IMAC guest at 28.2–30.5 cycles/gas fully
 self-verifying, 21.6–24.1 cycles/gas with trusted-advice witness digests — down from
@@ -1584,9 +1586,7 @@ bytes=13417708 perms=118366); `run-native` 10/10; workspace nextest 19/19
 | K (GLV ecmul parsing, signed-digit pippenger, memcpy unroll, bump alignment) | 659e2aa9 | SOUND_WITH_NITS | none |
 | N (MPT resolver inline miss path, aligned RlpNode, Slot children layout) | cda74652 | SOUND_WITH_NITS | none |
 | O (register-resident ip, null-ip stop, limb-wise exchange) | 4eee04c0 | SOUND_WITH_NITS | none |
-| O (register-resident ip, null-ip stop, limb-wise exchange) | 4eee04c0 | SOUND_WITH_NITS | none |
 | M (keccak memos, HashedPostState from memos) | — (safe code, memo reuse; covered by the parity test) | — | — |
-| N (MPT resolver inline, aligned RlpNode, Slot layout) | cda74652 | SOUND_WITH_NITS | none |
 
 Open nits not applied (docs/upstream): jolt `heap_end` inherits the
 alignment of the ELF `program_end` — a containing-word access on a live byte
@@ -1840,3 +1840,109 @@ Cumulative vs wave-4 baseline: **19.780546 → 13.551274 (-6.229272 c/g,
   inline writes all four words before any read); jeth adds none (a
   `read_volatile` gather in step 4 was replaced by in-bounds `from_le_bytes`
   in step 5).
+
+## Campaign opt-amber — jeth-side lane rebased onto main, without the Jolt ISA lane tables (2026-09-09)
+
+SELF gas-weighted **19.780546 → 13.814672 c/g** (−5.965874, −30.16%;
+−1,915,210,797 rows) over the ten-block set, from the wave-4 baseline. All ten
+blocks improve; every block hash equals the recorded hash (`run-native` and
+trace), and the proven-pass keccak permutation counts equal wave P's exactly.
+With the lane tables (branch `opt-amber-work` @ 7598863 on `jolt-amber` @
+84e338927) the same tree measured 13.551274; excluding them costs
+**+84,558,040 rows (+0.263398 c/g)** here — not the 165,180,738 rows waves A/B
+were worth on the wave-4 tree, because the later word-wise rewrites (F, H, I,
+J, N, O) removed most of the sub-word traffic those tables repriced.
+
+**Excluded, and why.** Waves A and B (jolt `661d8e268..d2d9bf2e6`:
+ExtractByu, ClearLaneB / ShiftDataBK, ExtractWu/W, ClearLaneW / ShiftDataWK —
+38 lookup tables, 78 → 116 of 126 IDs, 23 instruction kinds, legacy
+`MAX_SUFFIXES` 5 → 16). Project rule: `MAX_SUFFIXES` is never raised, and ISA
+additions need a Jolt maintainer's decision, not this repo's. No jeth code
+depended on the fused expansions (both waves were Jolt expansion-layer changes;
+the guest ELF was unchanged by them), so nothing was removed on the jeth side.
+The `XLEN = 64` `debug_assert`s the reviewer flagged live in those table
+decompositions and go with them.
+
+**Jolt pin.** Branch `jolt-amber-nolane` @ `a0d7b74baa`, pushed to the private
+mirror `git@github.com:0xAndoroid/jolt-private.git`; read-only worktree
+`/Volumes/Dev/worktrees/jolt/jolt-amber-nolane`, CLI
+`/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt`. It is
+a16z/jolt `main` @ `f09bbc1e34` (4 commits past amber's base `628713fd46`,
+none touching tracer, inlines, sdk or platform) plus six cherry-picks, in
+order: `3775981214` keccak-f θ/ρ fusion (= `9340a777d8`, draft
+[a16z/jolt#1845](https://github.com/a16z/jolt/pull/1845)); `158336e9ce`
+secp256k1 field compares by limb XOR/OR (= `e371ecd4e9`); `33832dd45e`
+bump allocator behind the `bump-alloc` jolt-sdk feature (= `ef89da4251`);
+`52c6fe50b3` its review nits (= `5abd70abf5`); `41b41ddb0e` 8-byte minimum
+alignment (= `9208684716`); `a0d7b74baa` `MaybeUninit` outputs for the
+secp256k1 field inlines (= `84e3389270`). The five non-keccak commits still
+need their own draft PRs to a16z/jolt (bump-alloc as one, secp256k1 sdk as
+one); none touches lookup tables, instruction kinds or `MAX_SUFFIXES`.
+
+**History.** `opt-amber-work` (@ `130b5ab`, tree of `7598863` plus two docs
+commits) replayed linearly onto `main` @ `44d7678`: the Phase-2 state-trie
+laziness commit and its revert are dropped, the 46 journal-only commits are
+folded into one `docs(journal)` commit (the `.journals/` tree is unchanged),
+and the four merge commits are linearized with their conflict resolutions
+re-applied (`crates/core/Cargo.toml`, `RESULTS.md`, `trace.rs` target path).
+The resulting tree is identical to `opt-amber-work` before the pin and
+review-nit commits.
+
+**Review nits applied** (`fix(mpt,guest)`): `write_str_item`'s one-byte
+length form is a release `assert!` (was `debug_assert`); the containing-word
+over-read is documented in `crates/guest/src/mem.rs` as a dependency on the
+Jolt memory layout (flat word-granular RAM, 8-aligned region starts, the
+`heap_end` edge inheriting `program_end`'s alignment) with the list of code
+that relies on it; sub-word row costs quoted in comments are the stock
+expansions again (lbu 4, lw 5, sb 8).
+
+### Ladder (jolt-amber-nolane @ a0d7b74baa, jeth @ 966b204)
+
+| Block | Gas | Wave-4 rows | Amber rows | No-lane rows | Wave-4 c/g | Amber c/g | No-lane c/g | Δ vs wave-4 | Δ vs amber | Perms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 856,491,307 | 591,493,066 | 603,187,863 | 19.365767 | 13.374003 | 13.638429 | -253,303,444 | +11,694,797 | 115,373 |
+| 25905782 | 47,065,991 | 1,012,323,673 | 709,207,370 | 721,922,345 | 21.508602 | 15.068362 | 15.338514 | -290,401,328 | +12,714,975 | 124,117 |
+| 25905783 | 25,320,107 | 473,117,938 | 327,160,868 | 333,212,717 | 18.685464 | 12.920991 | 13.160004 | -139,905,221 | +6,051,849 | 61,886 |
+| 25905784 | 19,039,352 | 364,751,467 | 246,310,281 | 251,155,774 | 19.157767 | 12.936905 | 13.191403 | -113,595,693 | +4,845,493 | 51,424 |
+| 25905785 | 47,351,982 | 915,054,927 | 617,194,378 | 629,550,111 | 19.324533 | 13.034183 | 13.295116 | -285,504,816 | +12,355,733 | 121,623 |
+| 25905786 | 26,354,048 | 420,011,691 | 286,011,545 | 291,933,012 | 15.937274 | 10.852661 | 11.077350 | -128,078,679 | +5,921,467 | 59,024 |
+| 25905787 | 27,961,947 | 559,788,641 | 394,374,132 | 401,722,269 | 20.019659 | 14.103958 | 14.366749 | -158,066,372 | +7,348,137 | 70,085 |
+| 25905788 | 6,217,605 | 136,331,705 | 90,793,431 | 92,465,042 | 21.926723 | 14.602637 | 14.871489 | -43,866,663 | +1,671,611 | 19,238 |
+| 25905789 | 44,608,380 | 990,428,932 | 663,777,488 | 677,090,274 | 22.202755 | 14.880107 | 15.178544 | -313,338,658 | +13,312,786 | 133,642 |
+| 25905790 | 32,881,199 | 621,802,829 | 424,011,714 | 432,652,906 | 18.910589 | 12.895263 | 13.158064 | -189,149,923 | +8,641,192 | 90,051 |
+| Gas-weighted | 321,027,690 | 6,350,103,110 | 4,350,334,273 | 4,434,892,313 | 19.780546 | 13.551274 | **13.814672** | -1,915,210,797 | +84,558,040 | 846,663 |
+
+Attribution on 781 (`jeth opcodes` exact histogram on this tree): the
+un-fused expansions cost 1 × 8,503,193 LBU + 2 × 1,382,599 SB + 1 × 109,646 LW
++ 1 × 44,704 LWU + 2 × 138,315 SW = 11,699,371 rows; measured +11,694,797 vs
+wave P. On the identical tree before the review-nit commit (537c3ef) 781 measures 603,192,451 rows, i.e. +11,699,385 vs wave P — the un-fused expansions (14 rows of codegen residual against the histogram, which was taken on the final build); the release `assert!` in `write_str_item` then saves 4,588 rows (LLVM uses the `len < 256` range fact on the long-form path).
+
+### Gates
+
+- `run-native` 10/10 hashes = records; SELF traces 10/10 hashes = records;
+  proven-pass census equal to wave P on every block (781: calls=44511
+  bytes=13335528 perms=115373).
+- Workspace nextest 24/24 (`--features jeth-host/secp-inline`, release);
+  vendored zeth-mpt 25/25; vendored revm-interpreter 49/49; guest
+  native-tests 4/4; pre-commit fmt + clippy `-D warnings` on every new commit.
+- Jolt: the six cherry-picks apply onto `f09bbc1e34` without conflicts; the
+  CLI builds from the pinned worktree.
+
+### Reproduce
+
+```sh
+cd /Volumes/Dev/worktrees/jolt/jolt-amber-nolane   # branch jolt-amber-nolane @ a0d7b74baa
+CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jolt-cli-amber-nolane cargo build -q --release -p jolt
+cd /Volumes/Dev/worktrees/jeth/amber-nolane          # branch amber-nolane
+export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-amber-nolane
+export JOLT_PATH=/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt
+cargo build -q --release -p jeth-host --features secp-inline
+"$CARGO_TARGET_DIR/release/jeth" run-native --input data/25905781/input.bin
+"$CARGO_TARGET_DIR/release/jeth" trace --input data/25905781/input.bin   # first run builds the ELF pair
+"$CARGO_TARGET_DIR/release/jeth" opcodes --input data/25905781/input.bin --skip-build
+cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-inline
+```
+
+Repeat `run-native` / `trace --skip-build` for 25905782–25905790; the ten
+`data/<block>/input.bin` files are the wave-4 repacks (JEF, production code
+library).
