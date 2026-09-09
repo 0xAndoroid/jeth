@@ -2390,6 +2390,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "zeth-mpt",
 ]
 
 [[package]]
