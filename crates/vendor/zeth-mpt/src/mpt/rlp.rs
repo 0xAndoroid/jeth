@@ -86,7 +86,7 @@ fn write_str_item(buf: &mut Scratch, cursor: &mut usize, bytes: &[u8]) {
     let prefix = if len < 56 {
         0x80 + len as u8
     } else {
-        debug_assert!(len < 256);
+        assert!(len < 256, "MPT: string item too long for the one-byte length form");
         buf.0[*cursor] = 0xb8;
         *cursor += 1;
         len as u8
@@ -106,7 +106,7 @@ fn write_str_item(buf: &mut Scratch, cursor: &mut usize, bytes: &[u8]) {
 }
 
 /// Word-granular scratch writer. Every sub-word memory access is a multi-row
-/// virtual sequence in Jolt (`sb` 6, `lbu` 3, `lw` 4 rows), and the generic
+/// virtual sequence in Jolt (`sb` 8, `lbu` 4, `lw` 5 rows), and the generic
 /// `memcpy` pays ~60 rows of head/tail alignment work per call, so the
 /// encoder assembles child references and string items from whole `ld`
 /// words and stores whole `sd` words: the first destination word is

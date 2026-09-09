@@ -11,7 +11,7 @@
 //! both then run the plain permutation.
 //!
 //! Row discipline (one Jolt row per RV64 instruction, sub-word accesses expand
-//! to 3–9 rows, misaligned `LD`/`SD` trap): every memory access below is an
+//! to 4–9 rows, misaligned `LD`/`SD` trap): every memory access below is an
 //! 8-aligned `LD`/`SD`. Partial words are assembled from the aligned word(s)
 //! that contain them — the containing-word pattern `mem.rs` uses for memcpy
 //! boundaries — and the final block is padded word-wise, so no memset/memcpy

@@ -19,6 +19,34 @@
 //! itself fully addressable. We only ever load/store words that contain at
 //! least one live byte of the source/destination ranges.
 //!
+//! Layout dependency, not a language guarantee: those containing-word loads
+//! and the boundary read-modify-writes touch up to 7 bytes outside the
+//! caller's byte range, which is undefined behaviour in Rust's abstract
+//! machine. They are well-defined on the guest only because of the Jolt
+//! memory model, so `keccak.rs`, the vendored `revm-interpreter`
+//! (`interpreter/words.rs`) and `zeth-mpt` (`mpt/rlp.rs`) — which all cite
+//! this argument — depend on the following staying true:
+//!
+//! * Guest RAM is one flat, contiguous, word-granular array from
+//!   `RAM_START_ADDRESS`; every region `MemoryLayout` and the linker script
+//!   carve out (program, input, advice, stack, heap) starts 8-aligned, so the
+//!   word holding a live byte of any region lies inside the traced range.
+//! * The stack and heap edges inherit the alignment of the ELF's `program_end`
+//!   (`stack_end = RAM_START + program_size`, `heap_end = stack_end + stack +
+//!   heap`); only `heap_end` borders unmapped memory, so a live byte in the
+//!   heap's final partial word is the one way a containing-word access could
+//!   leave the traced range. That takes the 1.5 GiB heap full to within 7
+//!   bytes (peak use on the benchmark set is ~58 MiB); pin it upstream
+//!   (`align_up(program_size, 8)` or a boot assert) before relying on more.
+//! * Every such access is volatile and reaches the optimiser only through the
+//!   `extern "C"` / `#[inline(never)]` boundaries of these overrides, so LLVM
+//!   sees no allocation bound to exploit.
+//!
+//! Re-validate this paragraph whenever the guest linker script, jolt's
+//! `MemoryLayout`, or its region alignment changes. The native tests
+//! (`crates/guest/native-tests`) run the same code inside buffers with a word
+//! of slack on both sides so it stays in bounds there.
+//!
 //! Volatile word ops keep LLVM's loop-idiom recognizer from lowering the loops
 //! back into memcpy/memset calls (infinite recursion); they cost the same one
 //! row per ld/sd here.
