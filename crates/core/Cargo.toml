@@ -87,5 +87,6 @@ sha2 = { version = "0.10", default-features = false }
 jolt-inlines-p256 = { workspace = true, features = ["host"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 jolt-inlines-bigint = { workspace = true, features = ["host"] }
+aurora-engine-modexp = "1.2"
 k256 = { workspace = true, features = ["ecdsa"] }
 postcard = { workspace = true, features = ["use-std"] }

@@ -2,7 +2,11 @@
 
 use crate::advice::{advice_assert_eq, advice_u64};
 use crate::recovery_batch::{self, Equation};
-#[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
+#[cfg(any(
+    feature = "compute_advice",
+    feature = "bigint-inline",
+    not(target_arch = "riscv64")
+))]
 use alloc::vec::Vec;
 use alloy_primitives::{B256, U256};
 use jolt_inlines_secp256k1::{Secp256k1Fq, Secp256k1Fr, Secp256k1Point, Secp256k1PointExt};
@@ -134,6 +138,17 @@ impl Crypto for JoltCrypto {
     #[inline]
     fn secp256r1_verify_signature(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
         crate::p256::verify(msg, sig, pk)
+    }
+
+    /// Odd moduli up to 32 bytes run the inline Montgomery ladder; everything
+    /// else keeps revm's aurora-engine-modexp path.
+    #[cfg(feature = "bigint-inline")]
+    #[inline]
+    fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, PrecompileHalt> {
+        match crate::bigint::modexp(base, exp, modulus) {
+            Some(out) => Ok(out),
+            None => reth_evm::revm::precompile::DefaultCrypto.modexp(base, exp, modulus),
+        }
     }
 }
 
