@@ -4,7 +4,7 @@ resolver = "2"
 # package (own [workspace] table) built exclusively through the `jolt` CLI for
 # riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
 # from native host builds.
-members = ["crates/core", "crates/host", "crates/inlines/blake2f"]
+members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254"]
 
 [workspace.package]
 version = "0.1.0"
@@ -55,6 +55,7 @@ jolt-inlines-sha2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-in
 jolt-inlines-blake2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/blake2", default-features = false }
 jolt-inlines-p256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/p256", default-features = false }
 jolt-inlines-bigint = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/bigint", default-features = false }
+jolt-inlines-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/sdk", default-features = false }
 tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/tracer" }
 jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/common" }
 jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/crates/jolt-program" }
@@ -80,3 +81,10 @@ lto = "thin"
 # workspace carries the same patch.
 [patch."https://github.com/paradigmxyz/stateless.git"]
 zeth-mpt = { path = "crates/vendor/zeth-mpt" }
+
+# Vendored ark-ff 0.5.0 with the guest-only bn254 inline hook (feature `jolt-bn254-inline`,
+# riscv64 only): native builds compile the upstream code. Applies to every registry
+# dependent (revm-precompile, ark-ec, ark-bn254, jeth-core); the a16z fork used by the jolt
+# crates is a different source and is untouched.
+[patch.crates-io]
+ark-ff = { path = "crates/vendor/ark-ff" }

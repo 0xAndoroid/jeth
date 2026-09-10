@@ -100,6 +100,7 @@ default-features = false
 [features]
 asm = []
 default = []
+jolt-bn254-inline = ["dep:jeth-inlines-bn254"]
 parallel = [
     "std",
     "rayon",
@@ -111,3 +112,8 @@ std = [
     "ark-serialize/std",
     "itertools/use_std",
 ]
+
+[dependencies.jeth-inlines-bn254]
+path = "../../inlines/bn254"
+default-features = false
+optional = true

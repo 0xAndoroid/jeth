@@ -32,6 +32,9 @@ pub use bits::*;
 
 pub(crate) mod const_helpers;
 
+#[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
+pub(crate) mod jolt_bn254;
+
 pub use ark_std::UniformRand;
 
 mod to_field_vec;

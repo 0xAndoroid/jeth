@@ -649,6 +649,10 @@ impl_multiplicative_ops_from_ref!(QuadExtField, QuadExtConfig);
 impl<'a, P: QuadExtConfig> MulAssign<&'a Self> for QuadExtField<P> {
     #[inline]
     fn mul_assign(&mut self, other: &Self) {
+        #[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
+        if crate::jolt_bn254::is_fq2::<P>() {
+            return crate::jolt_bn254::fp2_mul_assign(self, other);
+        }
         if Self::extension_degree() == 2 {
             let c1_input = [self.c0, self.c1];
             P::mul_base_field_by_nonresidue_in_place(&mut self.c1);

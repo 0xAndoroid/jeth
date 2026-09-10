@@ -600,6 +600,11 @@ pub use MontFp;
 
 pub struct MontBackend<T: MontConfig<N>, const N: usize>(PhantomData<T>);
 
+#[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
+impl<T: MontConfig<N>, const N: usize> MontBackend<T, N> {
+    const JOLT_BN254_FQ: bool = crate::jolt_bn254::is_modulus(&T::MODULUS.0);
+}
+
 impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
     /// The modulus of the field.
     const MODULUS: crate::BigInt<N> = T::MODULUS;
@@ -648,10 +653,18 @@ impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
     /// zero bit in the rest of the modulus.
     #[inline]
     fn mul_assign(a: &mut Fp<Self, N>, b: &Fp<Self, N>) {
+        #[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
+        if Self::JOLT_BN254_FQ {
+            return crate::jolt_bn254::mul_assign(a, b);
+        }
         T::mul_assign(a, b)
     }
 
     fn sum_of_products<const M: usize>(a: &[Fp<Self, N>; M], b: &[Fp<Self, N>; M]) -> Fp<Self, N> {
+        #[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
+        if Self::JOLT_BN254_FQ && M == 2 {
+            return crate::jolt_bn254::sum_of_products_2(a, b);
+        }
         T::sum_of_products(a, b)
     }
 
