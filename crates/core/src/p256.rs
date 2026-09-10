@@ -234,6 +234,8 @@ mod tests {
                 pk
             ));
             assert!(!compare(U256::from(1).to_be_bytes::<32>(), sig, pk));
+            assert!(!compare([0; 32], with(sig, Some(U256::ZERO), None), pk));
+            assert!(!compare([0; 32], with(sig, None, Some(U256::ZERO)), pk));
             // z = 0 only constrains x((r/s)·Q): a signature for Q also verifies for −Q.
             for other in keys {
                 let (_, other_pk) = keypair(other);

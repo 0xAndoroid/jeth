@@ -28,7 +28,7 @@ value, z = 0 allowed), R = u1·G + u2·Q, accept iff R ≠ O and R.x mod n == r.
 | (x,y) off curve | reject | `AffinePoint::new` → `NotOnCurve` → false |
 | (0,0) | reject (0 ≠ b) | passes `from_u64_arr` (infinity is "on curve" there) → explicit `q.is_infinity()` → false |
 | r or s ≥ n | reject | `P256Fr::from_u64_arr` → `InvalidFrElement` → false |
-| r = 0 or s = 0 | reject | `ecdsa_verify` → `ROrSZero` (z ≠ 0 path) / `ZeroMessageHash` or `ROrSZero` (z = 0 path: z' = r resp. −r is 0) → false |
+| r = 0 or s = 0 | reject | `ecdsa_verify` → `ROrSZero` on every branch (r, s are passed unchanged; the check precedes the z-check) → false |
 | msg ≥ n | reduce | one conditional subtraction (n > 2^255 ⇒ 2^256 − 1 < 2n) — exact |
 | z = 0 | accept iff (r/s)·Q ≠ O and x mod n == r | rewritten (below) |
 | z ≠ 0 | R = u1·G + u2·Q | `ecdsa_verify(z, r, s, q)`: u1 = z/s, u2 = r/s, R1 = u1·G, R2 = u2·Q from Fake-GLV advice, each bound by its own 2×128 Shamir |
