@@ -108,9 +108,8 @@ impl Crypto for JoltCrypto {
         crate::bn254::g1_mul(point, scalar)
     }
 
-    /// SHA-256 on the Jolt inline (SHA256INIT 1864 + SHA256 1900 rows per 64-byte block, vs
-    /// ~4.2k for the sha2 crate). Guest builds only: the native build keeps revm's default so
-    /// `run-native` stays the independent reference.
+    /// SHA-256 on the Jolt inline; the native build keeps revm's default so `run-native` stays
+    /// the independent reference.
     #[cfg(all(feature = "sha2-inline", target_arch = "riscv64"))]
     #[inline]
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
