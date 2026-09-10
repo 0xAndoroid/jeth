@@ -80,3 +80,6 @@ Phase B prep in flight:
 ## Final phase (02:45): HTML report
 - Spend at PR #3: ≈ $151 (all tasks incl. reviews). Remaining: report agent (fable-medium, html-report-design skill) → reply parent (4).
 - Decision item flagged in PR #3 + reply: no proof generated yet (execute-only gates) — recommend one Jolt proof of a small synth block with bn254 pairing + BLS op + BLAKE2F before merging into amber-nolane.
+
+## Wave C (02:40): PROOF GATE (operator: required before anything merges into amber-nolane)
+- Lane ac12b992 (fable-max) on the jolt-private worktree jolt-inlines-b: examples/jeth-inlines-proof-gate — guest runs one bn254 pairing (ark-bn254 via the vendored ark-ff hooks), one BLS12-381 G2 op, BLAKE2F r20 + r13 through the custom inlines; host proves AND verifies. Fail on any op ⇒ that lane blocked. Then: add the gate to RESULTS.md (inlines-b), HTML report, reply parent (4).
