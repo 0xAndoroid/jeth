@@ -58,3 +58,13 @@ Phase B prep in flight:
 - Then: jeth branch inlines-b from inlines-a: sed all /Volumes/Dev/worktrees/jolt/jolt-amber-nolane paths → /Volumes/Dev/worktrees/jolt/jolt-inlines-b in Cargo.toml, crates/core/Cargo.toml, crates/guest/Cargo.toml (+ locks), trace.rs DEFAULT_JOLT_CLI; verify 781 = 601,992,101 rows / hash 0xf691… / perms 115,373 on the repin.
 - Phase B lanes to spawn (fable-max each, own worktrees inlines-b-<lane>, CARGO_TARGET_DIR jeth-inlines-b-<lane>, inputs from /tmp/inlines-a-data): B-bn254 (Fq MULQ/SOPQ2 + FP2 custom inline crate in jeth crates/inlines/, opcode 0x2B, extension External, vendored ark-ff hook; pre-gate rows/call on 781: GO iff mul_assign ≥ 305 and sop2 ≥ 515, per .journals/bn254-fq-inline-design.md), B-bls (BLS12-381 Fp 6-limb MULP/SOPP2 + Fp2, same mechanism, ark-bls12-381 hook; adversarial c/g 250–440), B-blake2f (per-round inline family: ROUNDS10 full sigma cycle + single rounds r0..r9, v-state in memory; target r1000 232 → ~90 c/g). Killed: modexp big limbs (inline = 8.8 rows/partial product = compiled; no win), Fr variants, squaring. Optional small lane: port secp limb-compare/MaybeUninit to jolt-inlines-p256 on jolt-inlines-b (39k rows/verify).
 - Each B lane: spec + soundness argument + InlineSpec-style tests vs software reference (random + adversarial) + row_count fixture + synth gates + 10-block gates; fresh fable-high review; then inlines-b PR against inlines-a.
+
+## Resumed after restart (22:51) — Phase B wave spawned
+- jolt-inlines-b @ 3158917254 pushed to jolt-private (InlineExtension::External); jeth inlines-b @ 6557a40 repinned (paths + DEFAULT_JOLT_CLI); CLI building to /Volumes/Dev/cargo-target/jolt-cli-inlines-b; 781 verification trace on the repin in flight (/tmp/inlines-b-781.log).
+- /tmp was wiped by the restart (prompts, input copies, lane scratch gone). Persistent copies now: block inputs /Volumes/Dev/jeth-inputs/<block>/input.bin; prompts in .journals/prompts/ (committed).
+| lane | branch | task | status |
+|---|---|---|---|
+| B-bn254 | inlines-b-bn254 | | spawning (fable-max) |
+| B-bls | inlines-b-bls | | spawning (fable-max) |
+| B-blake2f | inlines-b-blake2f | | spawning (fable-max) |
+- Killed before spawning: MODEXP big limbs (BIGINT256_MUL = 8.8 rows/partial product = compiled; no lever), Fr variants, squaring inlines. Parked: jolt-inlines-p256 limb-compare port (39k rows/verify) — jolt-side, after the B lanes (shared path dep must not move under them).
