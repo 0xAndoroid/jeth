@@ -2023,9 +2023,9 @@ tree-internally.
 
 ### Reproduce
 
-As in the previous section with `cd /Volumes/Dev/worktrees/jeth/inlines-a`,
-`CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-inlines-a`,
-`JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-inlines-a-guest`;
+As in the previous section with `cd /Volumes/Dev/worktrees/jeth/inlines-a`
+(each worktree builds into its own `target/`; the guest ELF pair goes to
+`target/guest-*`, override with `JETH_GUEST_TARGET_DIR`);
 copy `data/<block>/input.bin` elsewhere before tracing (`jeth trace` writes
 `trace-summary.json` beside its input). Per-op numbers: the synth harness
 (`crates/host/src/bin/synth.rs`, `.journals/opcode-max-cg/`), lane copies in
