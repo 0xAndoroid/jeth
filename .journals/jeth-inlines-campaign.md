@@ -27,7 +27,7 @@ worktrees only (from ~/dev/jeth; never touch ~/dev/jeth main or amber-nolane's c
 ## Current wave: A (spawned 2026-09-09 ~20:00)
 | lane | branch | task | status |
 |---|---|---|---|
-| A-p256 | inlines-a-p256 @ e85b5bf | a736dfb4 done (539 → 71.5 c/g, 3.78M → 0.50M rows/verify; set delta 0) | review eeb8f17e APPROVE (3 should-fix: pin Q=-G branch, randomized differential test, cfg(test) gating; 4 nits) → fixes resumed on a736dfb4 |
+| A-p256 | inlines-a-p256 @ e85b5bf | a736dfb4 done (539 → 71.5 c/g, 3.78M → 0.50M rows/verify; set delta 0) | review eeb8f17e APPROVE (3 should-fix: pin Q=-G branch, randomized differential test, cfg(test) gating; 4 nits) → fixed 91ea0ba, re-review 7d670159 APPROVE (nit pinned ae4ffb9) → merged 0cff8b9 |
 | A-hash (sha2 + blake2) | inlines-a-hash @ 72b17a4 | ff624803 done (SHA256/8K 170.6 → 78.6 c/g; BLAKE2F r12 75.2 → 59.7; set −407,212 rows → 13.813403) | review 1d3edc85 APPROVE (3 nits; docstring nit applied 1d49614) → merged ff into inlines-a |
 | A-bigint | inlines-a-bigint | fd91aeb3 | running (fable-max) |
 
