@@ -29,7 +29,7 @@ worktrees only (from ~/dev/jeth; never touch ~/dev/jeth main or amber-nolane's c
 |---|---|---|---|
 | A-p256 | inlines-a-p256 @ e85b5bf | a736dfb4 done (539 → 71.5 c/g, 3.78M → 0.50M rows/verify; set delta 0) | review eeb8f17e APPROVE (3 should-fix: pin Q=-G branch, randomized differential test, cfg(test) gating; 4 nits) → fixed 91ea0ba, re-review 7d670159 APPROVE (nit pinned ae4ffb9) → merged 0cff8b9 |
 | A-hash (sha2 + blake2) | inlines-a-hash @ 72b17a4 | ff624803 done (SHA256/8K 170.6 → 78.6 c/g; BLAKE2F r12 75.2 → 59.7; set −407,212 rows → 13.813403) | review 1d3edc85 APPROVE (3 nits; docstring nit applied 1d49614) → merged ff into inlines-a |
-| A-bigint | inlines-a-bigint | fd91aeb3 | running (fable-max) |
+| A-bigint | inlines-a-bigint @ 45c1dc0 | fd91aeb3 done (MULMOD product via inline −19%/op; MODEXP 9..32B odd moduli ladder −57% at 32B; set −15,856,781 rows −0.36%) | review 2283cbc9 (fable-high) |
 
 ## Kill list / parked
 - (none yet)
@@ -42,3 +42,5 @@ worktrees only (from ~/dev/jeth; never touch ~/dev/jeth main or amber-nolane's c
 - baseline trace log (env override sanity): /tmp/inlines-a-baseline-781.log
 - 20:40 A-p256 reported: 10-block rows are −14/block vs my prompt baseline on the same tree with the feature OFF → the exact baseline = data/<block>/trace-summary.json rows (781 = 603,187,849), not the RESULTS ledger. Use those for the PR table.
 - Follow-up parked (jolt-side): P-256 sdk [u64;4] equality compiles to memcmp (39k rows/verify, 8%) — port the secp limb-compare/MaybeUninit treatment to jolt-inlines-p256 on jolt-private (Phase B candidate, cheap).
+- 21:25 merge lesson: my union conflict resolution of crypto.rs put the p256 hook outside the impl — native tests are cfg'd out so they passed; the GUEST build failed. Fixed 57eb4b6. Rule: after every merge into inlines-a, build the guest (jeth trace on 781) before anything else.
+- A-bigint incident: `jeth trace` writes trace-summary.json beside its input; the lane traced through the data symlink and overwrote amber-nolane/data/{781,788}/trace-summary.json, then restored them (verified: 603,187,863 / 92,465,042 + hashes). Lanes must copy inputs to /tmp, never trace through the symlink.
