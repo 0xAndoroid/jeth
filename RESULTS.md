@@ -2093,7 +2093,9 @@ multiplication.
 
 Ten blocks 13.763942 → **13.653997 c/g** (−35,295,272 rows, −0.80%), all
 from bn254 (781: 17,556 Fq muls + 28,133 sum-of-products in ecmul/pairing;
-782 −1.62%, 783 −1.70%); the set has no BLS or BLAKE2F calls. On the
+782 −1.62%, 783 −1.70%); the set has no BLS or BLAKE2F calls (rows measured on the BLS lane worktree at
+the union tree; a rebuild in `inlines-b` reproduces 781 at 596,202,686 — a
+38-row layout shift from the embedded worktree path, same hash and perms). On the
 heaviest block of the top-50 profile (25694235, four Aztec rollup txs on
 BLS12-381 + bn254) the union saves 44.9M rows (−3.15%): BLS share 125.1M →
 99.8M, the rest bn254. Cumulative since amber-nolane: 13.814672 → 13.653997
