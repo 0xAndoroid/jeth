@@ -201,3 +201,38 @@ real blocks); `bls_forged.py build|native|trace <side>|report` (199 forged cases
   in host builds (unchanged upstream code).
 * History: the earlier `.cargo/config.toml` edit was dropped from this branch and the file removed in
   8dd5e6f (orchestrator instruction; matches inlines-b 3c8658c).
+
+## Rebase onto inlines-b (bn254 + blake2f lanes merged)
+
+Rebased onto a40f122; the duplicate vendor commit and the `.cargo/config.toml` removal were dropped
+as already applied. Conflicts resolved as unions: workspace `members` / `[workspace.dependencies]`
+(both inline crates, one `jolt-inlines-sdk` line), one `[patch.crates-io] ark-ff` block (comment
+names both hooks) in the root and guest manifests, vendored `Cargo.toml` (both features, both
+optional deps), `lib.rs` (both `mod` lines), `montgomery_backend.rs` (both consts; the bn254 N == 4
+arm and the BLS12-381 N == 6 arm as consecutive if-arms in `mul_assign` and `sum_of_products`),
+`quadratic_extension.rs` (both Fq2 arms), jeth-core features (`bn254-inline`, `bls12-381-inline`),
+guest feature list, host deps + both `extern crate` lines; both lockfiles regenerated from the
+inlines-b versions. Review fix (compile-time layout guard in `JOLT_BLS12_381_FQ`) applied cleanly.
+
+Workspace nextest on the rebased tree: 71 passed. Guest rebuilt (`target/guest-validate_block` +
+`-compute_advice`); the ELF carries the bn254 (funct7 0x00), BLAKE2b and BLS12-381 (funct7 0x01)
+inline words. Traces (hash == record for every block; perms of the proven run):
+
+| block | rows feature-off | rows bls-only | rows union (bn254 + bls) | union vs off | hash == record | perms (off / bls / union) |
+|---|---:|---:|---:|---:|---|---:|
+| 25905781 | 601,992,101 | 601,992,101 | 596,202,724 | -0.96% | True | 115373 / 115373 / 115373 |
+| 25905782 | 715,141,963 | 715,141,963 | 703,571,840 | -1.62% | True | 124117 / 124117 / 124117 |
+| 25905783 | 333,107,908 | 333,107,908 | 327,442,400 | -1.70% | True | 61886 / 61886 / 61886 |
+| 25905784 | 250,985,973 | 250,985,973 | 250,985,973 | +0.00% | True | 51424 / 51424 / 51424 |
+| 25905785 | 628,588,538 | 628,588,538 | 624,144,707 | -0.71% | True | 121623 / 121623 / 121623 |
+| 25905786 | 291,810,444 | 291,810,444 | 291,810,444 | +0.00% | True | 59024 / 59024 / 59024 |
+| 25905787 | 395,621,866 | 395,621,866 | 392,228,863 | -0.86% | True | 70085 / 70085 / 70085 |
+| 25905788 | 92,464,391 | 92,464,391 | 92,464,391 | +0.00% | True | 19238 / 19238 / 19238 |
+| 25905789 | 676,244,012 | 676,244,012 | 671,810,582 | -0.66% | True | 133642 / 133642 / 133642 |
+| 25905790 | 432,649,242 | 432,649,242 | 432,649,242 | +0.00% | True | 90051 / 90051 / 90051 |
+| 25694235 | 1,426,158,765 | 1,407,097,112 | 1,381,243,122 | -3.15% | True | 193806 / 193806 / 193806 |
+
+Ten regular blocks: 4,418,606,438 → 4,383,311,166 rows (-0.80%, all bn254 lane); 25905781
+union 596,202,724 (bn254 lane reported 596,202,738 on its own tree — 14 rows apart, same hash).
+Aztec 25694235: feature-off 1,426,158,765 → bls-only 1,407,097,112 → union 1,381,243,122 (−3.15%;
+record 1,430,619,793 on the older amber-nolane tree), hash 0x1a8f8e57…a0659e, perms 193,806.
