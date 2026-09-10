@@ -64,7 +64,7 @@ Phase B prep in flight:
 - /tmp was wiped by the restart (prompts, input copies, lane scratch gone). Persistent copies now: block inputs /Volumes/Dev/jeth-inputs/<block>/input.bin; prompts in .journals/prompts/ (committed).
 | lane | branch | task | status |
 |---|---|---|---|
-| B-bn254 | inlines-b-bn254 | d65966f1 (card 329) | running (fable-max) |
+| B-bn254 | inlines-b-bn254 @ 419da11 | d65966f1 done (MULQ 273 / SOPQ2 415 / FP2MULQ 797 rows; pairing −20%, ecmul −5.6%; set −35.3M rows → 13.653998) | review 60ff56ad (fable-high) |
 | B-bls | inlines-b-bls | 546e8ca6 (card 330) | running (fable-max) |
 | B-blake2f | inlines-b-blake2f @ 3fb9b6a | 675c6d21 done (FULL10 880 rows, PREFIX_r 80r+80; r1000 232 → 84.9 c/g; set Δ0) | review 3b0e30a1 APPROVE (F1 const-assert R∈1..=10 + nits applied a7532a9) → rebased + ff-merged into inlines-b @ a7532a9; 781 verification /Volumes/Dev/jeth-scratch/inlines-b-merged-781.log |
 - Killed before spawning: MODEXP big limbs (BIGINT256_MUL = 8.8 rows/partial product = compiled; no lever), Fr variants, squaring inlines. Parked: jolt-inlines-p256 limb-compare port (39k rows/verify) — jolt-side, after the B lanes (shared path dep must not move under them).
@@ -73,3 +73,4 @@ Phase B prep in flight:
 - 23:30 RULE (user, 23:12): NO CARGO_TARGET_DIR anywhere — each repo/worktree builds into its own target/. Applied: jolt CLI now builds in /Volumes/Dev/worktrees/jolt/jolt-inlines-b/target/release/jolt (restarted 23:31); trace.rs defaults → <repo>/target/guest and that CLI path; prompts/common-b.md rewritten; all three lanes steered by message (JETH_GUEST_TARGET_DIR=LANE_WT/target/guest until they rebase; scratch + inputs in /Volumes/Dev/jeth-scratch/<lane>/). Lanes rebuild from scratch (~15–25 min each); bls must regenerate its opcg case inputs.
 - 00:06 daemon restart #247; lanes stopped 23:56, resumed 00:07 with the in-repo build environment (CLI ready at jolt-inlines-b/target/release/jolt). Lane heads at resume: bn254 e11b444 (vendored ark-ff commit, 12 dirty) · bls dbac579 (3 dirty) · blake2f 6557a40 (10 dirty, nothing committed yet).
 - 00:40 repo .cargo/config.toml (target-dir → wiped cargo-target path) removed on inlines-b (3c8658c); lanes pick it up on rebase. B-blake2f note: FULL20 op would give another −4% on r1000 — parked.
+- 01:43 inlines-b @ a7532a9 (blake2f merged) 781 = 601,992,101 rows, hash ok → merge clean. bn254 pre-gate: mul 310 / sop2 507 / square 257 rows/call → fused-FP2 package (rule); square left compiled.
