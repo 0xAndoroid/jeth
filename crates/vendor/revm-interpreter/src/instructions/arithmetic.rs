@@ -116,8 +116,35 @@ pub fn mulmod<WIRE: InterpreterTypes, H: ?Sized>(
 ) -> Ip {
     static_gas!(context.interpreter, MULMOD);
     popn_top!([op1, op2], op3, context.interpreter);
-    *op3 = op1.mul_mod(op2, *op3);
+    mul_mod(&op1, &op2, op3);
     ip
+}
+
+#[cfg(feature = "bigint-inline")]
+unsafe extern "C" {
+    /// jeth guest hook: `(a * b) % m` via the Jolt BIGINT256_MUL inline, the
+    /// remainder written over `m` (zero when `m` is zero).
+    fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64);
+}
+
+#[cfg(feature = "bigint-inline")]
+#[inline(always)]
+fn mul_mod(a: &U256, b: &U256, m: &mut U256) {
+    // SAFETY: `U256` is `repr(transparent)` over `[u64; 4]`; the hook reads
+    // 32 bytes from `a` and `b` and rewrites `m` in place.
+    unsafe {
+        jeth_mul_mod(
+            a.as_limbs().as_ptr(),
+            b.as_limbs().as_ptr(),
+            m.as_limbs_mut().as_mut_ptr(),
+        )
+    }
+}
+
+#[cfg(not(feature = "bigint-inline"))]
+#[inline(always)]
+fn mul_mod(a: &U256, b: &U256, m: &mut U256) {
+    *m = a.mul_mod(*b, *m);
 }
 
 /// Implements the EXP instruction - exponentiates two values from stack.

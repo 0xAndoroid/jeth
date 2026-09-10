@@ -2350,6 +2350,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
@@ -2389,6 +2390,7 @@ dependencies = [
  "clap",
  "common",
  "jeth-core",
+ "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-keccak256",
  "jolt-inlines-p256",
@@ -2419,6 +2421,13 @@ checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
+]
+
+[[package]]
+name = "jolt-inlines-bigint"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
 ]
 
 [[package]]

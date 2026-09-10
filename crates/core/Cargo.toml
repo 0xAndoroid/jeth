@@ -15,6 +15,8 @@ sha2-inline = ["secp-inline", "dep:jolt-inlines-sha2"]
 blake2-inline = ["secp-inline", "dep:jolt-inlines-blake2"]
 # RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
 p256-inline = ["dep:jolt-inlines-p256"]
+# EVM MULMOD product through the BIGINT256_MUL inline (`bigint.rs`; the guest hooks it into revm-interpreter).
+bigint-inline = ["dep:jolt-inlines-bigint"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []
@@ -38,6 +40,7 @@ jolt-inlines-secp256k1 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
 jolt-inlines-blake2 = { workspace = true, optional = true }
 jolt-inlines-p256 = { workspace = true, optional = true }
+jolt-inlines-bigint = { workspace = true, optional = true }
 
 alloy-rpc-types-debug.workspace = true
 alloy-trie.workspace = true
@@ -83,5 +86,6 @@ jolt-inlines-blake2 = { workspace = true, features = ["host"] }
 sha2 = { version = "0.10", default-features = false }
 jolt-inlines-p256 = { workspace = true, features = ["host"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+jolt-inlines-bigint = { workspace = true, features = ["host"] }
 k256 = { workspace = true, features = ["ecdsa"] }
 postcard = { workspace = true, features = ["use-std"] }

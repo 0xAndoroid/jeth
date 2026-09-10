@@ -51,6 +51,7 @@ jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane
 jolt-inlines-sha2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/sha2", default-features = false }
 jolt-inlines-blake2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/blake2", default-features = false }
 jolt-inlines-p256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/p256", default-features = false }
+jolt-inlines-bigint = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/bigint", default-features = false }
 tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/tracer" }
 jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/common" }
 jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/crates/jolt-program" }

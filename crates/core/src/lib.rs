@@ -10,6 +10,8 @@
 extern crate alloc;
 
 pub mod advice;
+#[cfg(any(feature = "bigint-inline", test))]
+pub mod bigint;
 #[cfg(feature = "secp-inline")]
 mod bn254;
 mod chainspec;
