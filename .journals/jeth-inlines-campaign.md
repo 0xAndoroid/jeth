@@ -24,7 +24,7 @@ worktrees only (from ~/dev/jeth; never touch ~/dev/jeth main or amber-nolane's c
 - BLAKE2F precompile: inline covers rounds==12 && t[1]==0 only; other round counts stay software (Phase B candidate: per-round inline family).
 - revm Crypto trait (revm-precompile 34) hooks: sha256, ripemd160, bn254_g1_add/mul/pairing_check, secp256k1_ecrecover, modexp, blake2_compress, secp256r1_verify_signature, verify_kzg_proof, bls12_381_*. jeth overrides in crates/core/src/crypto.rs (JoltCrypto).
 
-## Current wave: A (spawned 2026-09-09 ~20:00)
+## Archived wave A (2026-09-09 20:00–22:10) — PR #2 https://github.com/0xAndoroid/jeth/pull/2 (inlines-a @ 85f4fda, base amber-nolane); set 13.814672 → 13.763942; spend ≈ $95
 | lane | branch | task | status |
 |---|---|---|---|
 | A-p256 | inlines-a-p256 @ e85b5bf | a736dfb4 done (539 → 71.5 c/g, 3.78M → 0.50M rows/verify; set delta 0) | review eeb8f17e APPROVE (3 should-fix: pin Q=-G branch, randomized differential test, cfg(test) gating; 4 nits) → fixed 91ea0ba, re-review 7d670159 APPROVE (nit pinned ae4ffb9) → merged 0cff8b9 |
@@ -46,3 +46,7 @@ worktrees only (from ~/dev/jeth; never touch ~/dev/jeth main or amber-nolane's c
 - A-bigint incident: `jeth trace` writes trace-summary.json beside its input; the lane traced through the data symlink and overwrote amber-nolane/data/{781,788}/trace-summary.json, then restored them (verified: 603,187,863 / 92,465,042 + hashes). Lanes must copy inputs to /tmp, never trace through the symlink.
 - 21:35 merged tree (57eb4b6 = hash + p256) 781: 603,149,073 rows, hash ok, perms 115,373 — equals the hash lane's number (p256 has no calls in the set) → lanes compose. My own trace also rewrote amber-nolane/data/25905781/trace-summary.json (jeth writes it beside the input) — restored to the record; inputs now copied to /tmp/inlines-a-data/<block>/input.bin for all future runs.
 - review 2283cbc9 (bigint) APPROVE; S1–S3 + nits + rebase onto inlines-a delegated back to fd91aeb3.
+
+## Current wave: B (planning 22:10)
+- Targets (ranked): bn254 Fq MULQ/SOPQ2 (+Fp2) — amber design, needs custom inline registration; BLS12-381 Fp (6-limb) ops; KZG point-eval shares BLS Fp; BLAKE2F per-round inline family (r ≠ 12 adversarial bound 13.9B rows); MODEXP big limbs (1024-byte case 6.0M rows/call, 183 c/g).
+- Registration decision: custom inlines need an InlineExtension variant → jolt-private branch off jolt-amber-nolane with one added variant + profile entry; the inline crates themselves live in jeth (crates/inlines/...), opcode 0x2B.
