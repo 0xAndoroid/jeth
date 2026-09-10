@@ -39,6 +39,16 @@ pub const MODULUS: [u64; LIMBS] = [
 /// −p⁻¹ mod 2⁶⁴.
 pub const INV: u64 = 0x89f3_fffc_fffc_fffd;
 
+/// −1 in Montgomery form, i.e. p − (R mod p): the Fp2 nonresidue the fused multiplication assumes.
+pub const MINUS_ONE: [u64; LIMBS] = [
+    0x43f5_ffff_fffc_aaae,
+    0x32b7_fff2_ed47_fffd,
+    0x07e8_3a49_a2e9_9d69,
+    0xeca8_f331_8332_bb7a,
+    0xef14_8d1e_a0f4_c069,
+    0x040a_b326_3eff_0206,
+];
+
 pub mod sdk;
 pub use sdk::*;
 

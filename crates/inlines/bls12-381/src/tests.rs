@@ -1,4 +1,4 @@
-use ark_ff::MontConfig;
+use ark_ff::{Field, Fp2Config, MontConfig};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
 };
@@ -10,7 +10,8 @@ use crate::exec::{self, Element};
 use crate::sequence_builder::{Fp2Mul, Mulp, Sopp2};
 use crate::spec::random_element;
 use crate::{
-    FP2MUL_FUNCT3, FUNCT7, INLINE_OPCODE, INV, LIMBS as N, MODULUS, MULP_FUNCT3, SOPP2_FUNCT3,
+    FP2MUL_FUNCT3, FUNCT7, INLINE_OPCODE, INV, LIMBS as N, MINUS_ONE, MODULUS, MULP_FUNCT3,
+    SOPP2_FUNCT3,
 };
 
 const MULP_ROWS: usize = 647;
@@ -45,6 +46,12 @@ fn constants_match_arkworks() {
         ark_bls12_381::FqConfig::R.0
     );
     assert_eq!(crate::spec::R2_LIMBS, ark_bls12_381::FqConfig::R2.0);
+    assert_eq!(MINUS_ONE, (-ark_bls12_381::Fq::ONE).0 .0);
+    assert_eq!(
+        MINUS_ONE,
+        (ark_bls12_381::Fq2Config::NONRESIDUE).0 .0,
+        "Fq2 nonresidue is -1"
+    );
     // Layout the ark-ff hook relies on: an element is exactly its six limbs, Fq2 is [c0, c1].
     assert_eq!(core::mem::size_of::<ark_bls12_381::Fq>(), 8 * N);
     assert_eq!(core::mem::offset_of!(ark_bls12_381::Fq, 0), 0);

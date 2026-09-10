@@ -236,3 +236,53 @@ Ten regular blocks: 4,418,606,438 → 4,383,311,166 rows (-0.80%, all bn254 lane
 union 596,202,724 (bn254 lane reported 596,202,738 on its own tree — 14 rows apart, same hash).
 Aztec 25694235: feature-off 1,426,158,765 → bls-only 1,407,097,112 → union 1,381,243,122 (−3.15%;
 record 1,430,619,793 on the older amber-nolane tree), hash 0x1a8f8e57…a0659e, perms 193,806.
+
+## Fq2 guard follow-up (proof-gate finding)
+
+The proof-gate lane found that in a Jolt example guest `is_fq2` ran at run time — the
+`characteristic() == &MODULUS[..]` slice compare became a 48-byte `memcmp` (627 rows with that
+guest's byte-wise memcmp) and `NONRESIDUE == -ONE` a run-time negation + copy (84 rows) — so FP2MUL
+saved ≈ 0 rows there (2,631 hooked vs 2,632 compiled). In the jeth guest the same guard cost ≈ 103 rows
+per Fq2 multiplication (word-wise memcmp ≈ 57 rows + ≈ 46 rows of negation/compare inside the symbol),
+which is why G2MSM still measured −13.9%: FP2MUL netted ≈ −540 of the possible ≈ −650 rows per Fq2 mul.
+
+Fix: `is_fq2` is a `const fn` over compile-time constants only — element/extension sizes and offsets,
+`size_of::<BasePrimeField::BigInt>() == 48`, the base prime field's `MODULUS` limbs == p and
+`P::NONRESIDUE` limbs == `MINUS_ONE` (p − R mod p, new crate constant asserted against `-Fq::ONE` and
+`Fq2Config::NONRESIDUE`), both read through const raw-pointer casts after the size checks — bound to
+the associated const `QuadExtField::<P>::JOLT_BLS12_381_FQ2`, so the arm folds at monomorphization
+like the `MontBackend` consts. No run-time memcmp, negation or copy remains.
+
+Fold proof (`jeth profile --rows --entries`, same synth blocks, pre-fix → post-fix):
+
+* bls-01 (G2MSM k1/k8 + PAIRING k1/k2): `memcmp` 630,677 → 274,608 calls (−356,069 = the block's Fq2
+  multiplications), 35,100,982 → 14,701,801 rows; `memcpy` unchanged (831,902 calls); block
+  708,565,127 → 671,810,196 rows (−5.2%). `Fq2::mul_assign` no longer appears as a symbol: with a
+  constant guard the body is small enough that LLVM inlines it into its callers.
+* bls-00 (G1ADD, G2ADD, G1MSM): `memcmp` 143,568 → 141,982 calls; block 155,195,803 → 155,031,469.
+
+Re-measured synth configs (per-tx Δ method; off = feature off; old after = run-time guard; new after
+= constant guard):
+
+| config | rows/call off | old after (Δ vs off) | new after (Δ vs off) | old → new |
+|---|---:|---:|---:|---:|
+| BLS_G1ADD | 129,963 | 129,043 (-0.7%) | 129,043 (-0.7%) | +0.0% |
+| BLS_G2ADD | 181,641 | 173,614 (-4.4%) | 170,920 (-5.9%) | -1.6% |
+| BLS_G1MSM/k1 | 3,448,785 | 3,280,877 (-4.9%) | 3,280,877 (-4.9%) | +0.0% |
+| BLS_G1MSM/k8 | 13,100,576 | 12,487,596 (-4.7%) | 12,487,596 (-4.7%) | +0.0% |
+| BLS_G2MSM/k1 | 9,925,612 | 8,542,744 (-13.9%) | 8,114,948 (-18.2%) | -5.0% |
+| BLS_G2MSM/k8 | 31,239,492 | 26,890,368 (-13.9%) | 25,494,906 (-18.4%) | -5.2% |
+| BLS_PAIRING/k1 | 20,818,507 | 18,120,306 (-13.0%) | 17,141,281 (-17.7%) | -5.4% |
+| BLS_PAIRING/k2 | 27,441,924 | 23,854,532 (-13.1%) | 22,611,960 (-17.6%) | -5.2% |
+| BLS_MAP_FP_TO_G1 | 1,664,688 | 1,610,511 (-3.3%) | 1,610,511 (-3.3%) | +0.0% |
+| BLS_MAP_FP2_TO_G2 | 5,039,926 | 4,569,074 (-9.3%) | 4,449,400 (-11.7%) | -2.6% |
+| POINTEVAL | 37,923,831 | 33,186,684 (-12.5%) | 31,672,325 (-16.5%) | -4.6% |
+
+- bls-00: off 162,215,227 → old 155,195,803 → new 155,031,469; hash equal: True
+- bls-01: off 817,174,629 → old 708,565,127 → new 671,810,196; hash equal: True
+- bls-02: off 602,450,412 → old 533,506,987 → new 512,265,023; hash equal: True
+
+Blocks (constant guard): 25905781 596,202,724 rows, hash 0xf691da3f…, perms 115,373 (unchanged — no
+BLS calls); 25694235 (input copied from /Volumes/Dev/jeth-top50-data) 1,375,135,731 rows (feature-off
+1,426,158,765 → bls-only 1,407,097,112 → union 1,381,243,122 → now −3.58% vs off), hash
+0x1a8f8e57…a0659e, perms 193,806. Workspace nextest: 71 passed.

@@ -4,9 +4,9 @@
 
 use crate::fields::models::fp::{Fp, FpConfig};
 use crate::fields::models::quadratic_extension::{QuadExtConfig, QuadExtField};
-use crate::Field;
+use crate::{Field, PrimeField};
 use core::mem::{offset_of, size_of, MaybeUninit};
-use jeth_inlines_bls12_381::{LIMBS, MODULUS};
+use jeth_inlines_bls12_381::{LIMBS, MINUS_ONE, MODULUS};
 
 /// `limbs == p`; false for every other modulus and every other limb count.
 pub(crate) const fn is_modulus(limbs: &[u64]) -> bool {
@@ -54,19 +54,51 @@ pub(crate) fn sum_of_products_2<P: FpConfig<N>, const N: usize, const M: usize>(
     }
 }
 
+/// Six limbs read from a 48-byte constant (a `BigInt<6>` or an `Fp<MontBackend<_, 6>, 6>`).
+///
+/// # Safety
+/// `T` must be exactly six initialized `u64` words.
+const unsafe fn limbs<T>(value: &T) -> [u64; LIMBS] {
+    *(value as *const T as *const [u64; LIMBS])
+}
+
+const fn same(a: &[u64; LIMBS], b: &[u64; LIMBS]) -> bool {
+    let mut i = 0;
+    while i < LIMBS {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// The quadratic extension of BLS12-381 Fq by the nonresidue −1, with `c0` at offset 0 and `c1` at
-/// offset 48 (the layout the fused inline reads and writes). A 48-byte prime field of characteristic
-/// p is `Fp<MontBackend<_, 6>, 6>`: `MontBackend` is the only `FpConfig` in the crate graph, so the
-/// base field is the Montgomery form the inline expects.
-#[inline(always)]
-pub(crate) fn is_fq2<P: QuadExtConfig>() -> bool {
-    size_of::<P::BaseField>() == 8 * LIMBS
-        && size_of::<QuadExtField<P>>() == 16 * LIMBS
-        && offset_of!(QuadExtField<P>, c0) == 0
-        && offset_of!(QuadExtField<P>, c1) == 8 * LIMBS
-        && P::BaseField::extension_degree() == 1
-        && P::BaseField::characteristic() == &MODULUS[..]
-        && P::NONRESIDUE == -P::BaseField::ONE
+/// offset 48 (the layout the fused inline reads and writes). Evaluated at compile time: a 48-byte
+/// base field whose prime field has the 48-byte modulus p is `Fp<MontBackend<_, 6>, 6>`
+/// (`MontBackend` is the only `FpConfig` in the crate graph), and its nonresidue is compared limb
+/// by limb against −1 in Montgomery form.
+pub(crate) const fn is_fq2<P: QuadExtConfig>() -> bool {
+    if size_of::<P::BaseField>() != 8 * LIMBS
+        || size_of::<QuadExtField<P>>() != 16 * LIMBS
+        || offset_of!(QuadExtField<P>, c0) != 0
+        || offset_of!(QuadExtField<P>, c1) != 8 * LIMBS
+        || size_of::<<<P::BaseField as Field>::BasePrimeField as PrimeField>::BigInt>() != 8 * LIMBS
+    {
+        return false;
+    }
+    // SAFETY: both constants are 48 initialized bytes (sizes checked above).
+    let (modulus, nonresidue) = unsafe {
+        (
+            limbs(&<<P::BaseField as Field>::BasePrimeField as PrimeField>::MODULUS),
+            limbs(&P::NONRESIDUE),
+        )
+    };
+    is_modulus(&modulus) && same(&nonresidue, &MINUS_ONE)
+}
+
+impl<P: QuadExtConfig> QuadExtField<P> {
+    pub(crate) const JOLT_BLS12_381_FQ2: bool = is_fq2::<P>();
 }
 
 /// a ← a·b in Fq[u]/(u² + 1).
