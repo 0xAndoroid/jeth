@@ -2,15 +2,15 @@
 
 Branch `inlines-a-p256` off `inlines-a` @ 60283c9 (amber-nolane + synth tool). Jolt pin jolt-amber-nolane @ a0d7b74baa (read-only, untouched).
 Build dirs: `/Volumes/Dev/cargo-target/jeth-inlines-a-p256{,-guest-*}` (seeded by APFS clone from jeth-inlines-a / amber-nolane dirs; stale ELFs deleted before every build).
-Harness: `/tmp/opcg-p256/` (evm.py/runner.py from `.journals/opcode-max-cg/` repointed); lane scripts copied to `.journals/lanes/inlines-a-p256/`.
+Harness: `/tmp/opcg-p256/` (evm.py/runner.py from `.journals/opcode-max-cg/` repointed); lane scripts copied to `.journals/lanes/inlines-a-p256/` — they hard-code `/tmp/opcg-p256` (binaries in `bin/`, cases in `cases/`, blocks in `blocks/`); re-create that tree (or edit the paths) before re-running.
 
 ## What changed (files)
 - `Cargo.toml`: workspace dep `jolt-inlines-p256` (path, default-features = false).
 - `crates/core/Cargo.toml`: feature `p256-inline = ["dep:jolt-inlines-p256"]`; dev-deps `jolt-inlines-p256/host`, `p256 0.13 (ecdsa)` for the differential tests.
-- `crates/core/src/p256.rs` (new): `verify(msg, sig, pk) -> bool` + 4 differential tests against `revm_precompile::secp256r1::verify_impl`.
+- `crates/core/src/p256.rs` (new): `verify(msg, sig, pk) -> bool` + 5 differential tests against `revm_precompile::secp256r1::verify_impl` (r/s/pk/msg edges, message reduction, z = 0 with Q = ±G, ±2G, 3G and a generic key incl. the ±Q cross-check, RIP-7212 daimo vectors ± high-s, and a seeded xorshift run: 200 random keys/msgs with bit-flipped sig/pk/msg and z = 0 twins + 200 garbage inputs).
 - `crates/core/src/crypto.rs`: `Crypto::secp256r1_verify_signature` override, `#[cfg(all(feature = "p256-inline", target_arch = "riscv64"))]` — native `run-native` stays on revm's `p256` software path.
-- `crates/core/src/lib.rs`: `mod p256` under `all(p256-inline, any(riscv64, test))`.
-- `crates/host/Cargo.toml` + `src/trace.rs`: `jolt-inlines-p256/host` + `extern crate jolt_inlines_p256 as _` (inventory registration of the P256_* handlers; `secp-inline` host feature now also turns on `jeth-core/p256-inline` so the workspace nextest covers the tests).
+- `crates/core/src/lib.rs`: `mod p256` under `any(all(p256-inline, riscv64), test)` — `cargo nextest run -p jeth-core` (no features) runs the tests through the dev-deps.
+- `crates/host/Cargo.toml` + `src/trace.rs`: `jolt-inlines-p256/host` + `extern crate jolt_inlines_p256 as _` (inventory registration of the P256_* handlers; host features unchanged).
 - `crates/guest/Cargo.toml`: `jeth-core` features += `p256-inline`. Lockfiles: `jolt-inlines-p256` (+ `ark-secp256r1` from the already-vendored a16z arkworks git rev, host only).
 No jolt-repo edits. No new lookup tables, MAX_SUFFIXES untouched.
 
@@ -28,7 +28,7 @@ value, z = 0 allowed), R = u1·G + u2·Q, accept iff R ≠ O and R.x mod n == r.
 | (x,y) off curve | reject | `AffinePoint::new` → `NotOnCurve` → false |
 | (0,0) | reject (0 ≠ b) | passes `from_u64_arr` (infinity is "on curve" there) → explicit `q.is_infinity()` → false |
 | r or s ≥ n | reject | `P256Fr::from_u64_arr` → `InvalidFrElement` → false |
-| r = 0 or s = 0 | reject | explicit → false (ecdsa_verify would also return `ROrSZero`) |
+| r = 0 or s = 0 | reject | `ecdsa_verify` → `ROrSZero` (z ≠ 0 path) / `ZeroMessageHash` or `ROrSZero` (z = 0 path: z' = r resp. −r is 0) → false |
 | msg ≥ n | reduce | one conditional subtraction (n > 2^255 ⇒ 2^256 − 1 < 2n) — exact |
 | z = 0 | accept iff (r/s)·Q ≠ O and x mod n == r | rewritten (below) |
 | z ≠ 0 | R = u1·G + u2·Q | `ecdsa_verify(z, r, s, q)`: u1 = z/s, u2 = r/s, R1 = u1·G, R2 = u2·Q from Fake-GLV advice, each bound by its own 2×128 Shamir |
@@ -49,16 +49,16 @@ Adversarial u1/u2: u1 = z/s ≠ 0 and u2 = r/s ≠ 0 always hold on the inline p
 | config | state | units | rows/unit | c/g |
 |---|---|---:|---:|---:|
 | P256VERIFY/k200 | before (this tree, guest `p256-inline` off) | 100 | 3,784,285.6 | 539.15 |
-| P256VERIFY/k200 | after | 100 | 502,089.6 | 71.53 |
+| P256VERIFY/k200 | after (e468741 / review fixes) | 100 | 502,089.6 / 501,978.6 | 71.53 / 71.52 |
 | P256VERIFY (study config, K=1676) | before (study, amber-nolane) | 838 | 3,784,035.4 | 539.11 |
-| P256VERIFY (study config, K=1676) | after | 838 | 501,867.3 | 71.50 |
+| P256VERIFY (study config, K=1676) | after (e468741 / review fixes) | 838 | 501,867.3 / 501,756.3 | 71.50 / 71.49 |
 Before k200 raw: tx A 757,100,239 rows / 3,624,030 gas, tx B 378,671,682 / 2,922,130 → Δ 378,428,557 / 701,900 (study-config before = study run).
-Per verify: 3.78M → 0.50M rows (−86.7%, 7.54×). Adversarial 60M-gas block of P256VERIFY (rows/unit × 60M/7019): 32.35B → 4.29B rows
+Per verify: 3.78M → 0.50M rows (−86.7%, 7.54×); the review fixes (N1: two `is_zero` checks dropped) shave 111 rows/verify. Adversarial 60M-gas block (rows/unit × 60M/7019): 32.35B → 4.29B rows
 (3.0× the worst real block 1.43B; below the pure-opcode maximum ≈5.9B for KECCAK256). Reference: deferred ecrecover ≈10.5k rows in-tx
 + ≈230k batched; P-256 pays ≈2× that because Fake GLV binds R1 and R2 with two independent 2×128 Shamir MSMs (no endomorphism).
 
 ### Where the 502k rows per verify go
-`jeth profile --rows` on the k200 synth block (301 verifies: 200 + 100 + verify tx; 153,709,462 rows total):
+`jeth profile --rows` on the k200 synth block at e468741 (301 verifies: 200 + 100 + verify tx; 153,709,462 rows total; −111 rows/verify after the review fixes):
 | symbol | rows | per verify |
 |---|---:|---:|
 | `jeth_core::p256::verify` (ecdsa_verify + both 2×128 Shamirs + field inlines, all inlined) | 137,917,297 | 458,197 |
@@ -98,7 +98,7 @@ INLINE(custom-0) 52,157 execs / 54,554,050 rows both. No P256_* inline executes 
 ten-block set is exactly 0 rows. The −14 rows vs the prompt baseline is already present with the feature OFF (base tree state), not this lane.
 
 ### Forged / edge inputs (`edge_p256.py`: one block, one tx per vector; contract SSTOREs ok<<24 | 1<<16 | returndatasize<<8 | word and reverts if ≠ the python-side software expectation)
-Block `edge-after`: 38 txs, native block_hash 0xcf9ebb710ba2489c5d7b877cf61365bacee8914bd39387724f7f47a6e18eff51 == trace block_hash (MATCH); 16,364,534 rows; every tx succeeded (software result == expected word in calldata).
+Block `edge-after`: 38 txs, native block_hash 0xcf9ebb710ba2489c5d7b877cf61365bacee8914bd39387724f7f47a6e18eff51 == trace block_hash (MATCH); 16,364,534 rows at e468741, 16,365,316 after the review fixes (re-run `edge-after2`, hash match again); every tx succeeded (software result == expected word in calldata).
 
 Software accepts (14): `valid/study`, `valid/rip7212-1`, `valid/rip7212-2`, `valid/high-s`, `valid/msg>=n`, `valid/msg=2^256-1`, `valid/msg=n-1`, `valid/msg=0`, `valid/msg=n`, `valid/msg=0/high-s`, `valid/msg=0/Q=G`, `valid/msg=0/Q=2G`, `valid/msg=0/Q=3G`, `valid/msg=1/Q=G`.
 Software rejects (24): `invalid/rip7212-wrong-msg`, `r=0`, `s=0`, `r=n`, `s=n`, `r=n-1`, `r=2^256-1`, `s=2^256-1`, `pk.x=p`, `pk.x>=p`, `pk.y>=p`, `pk-off-curve`, `pk=(0,0)`, `pk=-Q`, `pk=(1,1)`, `invalid/msg>=n`, `invalid/msg=0/wrong-s`, `invalid/msg=0/wrong-key`, `invalid/msg=0/Q=G-wrong-r`, `invalid/msg=0/Q=2G-wrong-r`, `invalid/msg=0/Q=3G-wrong-r`, `len159`, `len161`, `len0`.
@@ -107,8 +107,8 @@ Software rejects (24): `invalid/rip7212-wrong-msg`, `r=0`, `s=0`, `r=n`, `s=n`, 
 ## Gates
 1. Synth before/after: exact rows, same tree/harness/K — table above (k200 before 3,784,285.6 → after 502,089.6 rows/unit; study config after 501,867.3).
 2. Ten blocks: 10/10 block_hash == `data/<b>/trace-summary.json`; 781 perms 115,373 == baseline; rows −14 per block (table above).
-3. 781 attribution: see section above (`jeth opcodes` + `jeth profile --rows`).
-4. `cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-inline`: 28 passed (4 new p256 differential tests). Pre-commit on e468741: fmt + clippy (`--all --all-targets -- -D warnings`) green; typos green on every changed file (`DISABLE_TYPOS=1` only for the pre-existing RESULTS.md / zeth_trie.rs hits).
+3. 781 attribution: see section above (`jeth opcodes` + `jeth profile --rows`). Review fixes changed the guest ELF (validate_block sha256 26e3964d… → 1a5b9fc3…, compute_advice 2d79617c… → c753cfae…): 781 re-traced at 603,187,849 rows, block_hash 0xf691da3f…b529, perms 115,373 — unchanged.
+4. `cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-inline`: 29 passed; `cargo nextest run --release -p jeth-core` (no features): 13 passed — the 5 p256 differential tests run in both. Pre-commit on every commit: fmt + clippy (`--all --all-targets -- -D warnings`) green; typos green on every changed file (`DISABLE_TYPOS=1` only for the pre-existing RESULTS.md / zeth_trie.rs hits).
 5. Forged/edge block: native hash == trace hash, 38/38 vectors (table above); truncated 159 B, 161 B and empty inputs included.
 
 ## Decisions / kill list

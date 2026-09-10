@@ -22,7 +22,7 @@ pub(crate) fn verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
     ) else {
         return false;
     };
-    if q.is_infinity() || r.is_zero() || s.is_zero() {
+    if q.is_infinity() {
         return false;
     }
     // n > 2^255, so one subtraction fully reduces a 256-bit integer.
@@ -104,6 +104,31 @@ mod tests {
         )
     }
 
+    struct Xorshift(u64);
+
+    impl Xorshift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn bytes(&mut self) -> [u8; 32] {
+            let mut out = [0; 32];
+            for chunk in out.chunks_mut(8) {
+                chunk.copy_from_slice(&self.next().to_be_bytes());
+            }
+            out
+        }
+
+        fn flip<const L: usize>(&mut self, mut bytes: [u8; L]) -> [u8; L] {
+            let bit = self.next() as usize % (8 * L);
+            bytes[bit / 8] ^= 1 << (bit % 8);
+            bytes
+        }
+    }
+
     #[test]
     fn signature_and_key_edge_vectors_match_software() {
         let (key, pk) = keypair(U256::from(0x1111_2222_3333_4444u64));
@@ -181,9 +206,18 @@ mod tests {
 
     #[test]
     fn zero_message_hash_matches_software() {
-        // Q = G, Q = 2G (R1 == R2 inside the rewritten instance) and a generic key.
-        for d in [1u64, 2, 3, 0xdead_beef] {
-            let (key, pk) = keypair(U256::from(d));
+        // Q = G, 2G (R1 == R2 inside the rewritten instance), −G, −2G (Q − G is a
+        // doubling) and a generic key.
+        let keys = [
+            U256::from(1),
+            U256::from(2),
+            U256::from(3),
+            N - U256::from(1),
+            N - U256::from(2),
+            U256::from(0xdead_beefu64),
+        ];
+        for d in keys {
+            let (key, pk) = keypair(d);
             let sig = sign(&key, [0; 32]);
             assert!(compare([0; 32], sig, pk));
             assert!(compare(N.to_be_bytes::<32>(), sig, pk));
@@ -200,11 +234,46 @@ mod tests {
                 pk
             ));
             assert!(!compare(U256::from(1).to_be_bytes::<32>(), sig, pk));
-            // Same signature against the other small keys.
-            for other in [1u64, 2, 3] {
-                let (_, other_pk) = keypair(U256::from(other));
-                assert_eq!(compare([0; 32], sig, other_pk), other == d);
+            // z = 0 only constrains x((r/s)·Q): a signature for Q also verifies for −Q.
+            for other in keys {
+                let (_, other_pk) = keypair(other);
+                assert_eq!(
+                    compare([0; 32], sig, other_pk),
+                    other == d || other + d == N
+                );
             }
+        }
+    }
+
+    #[test]
+    fn randomized_vectors_match_software() {
+        let mut rng = Xorshift(0x9E37_79B9_7F4A_7C15);
+        let mut valid = 0;
+        for _ in 0..200 {
+            let d = U256::from_be_bytes(rng.bytes());
+            if d.is_zero() || d >= N {
+                continue;
+            }
+            let (key, pk) = keypair(d);
+            let msg = rng.bytes();
+            let sig = sign(&key, msg);
+            assert!(compare(msg, sig, pk));
+            valid += 1;
+            compare(msg, rng.flip(sig), pk);
+            compare(msg, sig, rng.flip(pk));
+            compare(rng.flip(msg), sig, pk);
+            let sig = sign(&key, [0; 32]);
+            assert!(compare([0; 32], sig, pk) && compare(N.to_be_bytes::<32>(), sig, pk));
+        }
+        assert!(valid > 150);
+        // Garbage inputs: random (msg, r, s, x, y).
+        for _ in 0..200 {
+            let (mut sig, mut pk) = ([0; 64], [0; 64]);
+            sig[..32].copy_from_slice(&rng.bytes());
+            sig[32..].copy_from_slice(&rng.bytes());
+            pk[..32].copy_from_slice(&rng.bytes());
+            pk[32..].copy_from_slice(&rng.bytes());
+            assert!(!compare(rng.bytes(), sig, pk));
         }
     }
 
