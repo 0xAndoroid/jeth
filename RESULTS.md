@@ -2127,11 +2127,29 @@ BLS12-381 + bn254) the union saves 44.9M rows (−3.15%): BLS share 125.1M →
   `lo(m_k·q₀)` replaced by the exact carry `[r_k ≠ 0]`; hooks keyed by
   compile-time modulus + layout checks (bn254 Fr and other fields fall
   through); canonical invariant preserved at every hooked path.
-- **Not done: a proof.** All gates are execute-only (tracer rows + hashes);
-  the custom sequences use full 64-bit immediates with the top bit set
-  (precedent in the stock p256 inline). One end-to-end proof of a small
-  block bearing a bn254 pairing, a BLS op and a BLAKE2F call is the
-  remaining consensus gate before this branch should ship.
+- **Proof gate (2026-09-10): every custom inline family proves AND
+  verifies.** Jolt example guest `examples/jeth-inlines-proof-gate` on
+  `jolt-inlines-b` @ `c0e9fb845f` (standalone workspace; guest patches
+  ark-ff to the vendored crate with both hook features, host links the three
+  jeth crates for registration; legacy prover, `RV64IMAC_JOLT_ALL_INLINES`
+  incl. `External`), Apple M4 16 GiB, outputs checked against native
+  arkworks / EIP-152: bn254 pairing e(P,Q) 8,621,982 cycles (10,495,866
+  unhooked, −17.9%), padded 2²⁴, prove 173.7 s, verify 0.60 s, 7.77 GiB —
+  PASS; bn254 e(P,Q)·e(−P,Q) = 1 multi-pairing 11,548,881 cycles
+  (15,028,695 unhooked, −23.2%), prove 201.2 s, verify 0.26 s — PASS;
+  BLS12-381 G2 add + 2-term G2 MSM 2,931,348 cycles, 2²², prove 69.7 s,
+  verify 0.27 s — PASS; BLAKE2F r12 (FULL10 + PREFIX_2, EIP-152 vector 5),
+  r13, r20 (128-bit counter) 6,892 / 6,972 / 9,066 cycles, prove ≈ 1 s each
+  — PASS. Trace census inside the proven guests: bn254 1,870 × MULQ (273) +
+  15 × SOPQ2 (415) + 5,261 × FP2MULQ (797) = 55% of rows; BLS 962 × MULP
+  (647) + 692 × FP2MUL (1,875) = 52%. `jolt-inlines-fixtures` 3/3, golden
+  file untouched. Reproduce: `cd …/jolt-inlines-b/examples/jeth-inlines-proof-gate
+  && cargo build --release && ./target/release/jeth-inlines-proof-gate
+  {blake2f|bls|bn254|bn254-check}`; journal `.journals/lanes/proof-gate.md`.
+- Finding from the proof-gate guest: the BLS Fq2 hook guard (`is_fq2`) did
+  not const-fold there (runtime 48-byte memcmp + negation ≈ 711 rows per Fq2
+  mul, eating the fused op's saving); the bn254 guard folds. Fix and
+  re-measurement of the BLS numbers above: see the addendum below.
 
 ### Reproduce
 
