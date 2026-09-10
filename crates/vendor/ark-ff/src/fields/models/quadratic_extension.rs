@@ -653,6 +653,10 @@ impl<'a, P: QuadExtConfig> MulAssign<&'a Self> for QuadExtField<P> {
         if crate::jolt_bn254::is_fq2::<P>() {
             return crate::jolt_bn254::fp2_mul_assign(self, other);
         }
+        #[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
+        if crate::jolt_bls12_381::is_fq2::<P>() {
+            return crate::jolt_bls12_381::fp2_mul_assign(self, other);
+        }
         if Self::extension_degree() == 2 {
             let c1_input = [self.c0, self.c1];
             P::mul_base_field_by_nonresidue_in_place(&mut self.c1);

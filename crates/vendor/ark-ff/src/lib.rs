@@ -35,6 +35,9 @@ pub(crate) mod const_helpers;
 #[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
 pub(crate) mod jolt_bn254;
 
+#[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
+pub(crate) mod jolt_bls12_381;
+
 pub use ark_std::UniformRand;
 
 mod to_field_vec;

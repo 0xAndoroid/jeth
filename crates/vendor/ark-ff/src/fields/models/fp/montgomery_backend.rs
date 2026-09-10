@@ -605,6 +605,11 @@ impl<T: MontConfig<N>, const N: usize> MontBackend<T, N> {
     const JOLT_BN254_FQ: bool = crate::jolt_bn254::is_modulus(&T::MODULUS.0);
 }
 
+#[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
+impl<T: MontConfig<N>, const N: usize> MontBackend<T, N> {
+    const JOLT_BLS12_381_FQ: bool = crate::jolt_bls12_381::is_modulus(&T::MODULUS.0);
+}
+
 impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
     /// The modulus of the field.
     const MODULUS: crate::BigInt<N> = T::MODULUS;
@@ -657,6 +662,10 @@ impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
         if Self::JOLT_BN254_FQ {
             return crate::jolt_bn254::mul_assign(a, b);
         }
+        #[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
+        if Self::JOLT_BLS12_381_FQ {
+            return crate::jolt_bls12_381::mul_assign(a, b);
+        }
         T::mul_assign(a, b)
     }
 
@@ -664,6 +673,10 @@ impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {
         #[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
         if Self::JOLT_BN254_FQ && M == 2 {
             return crate::jolt_bn254::sum_of_products_2(a, b);
+        }
+        #[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
+        if Self::JOLT_BLS12_381_FQ && M == 2 {
+            return crate::jolt_bls12_381::sum_of_products_2(a, b);
         }
         T::sum_of_products(a, b)
     }

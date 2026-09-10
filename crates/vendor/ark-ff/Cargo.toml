@@ -101,6 +101,7 @@ default-features = false
 asm = []
 default = []
 jolt-bn254-inline = ["dep:jeth-inlines-bn254"]
+jolt-bls12-381-inline = ["dep:jeth-inlines-bls12-381"]
 parallel = [
     "std",
     "rayon",
@@ -115,5 +116,10 @@ std = [
 
 [dependencies.jeth-inlines-bn254]
 path = "../../inlines/bn254"
+default-features = false
+optional = true
+
+[dependencies.jeth-inlines-bls12-381]
+path = "../../inlines/bls12-381"
 default-features = false
 optional = true
