@@ -42,19 +42,20 @@ revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database-interface = { version = "11.0.1", default-features = false }
 revm-state = { version = "11.0.1", default-features = false }
 
-# jolt branch `jolt-amber-nolane` @ a0d7b74baa (private mirror 0xAndoroid/jolt-private) = a16z/jolt main f09bbc1e34
+# jolt branch `jolt-inlines-b` @ 3158917254 (private mirror 0xAndoroid/jolt-private) = jolt-amber-nolane @ a0d7b74baa
+# + InlineExtension::External (tag for inlines registered by this repo); jolt-amber-nolane = a16z/jolt main f09bbc1e34
 # + keccak-f θ/ρ fusion (a16z/jolt#1845, 3087→2511 rows/perm), `bump-alloc` sdk feature, secp256k1 sdk limb
 # compares / MaybeUninit outputs — read-only worktree; the last three still need upstream PRs.
-jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk" }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
-jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/secp256k1", default-features = false }
-jolt-inlines-sha2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/sha2", default-features = false }
-jolt-inlines-blake2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/blake2", default-features = false }
-jolt-inlines-p256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/p256", default-features = false }
-jolt-inlines-bigint = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/bigint", default-features = false }
-tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/tracer" }
-jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/common" }
-jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/crates/jolt-program" }
+jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/keccak256", default-features = false }
+jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/secp256k1", default-features = false }
+jolt-inlines-sha2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/sha2", default-features = false }
+jolt-inlines-blake2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/blake2", default-features = false }
+jolt-inlines-p256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/p256", default-features = false }
+jolt-inlines-bigint = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/bigint", default-features = false }
+tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/tracer" }
+jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/common" }
+jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/crates/jolt-program" }
 
 # misc
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }

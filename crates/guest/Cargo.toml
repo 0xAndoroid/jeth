@@ -28,8 +28,8 @@ compute_advice = ["jeth-core/compute_advice"]
 # `bump-alloc`: no-free bump heap (alloc ~10 rows, dealloc no-op, in-place realloc
 # of the newest block) instead of the size-class allocator. Peak heap = total
 # bytes ever allocated; the tracer aborts if a block exceeds the 1.5 GiB heap.
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", features = ["bump-alloc"] }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-sdk", features = ["bump-alloc"] }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/keccak256", default-features = false }
 
 jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "p256-inline", "bigint-inline", "guest-instrument"] }
 # Direct dependency only to reach the vendored crate's `bigint-inline` feature:
