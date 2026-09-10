@@ -1,6 +1,6 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
-**Latest (2026-09-09, branch `amber-nolane`): the ten-block set 25905781–25905790 validates at 13.814672 c/g gas-weighted SELF (wave-4 baseline 19.780546, −30.16%) — jeth-side amber waves C–P on a16z/jolt main plus the keccak/bump-alloc/secp sdk commits, without the Jolt ISA lane tables; see the last section.**
+**Latest (2026-09-09, branch `inlines-a` on `amber-nolane`): the ten-block set 25905781–25905790 validates at 13.763942 c/g gas-weighted SELF (amber-nolane 13.814672; wave-4 baseline 19.780546, −30.42%) — the Jolt p256 / sha2 / blake2 / bigint inlines wired into P256VERIFY (539 → 71.5 c/g), SHA256, BLAKE2F, MULMOD and MODEXP; see the last section.**
 
 **Headline (after Workstream A — JEF zero-parse input, 2026-08-18): recent mainnet
 blocks validate inside the Jolt RV64IMAC guest at 28.2–30.5 cycles/gas fully
