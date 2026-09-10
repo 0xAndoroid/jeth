@@ -52,8 +52,9 @@ FP2MUL 4×6 inputs + p6 inv x6 t0 t1 aux d6 = 46. All released before `finalize`
   non-canonical operand (one factor < p, the other < 2³⁸⁴) keeps t < 2p (ab < pR); FP2MUL's
   negated b₁ = 0 gives p as an operand, covered by this case. Two non-canonical operands are outside
   the contract (never produced: see reachability).
-* **Column carries.** A column has at most 12 product halves + 11 reduction halves = 23 terms; the
-  carry register counts ≤ 23 overflows plus the incoming carry (< 2⁶ total) — no overflow.
+* **Column carries.** Column 6 is the fullest: MULP 11 product halves + 11 reduction halves = 22
+  terms, SOPP2/FP2MUL 22 + 11 = 33; the carry register counts one unit per 64-bit overflow plus the
+  incoming carry (≤ 33, maximum observed 18, < 2⁶) — no overflow.
 * **Zero-check trick.** lo(mₖp₀) = 2⁶⁴ − valueₖ when valueₖ ≠ 0 (since mₖp₀ ≡ −valueₖ), so the
   addition valueₖ + lo(mₖp₀) is 2⁶⁴ (carry 1) or 0 (carry 0): carry = (valueₖ ≠ 0), added to the
   next column; hi(mₖp₀) is accumulated normally.
@@ -70,7 +71,10 @@ FP2MUL 4×6 inputs + p6 inv x6 t0 t1 aux d6 = 46. All released before `finalize`
   [MAX×5, p₅−1], [0…, p₅], 1-in-every-limb, plus as a single MULP operand p, p+1, 2³⁸⁴−1, 2³⁸³,
   2³⁸⁴−2³²⁰; all pairs → 13 × 18 × 2 MULP cases, 169 SOPP2/FP2MUL cases; 10,000 random cases per
   op vs the big-integer reference; 1,000 random MULP cases vs arkworks `Fq` multiplication;
-  constants (MODULUS, INV, R, R²) asserted against `ark_bls12_381::FqConfig`.
+  constants (MODULUS, INV, R, R²) asserted against `ark_bls12_381::FqConfig`. The crate's dev-dep
+  `ark-ff` resolves to the vendored copy through `[patch.crates-io]` (native code byte-identical to
+  the registry crate: the hook is `cfg(riscv64)`), so the arkworks cross-checks exercise the same
+  software path the native gate runs.
 
 ## Hook (vendored ark-ff 0.5.0, feature `jolt-bls12-381-inline`, `target_arch = "riscv64"` only)
 
@@ -79,7 +83,10 @@ FP2MUL 4×6 inputs + p6 inv x6 t0 t1 aux d6 = 46. All released before `finalize`
   (dispatch glue, 4 `unsafe` blocks), `montgomery_backend.rs` (`JOLT_BLS12_381_FQ` const on
   `MontBackend<T, N>` = N == 6 ∧ MODULUS == p; if-arms in `mul_assign` and `sum_of_products` M == 2),
   `quadratic_extension.rs` (if-arm in `MulAssign` when `is_fq2::<P>()`: base field size 48,
-  extension size 96, c0/c1 offsets 0/48, degree-1 base field, characteristic p, NONRESIDUE −1).
+  extension size 96, c0/c1 offsets 0/48, degree-1 base field, characteristic p, NONRESIDUE −1;
+  `MontBackend` is the only `FpConfig` in the graph, so that base field is the Montgomery form).
+  `JOLT_BLS12_381_FQ` = modulus p ∧ `size_of::<Fp>() == 48` ∧ limbs at offset 0 (compile-time; a
+  different layout simply leaves the compiled path).
 * `[patch.crates-io] ark-ff` in the root and guest manifests; the a16z arkworks fork used by
   jolt-sdk is a different source and stays. jeth-core feature `bls12-381-inline` (guest on;
   native `run-native` keeps the software path). Host registers the inline via

@@ -607,7 +607,11 @@ impl<T: MontConfig<N>, const N: usize> MontBackend<T, N> {
 
 #[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
 impl<T: MontConfig<N>, const N: usize> MontBackend<T, N> {
-    const JOLT_BLS12_381_FQ: bool = crate::jolt_bls12_381::is_modulus(&T::MODULUS.0);
+    /// BLS12-381 base field with its six limbs as the whole 48-byte element (the layout the
+    /// inlines read and write); false for any other modulus or layout.
+    const JOLT_BLS12_381_FQ: bool = crate::jolt_bls12_381::is_modulus(&T::MODULUS.0)
+        && core::mem::size_of::<Fp<Self, N>>() == 48
+        && core::mem::offset_of!(Fp<Self, N>, 0) == 0;
 }
 
 impl<T: MontConfig<N>, const N: usize> FpConfig<N> for MontBackend<T, N> {

@@ -45,6 +45,12 @@ fn constants_match_arkworks() {
         ark_bls12_381::FqConfig::R.0
     );
     assert_eq!(crate::spec::R2_LIMBS, ark_bls12_381::FqConfig::R2.0);
+    // Layout the ark-ff hook relies on: an element is exactly its six limbs, Fq2 is [c0, c1].
+    assert_eq!(core::mem::size_of::<ark_bls12_381::Fq>(), 8 * N);
+    assert_eq!(core::mem::offset_of!(ark_bls12_381::Fq, 0), 0);
+    assert_eq!(core::mem::size_of::<ark_bls12_381::Fq2>(), 16 * N);
+    assert_eq!(core::mem::offset_of!(ark_bls12_381::Fq2, c0), 0);
+    assert_eq!(core::mem::offset_of!(ark_bls12_381::Fq2, c1), 8 * N);
     assert_eq!(INLINE_OPCODE, 0x2B);
     assert_eq!(FUNCT7, 0x01);
     assert_eq!([MULP_FUNCT3, SOPP2_FUNCT3, FP2MUL_FUNCT3], [0, 1, 2]);
