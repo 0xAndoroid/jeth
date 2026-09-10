@@ -2427,6 +2427,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "jeth-inlines-bls12-381"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ff 0.5.0",
+ "jeth-inlines-bls12-381",
+ "jolt-inlines-sdk",
+ "rand 0.8.7",
+ "tracer",
+]
+
+[[package]]
 name = "jeth-inlines-bn254"
 version = "0.1.0"
 dependencies = [

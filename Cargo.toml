@@ -4,7 +4,7 @@ resolver = "2"
 # package (own [workspace] table) built exclusively through the `jolt` CLI for
 # riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
 # from native host builds.
-members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254"]
+members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254", "crates/inlines/bls12-381"]
 
 [workspace.package]
 version = "0.1.0"
@@ -56,6 +56,7 @@ jolt-inlines-blake2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-
 jolt-inlines-p256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/p256", default-features = false }
 jolt-inlines-bigint = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/bigint", default-features = false }
 jolt-inlines-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/sdk", default-features = false }
+jeth-inlines-bls12-381 = { path = "crates/inlines/bls12-381", default-features = false }
 tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/tracer" }
 jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/common" }
 jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/crates/jolt-program" }
