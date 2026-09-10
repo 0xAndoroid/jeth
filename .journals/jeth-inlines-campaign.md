@@ -64,7 +64,7 @@ Phase B prep in flight:
 - /tmp was wiped by the restart (prompts, input copies, lane scratch gone). Persistent copies now: block inputs /Volumes/Dev/jeth-inputs/<block>/input.bin; prompts in .journals/prompts/ (committed).
 | lane | branch | task | status |
 |---|---|---|---|
-| B-bn254 | inlines-b-bn254 | | spawning (fable-max) |
-| B-bls | inlines-b-bls | | spawning (fable-max) |
-| B-blake2f | inlines-b-blake2f | | spawning (fable-max) |
+| B-bn254 | inlines-b-bn254 | d65966f1 (card 329) | running (fable-max) |
+| B-bls | inlines-b-bls | 546e8ca6 (card 330) | running (fable-max) |
+| B-blake2f | inlines-b-blake2f | 675c6d21 (card 331) | running (fable-max) |
 - Killed before spawning: MODEXP big limbs (BIGINT256_MUL = 8.8 rows/partial product = compiled; no lever), Fr variants, squaring inlines. Parked: jolt-inlines-p256 limb-compare port (39k rows/verify) — jolt-side, after the B lanes (shared path dep must not move under them).
