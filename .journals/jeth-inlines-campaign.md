@@ -47,7 +47,7 @@ worktrees only (from ~/dev/jeth; never touch ~/dev/jeth main or amber-nolane's c
 - 21:35 merged tree (57eb4b6 = hash + p256) 781: 603,149,073 rows, hash ok, perms 115,373 — equals the hash lane's number (p256 has no calls in the set) → lanes compose. My own trace also rewrote amber-nolane/data/25905781/trace-summary.json (jeth writes it beside the input) — restored to the record; inputs now copied to /tmp/inlines-a-data/<block>/input.bin for all future runs.
 - review 2283cbc9 (bigint) APPROVE; S1–S3 + nits + rebase onto inlines-a delegated back to fd91aeb3.
 
-## Current wave: B (planning 22:10)
+## Archived wave B (2026-09-09 22:50 – 2026-09-10 02:45) — PR #3 https://github.com/0xAndoroid/jeth/pull/3 (inlines-b → inlines-a); set 13.763942 → 13.653997; Aztec −3.15%
 - Targets (ranked): bn254 Fq MULQ/SOPQ2 (+Fp2) — amber design, needs custom inline registration; BLS12-381 Fp (6-limb) ops; KZG point-eval shares BLS Fp; BLAKE2F per-round inline family (r ≠ 12 adversarial bound 13.9B rows); MODEXP big limbs (1024-byte case 6.0M rows/call, 183 c/g).
 - Registration decision: custom inlines need an InlineExtension variant → jolt-private branch off jolt-amber-nolane with one added variant + profile entry; the inline crates themselves live in jeth (crates/inlines/...), opcode 0x2B.
 
@@ -76,3 +76,7 @@ Phase B prep in flight:
 - 01:43 inlines-b @ a7532a9 (blake2f merged) 781 = 601,992,101 rows, hash ok → merge clean. bn254 pre-gate: mul 310 / sop2 507 / square 257 rows/call → fused-FP2 package (rule); square left compiled.
 - 01:55 both field lanes touch the same 4 vendored ark-ff files (montgomery_backend.rs if-chain, quadratic_extension.rs arm, lib.rs mod line, Cargo.toml feature) — merge order after reviews: bn254 first (ff), then bls rebased onto it (lane agent resolves; verify 781 + Aztec block on the union). Parked follow-ups: BLS FP2SQR fused (≈ −6% more on G2/pairing), blake2f FULL20 (−4% on r1000), jolt-inlines-p256 limb compares.
 - 02:00 reviewer observation (bn254 F4, repo-wide): all gates are execute-only (tracer rows + hashes); no proof has ever been generated with the custom sequences (LUI/VirtualMULI with top-bit-set 64-bit immediates — precedent in p256, low risk). Decision item for the operator at Phase B PR: prove one small synth block bearing BN254 pairing + BLS ops + BLAKE2F before merging inlines-b into amber-nolane. jeth has no prove path today.
+
+## Final phase (02:45): HTML report
+- Spend at PR #3: ≈ $151 (all tasks incl. reviews). Remaining: report agent (fable-medium, html-report-design skill) → reply parent (4).
+- Decision item flagged in PR #3 + reply: no proof generated yet (execute-only gates) — recommend one Jolt proof of a small synth block with bn254 pairing + BLS op + BLAKE2F before merging into amber-nolane.
