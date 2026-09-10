@@ -8,6 +8,8 @@ std = []
 code-library = []
 # Deferred tx, precompile, and authorization recovery using the secp256k1 inlines.
 secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
+# RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
+p256-inline = ["dep:jolt-inlines-p256"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []
@@ -28,6 +30,7 @@ stateless.workspace = true
 tries.workspace = true
 zeth-mpt.workspace = true
 jolt-inlines-secp256k1 = { workspace = true, optional = true }
+jolt-inlines-p256 = { workspace = true, optional = true }
 
 alloy-rpc-types-debug.workspace = true
 alloy-trie.workspace = true
@@ -68,5 +71,7 @@ jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-no
 
 [dev-dependencies]
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jolt-inlines-p256 = { workspace = true, features = ["host"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 k256 = { workspace = true, features = ["ecdsa"] }
 postcard = { workspace = true, features = ["use-std"] }

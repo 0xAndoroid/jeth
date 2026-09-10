@@ -19,6 +19,8 @@ pub mod container;
 mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
+#[cfg(all(feature = "p256-inline", any(target_arch = "riscv64", test)))]
+mod p256;
 #[cfg(feature = "premeasure")]
 pub mod premeasure;
 mod recover;

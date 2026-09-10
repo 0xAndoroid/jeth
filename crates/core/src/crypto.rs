@@ -105,6 +105,14 @@ impl Crypto for JoltCrypto {
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
         crate::bn254::g1_mul(point, scalar)
     }
+
+    /// RIP-7212 P256VERIFY via the Jolt P-256 inline (guest only; the native
+    /// reference keeps revm's `p256` software path).
+    #[cfg(all(feature = "p256-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn secp256r1_verify_signature(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
+        crate::p256::verify(msg, sig, pk)
+    }
 }
 
 /// Recover `keccak(pubkey)` from a prehash signature via the Jolt secp256k1

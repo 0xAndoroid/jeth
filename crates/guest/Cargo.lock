@@ -1650,6 +1650,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
  "jolt-sdk",
  "reth-chainspec",
@@ -1696,6 +1697,14 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
+
+[[package]]
+name = "jolt-inlines-p256"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+ "serde",
+]
 
 [[package]]
 name = "jolt-inlines-sdk"
