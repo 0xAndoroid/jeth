@@ -2341,6 +2341,7 @@ dependencies = [
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "k256",
  "postcard",
@@ -2358,6 +2359,7 @@ dependencies = [
  "revm-database-interface",
  "revm-state",
  "serde",
+ "sha2",
  "stateless",
  "tries",
  "zeth-mpt",
@@ -2376,6 +2378,7 @@ dependencies = [
  "jeth-core",
  "jolt-inlines-keccak256",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "k256",
  "object 0.36.7",
  "postcard",
@@ -2432,6 +2435,13 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "serde",
+]
+
+[[package]]
+name = "jolt-inlines-sha2"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
 ]
 
 [[package]]

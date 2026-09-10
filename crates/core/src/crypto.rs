@@ -6,6 +6,8 @@ use crate::recovery_batch::{self, Equation};
 use alloc::vec::Vec;
 use alloy_primitives::{B256, U256};
 use jolt_inlines_secp256k1::{Secp256k1Fq, Secp256k1Fr, Secp256k1Point, Secp256k1PointExt};
+#[cfg(all(feature = "sha2-inline", target_arch = "riscv64"))]
+use jolt_inlines_sha2::Sha256;
 use reth_evm::revm::precompile::{Crypto, PrecompileHalt};
 
 /// secp256k1 curve order n (little-endian limbs).
@@ -104,6 +106,15 @@ impl Crypto for JoltCrypto {
     #[inline]
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
         crate::bn254::g1_mul(point, scalar)
+    }
+
+    /// SHA-256 on the Jolt inline (SHA256INIT 1864 + SHA256 1900 rows per 64-byte block, vs
+    /// ~4.2k for the sha2 crate). Guest builds only: the native build keeps revm's default so
+    /// `run-native` stays the independent reference.
+    #[cfg(all(feature = "sha2-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn sha256(&self, input: &[u8]) -> [u8; 32] {
+        Sha256::digest(input)
     }
 }
 
@@ -277,4 +288,43 @@ fn mul_4x128(scalars: [u128; 4], points: [Secp256k1Point; 2]) -> Secp256k1Point 
         }
     }
     res
+}
+
+// Native models of the two inlines (the `host` fallbacks of the inline crates, which is what the
+// tracer executes too) against the software implementations they replace in the guest.
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    fn xorshift(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    fn random_bytes(rng: &mut u64, len: usize) -> Vec<u8> {
+        (0..len).map(|_| xorshift(rng) as u8).collect()
+    }
+
+    /// Every length through 600 (padding boundaries 55/56/63/64/119/120 included), the harness
+    /// sizes, and all-0xff inputs, against the sha2 crate revm's default `sha256` uses.
+    #[test]
+    fn sha256_inline_model_matches_sha2() {
+        use sha2::Digest;
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        let lens = (0..=600usize).chain([1024, 8192, 20_000]);
+        for len in lens {
+            let msg = random_bytes(&mut rng, len);
+            let want: [u8; 32] = sha2::Sha256::digest(&msg).into();
+            assert_eq!(jolt_inlines_sha2::Sha256::digest(&msg), want, "len {len}");
+            let ones: Vec<u8> = core::iter::repeat_n(0xff, len).collect();
+            let want: [u8; 32] = sha2::Sha256::digest(&ones).into();
+            assert_eq!(
+                jolt_inlines_sha2::Sha256::digest(&ones),
+                want,
+                "0xff len {len}"
+            );
+        }
+    }
 }

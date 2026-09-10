@@ -1651,6 +1651,7 @@ dependencies = [
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "reth-chainspec",
  "reth-consensus",
@@ -1715,6 +1716,10 @@ dependencies = [
  "num-integer",
  "serde",
 ]
+
+[[package]]
+name = "jolt-inlines-sha2"
+version = "0.1.0"
 
 [[package]]
 name = "jolt-platform"

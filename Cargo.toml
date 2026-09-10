@@ -48,6 +48,7 @@ revm-state = { version = "11.0.1", default-features = false }
 jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk" }
 jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
 jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/secp256k1", default-features = false }
+jolt-inlines-sha2 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/sha2", default-features = false }
 tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/tracer" }
 jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/common" }
 jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/crates/jolt-program" }
