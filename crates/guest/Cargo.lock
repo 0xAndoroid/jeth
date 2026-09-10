@@ -500,6 +500,7 @@ dependencies = [
  "digest 0.10.7",
  "educe",
  "itertools 0.13.0",
+ "jeth-inlines-bls12-381",
  "jeth-inlines-bn254",
  "num-bigint",
  "num-traits",
@@ -1691,6 +1692,13 @@ dependencies = [
 
 [[package]]
 name = "jeth-inlines-blake2f"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jeth-inlines-bls12-381"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",

@@ -83,9 +83,9 @@ lto = "thin"
 [patch."https://github.com/paradigmxyz/stateless.git"]
 zeth-mpt = { path = "crates/vendor/zeth-mpt" }
 
-# Vendored ark-ff 0.5.0 with the guest-only bn254 inline hook (feature `jolt-bn254-inline`,
-# riscv64 only): native builds compile the upstream code. Applies to every registry
-# dependent (revm-precompile, ark-ec, ark-bn254, jeth-core); the a16z fork used by the jolt
-# crates is a different source and is untouched.
+# Vendored ark-ff 0.5.0 with the guest-only bn254 and BLS12-381 inline hooks (features
+# `jolt-bn254-inline`, `jolt-bls12-381-inline`; riscv64 only): native builds compile the upstream
+# code. Applies to every registry dependent (revm-precompile, ark-ec, ark-bn254, ark-bls12-381,
+# jeth-core); the a16z fork used by the jolt crates is a different source and is untouched.
 [patch.crates-io]
 ark-ff = { path = "crates/vendor/ark-ff" }

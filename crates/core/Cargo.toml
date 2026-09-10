@@ -22,6 +22,9 @@ bigint-inline = ["dep:jolt-inlines-bigint"]
 # bn254 Fq multiplication (ecadd/ecmul/pairing precompiles) through the BN254_* inlines: the
 # vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.
 bn254-inline = ["dep:jeth-inlines-bn254", "ark-ff/jolt-bn254-inline"]
+# BLS12-381 Fq multiplication (EIP-2537 precompiles, KZG point evaluation) through the BLS12_381_*
+# inlines: the vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.
+bls12-381-inline = ["ark-ff/jolt-bls12-381-inline"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []
