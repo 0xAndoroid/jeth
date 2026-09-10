@@ -186,7 +186,8 @@ the opcode-max-cg `evm.py`/`runner.py`)
 `build_guest_side.sh <side>` builds the four guest ELF flavours (validate_block ± pertx ± compute_advice)
 into `target/guest-<side>-*`; `bls_gate.py build|measure <side>|blocks <side>|report` (synth configs,
 real blocks); `bls_forged.py build|native|trace <side>|report` (199 forged cases); `profile_block.sh
-<side> <block>`; `bls_report.py` assembles the tables above.
+<side> <block>`; `bls_report.py` assembles the tables above; `bn254_gate.py <side> <tag>` measures the bn254
+ECPAIRING k=1 synth block (`results-bn254-<tag>.json`).
 
 ## Notes / open questions
 
@@ -286,3 +287,37 @@ Blocks (constant guard): 25905781 596,202,724 rows, hash 0xf691da3f…, perms 11
 BLS calls); 25694235 (input copied from /Volumes/Dev/jeth-top50-data) 1,375,135,731 rows (feature-off
 1,426,158,765 → bls-only 1,407,097,112 → union 1,381,243,122 → now −3.58% vs off), hash
 0x1a8f8e57…a0659e, perms 193,806. Workspace nextest: 71 passed.
+
+## bn254 Fq2 guard follow-up (review N2 + N1)
+
+Reviewer finding: `jolt_bn254::is_fq2` was still a run-time fn (`characteristic()` slice compare + raw
+pointer read of `NONRESIDUE`). LLVM happened to fold it in the jeth guest (810 rows per bn254 Fq2 mul =
+FP2MULQ 797 + two conditional subtractions), but the dispatch must not depend on a fold.
+
+Change: `is_fq2` is a `const fn` mirroring the BLS guard — `size_of::<BaseField>() == 32`,
+`align_of::<BaseField>() == 8`, `size_of::<QuadExtField>() == 64`, `offset_of!(c0, c1) == 0, 32`,
+`size_of::<BasePrimeField::BigInt>() == 32`, then the prime field's `MODULUS` limbs == q and the
+`NONRESIDUE` limbs == `BN254_MINUS_ONE` (crate constant already asserted against `-Fq::ONE` and
+`Fq2Config::NONRESIDUE` in the bn254 crate tests) through const raw-pointer reads — bound to
+`QuadExtField::<P>::JOLT_BN254_FQ2`; the `MulAssign` arm tests the const and the
+`extension_degree()`/`characteristic()` path is gone. N1: `align_of == 8` added to the BLS `is_fq2`
+pre-checks and to `MontBackend::JOLT_BLS12_381_FQ`.
+
+Codegen proof (riscv64imac release rlib of a probe crate on the vendored ark-ff with both hook
+features; `ark_bn254::Fq2 *= Fq2`, `ark_bn254::Fq *= Fq`, `ark_bls12_381::Fq2 *= Fq2`;
+`llvm-objdump -d -r`): bn254 Fq2 mul = the FP2MULQ word `00b5352b` + two conditional subtractions
+(ld/sltu/sub/bltu against the modulus constant pool), no calls; bn254 Fq mul = MULQ `00b5052b` + one
+subtraction; BLS Fq2 mul = FP2MUL `02b5252b` + `ret`. No memcmp/bcmp relocation anywhere in the rlib.
+
+Measurements (guest rebuilt from this tree; pre-fix ELF = 92a1093 tree; `bn254_gate.py`, per-tx Δ
+method, K = 8 vs 4 calls):
+
+| | pre-fix | post-fix |
+|---|---:|---:|
+| BN254_PAIRING/k1 rows/call | 9,551,488.5 | 9,551,488.5 |
+| bn254-00 block rows | 126,855,692 | 126,855,692 (hash 0xee98a00d… equal) |
+| 25905781 rows / hash / perms | 596,202,724 / 0xf691da3f… / 115,373 | unchanged |
+
+The bn254 lane reported 9,544,692 rows/call for the same config on its own tree; the +6,796 here is the
+merged (bn254 + BLS12-381 + blake2f) code layout, identical before and after this change. Workspace
+nextest: 71 passed.

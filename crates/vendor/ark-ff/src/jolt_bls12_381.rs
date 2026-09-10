@@ -5,7 +5,7 @@
 use crate::fields::models::fp::{Fp, FpConfig};
 use crate::fields::models::quadratic_extension::{QuadExtConfig, QuadExtField};
 use crate::{Field, PrimeField};
-use core::mem::{offset_of, size_of, MaybeUninit};
+use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 use jeth_inlines_bls12_381::{LIMBS, MINUS_ONE, MODULUS};
 
 /// `limbs == p`; false for every other modulus and every other limb count.
@@ -74,12 +74,13 @@ const fn same(a: &[u64; LIMBS], b: &[u64; LIMBS]) -> bool {
 }
 
 /// The quadratic extension of BLS12-381 Fq by the nonresidue −1, with `c0` at offset 0 and `c1` at
-/// offset 48 (the layout the fused inline reads and writes). Evaluated at compile time: a 48-byte
-/// base field whose prime field has the 48-byte modulus p is `Fp<MontBackend<_, 6>, 6>`
+/// offset 48 (the layout the fused inline reads and writes). Evaluated at compile time: a 48-byte,
+/// 8-aligned base field whose prime field has the 48-byte modulus p is `Fp<MontBackend<_, 6>, 6>`
 /// (`MontBackend` is the only `FpConfig` in the crate graph), and its nonresidue is compared limb
 /// by limb against −1 in Montgomery form.
 pub(crate) const fn is_fq2<P: QuadExtConfig>() -> bool {
     if size_of::<P::BaseField>() != 8 * LIMBS
+        || align_of::<P::BaseField>() != 8
         || size_of::<QuadExtField<P>>() != 16 * LIMBS
         || offset_of!(QuadExtField<P>, c0) != 0
         || offset_of!(QuadExtField<P>, c1) != 8 * LIMBS

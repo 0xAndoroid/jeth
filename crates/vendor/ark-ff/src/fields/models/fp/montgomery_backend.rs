@@ -611,6 +611,7 @@ impl<T: MontConfig<N>, const N: usize> MontBackend<T, N> {
     /// inlines read and write); false for any other modulus or layout.
     const JOLT_BLS12_381_FQ: bool = crate::jolt_bls12_381::is_modulus(&T::MODULUS.0)
         && core::mem::size_of::<Fp<Self, N>>() == 48
+        && core::mem::align_of::<Fp<Self, N>>() == 8
         && core::mem::offset_of!(Fp<Self, N>, 0) == 0;
 }
 

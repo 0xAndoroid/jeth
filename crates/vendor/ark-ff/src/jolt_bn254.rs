@@ -4,8 +4,8 @@
 #![allow(unsafe_code)]
 
 use crate::fields::models::quadratic_extension::{QuadExtConfig, QuadExtField};
-use crate::{BigInt, BigInteger, Field};
-use core::mem::{offset_of, size_of, MaybeUninit};
+use crate::{BigInt, BigInteger, Field, PrimeField};
+use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 use jeth_inlines_bn254::{BN254_MINUS_ONE, BN254_MODULUS};
 
 const Q: BigInt<4> = BigInt(BN254_MODULUS);
@@ -63,24 +63,52 @@ pub(crate) fn sum_of_products_2<F: Copy, const M: usize>(a: &[F; M], b: &[F; M])
     }
 }
 
+/// Four limbs read from a 32-byte constant (a `BigInt<4>` or an `Fp<MontBackend<_, 4>, 4>`).
+///
+/// # Safety
+/// `T` must be exactly four initialized `u64` words.
+const unsafe fn limbs<T>(value: &T) -> [u64; 4] {
+    *(value as *const T as *const [u64; 4])
+}
+
+const fn same(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    let mut i = 0;
+    while i < 4 {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 /// The quadratic extension of bn254 Fq by the nonresidue −1, with `c0` at offset 0 and `c1` at
-/// offset 32 (the layout the fused inline reads and writes).
-/// Every operand is a compile-time constant, so each monomorphization folds to `true`/`false`:
-/// the Fq2 path costs FP2MULQ (797 rows, golden-tested) plus two conditional subtractions.
-#[inline(always)]
-pub(crate) fn is_fq2<P: QuadExtConfig>() -> bool {
+/// offset 32 (the layout the fused inline reads and writes). Evaluated at compile time: a 32-byte,
+/// 8-aligned base field whose prime field has the 32-byte modulus q is `Fp<MontBackend<_, 4>, 4>`
+/// (`MontBackend` is the only `FpConfig` in the crate graph), and its nonresidue is compared limb
+/// by limb against −1 in Montgomery form.
+pub(crate) const fn is_fq2<P: QuadExtConfig>() -> bool {
     if size_of::<P::BaseField>() != 32
+        || align_of::<P::BaseField>() != 8
         || size_of::<QuadExtField<P>>() != 64
         || offset_of!(QuadExtField<P>, c0) != 0
         || offset_of!(QuadExtField<P>, c1) != 32
-        || P::BaseField::extension_degree() != 1
-        || P::BaseField::characteristic() != &BN254_MODULUS[..]
+        || size_of::<<<P::BaseField as Field>::BasePrimeField as PrimeField>::BigInt>() != 32
     {
         return false;
     }
-    // SAFETY: a 32-byte prime-field element with characteristic q is four u64 limbs.
-    let nonresidue = unsafe { *(&P::NONRESIDUE as *const P::BaseField as *const [u64; 4]) };
-    nonresidue == BN254_MINUS_ONE
+    // SAFETY: both constants are 32 initialized bytes (sizes checked above).
+    let (modulus, nonresidue) = unsafe {
+        (
+            limbs(&<<P::BaseField as Field>::BasePrimeField as PrimeField>::MODULUS),
+            limbs(&P::NONRESIDUE),
+        )
+    };
+    is_modulus(&modulus) && same(&nonresidue, &BN254_MINUS_ONE)
+}
+
+impl<P: QuadExtConfig> QuadExtField<P> {
+    pub(crate) const JOLT_BN254_FQ2: bool = is_fq2::<P>();
 }
 
 /// a ← a·b in Fq2 for canonical coefficients.

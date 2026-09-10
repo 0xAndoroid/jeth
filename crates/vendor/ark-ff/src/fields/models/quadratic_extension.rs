@@ -650,7 +650,7 @@ impl<'a, P: QuadExtConfig> MulAssign<&'a Self> for QuadExtField<P> {
     #[inline]
     fn mul_assign(&mut self, other: &Self) {
         #[cfg(all(target_arch = "riscv64", feature = "jolt-bn254-inline"))]
-        if crate::jolt_bn254::is_fq2::<P>() {
+        if Self::JOLT_BN254_FQ2 {
             return crate::jolt_bn254::fp2_mul_assign(self, other);
         }
         #[cfg(all(target_arch = "riscv64", feature = "jolt-bls12-381-inline"))]
