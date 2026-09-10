@@ -2066,6 +2066,12 @@ review before merging.
 | POINTEVAL · MAP_FP2_TO_G2 · G2ADD · G1MSM · MAP_FP_TO_G1 · G1ADD | −16.5% · −11.7% · −5.9% · −4.9% · −3.3% · −0.7% | |
 | BLAKE2F r1 · r10 · r12 (t[1] ≠ 0) · r13 · r20 · r100 · r1000 | 7,042 → 6,970 · 9,318 → 7,691 · 9,822 → 7,931 · 10,071 → 8,007 · 11,837 → 8,562 · 32,084 → 15,625 · 259,756 → 94,977 | 58.7 → 58.1 · 72.2 → 59.6 · 75.0 → 60.5 · 76.3 → 60.7 · 85.2 → 61.6 · 146.5 → 71.4 · **232.1 → 84.9** |
 
+Correction to the max-c/g study: its POINTEVAL row used a degenerate input
+(zero polynomial, infinity commitment/proof → 283 c/g). A valid KZG proof
+measures 37,923,831 → 31,672,325 rows per call (757 → 632 c/g), so after this
+campaign POINTEVAL is the worst precompile bound (above the old P256VERIFY
+539), followed by BLS_G2MSM k1 359, MAP_FP_TO_G1 287, G1MSM k1 271, G1ADD 261.
+
 Adversarial 60M-gas single-op blocks: BLAKE2F r1000 13.93B → 5.09B rows;
 BN254PAIRING ≈ 9.0B → 7.2B; BLS_G2MSM k1 26.3B → 21.5B. The BLS G1 paths
 gain little (Fp-only, one MULP saves 9%); the G2/pairing/KZG paths sit on
