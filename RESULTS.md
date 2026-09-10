@@ -1946,3 +1946,87 @@ cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-
 Repeat `run-native` / `trace --skip-build` for 25905782–25905790; the ten
 `data/<block>/input.bin` files are the wave-4 repacks (JEF, production code
 library).
+
+## Campaign inlines-a — existing Jolt inlines wired into jeth (2026-09-09)
+
+Jolt ships eight inline crates; jeth used two (keccak256, secp256k1). This
+branch wires four more, all through revm's `Crypto` trait (`JoltCrypto`,
+`crates/core/src/crypto.rs`) or the vendored interpreter, guest-only
+(`cfg(all(feature, target_arch = "riscv64"))`) so `run-native` stays the
+independent software reference. No jolt-side edits; `MAX_SUFFIXES` and the
+lookup tables are untouched. Each lane was reviewed by an independent
+adversarial reviewer with a soundness focus (accept-set / output equality
+against the software path) before merging.
+
+| inline | jeth site | rows per unit before → after | c/g before → after |
+|---|---|---:|---:|
+| p256 (MULQ 264, FAKE_GLV_ADV 29) | P256VERIFY (0x100), `crates/core/src/p256.rs` | 3,784,035 → 501,756 per verify | **539.1 → 71.5** |
+| sha2 (SHA256INIT 1864 + SHA256 1900) | SHA256 (0x02) | 554,560 → 255,650 (8 KiB) · 78,673 → 38,595 (1 KiB) · 9,751 → 7,004 (32 B) | 170.6 → 78.6 · 139.7 → 68.6 · 51.1 → 36.7 |
+| blake2 (BLAKE2 1067, fixed 12 rounds) | BLAKE2F (0x09), `rounds == 12 && t[1] == 0` only | 9,853 → 7,814 (r12) · r1000 unchanged | 75.2 → 59.7 · 232.4 |
+| bigint (BIGINT256_MUL 141) | MULMOD 512-bit product (vendored interpreter, `jeth_mul_mod` hook) | 1,239 → 1,005 (op alone 65.2 → 52.9 c/g); N128 1,015 → 788; N3 947 → 718 | — |
+| bigint | MODEXP, odd moduli of 9..=32 significant bytes, `crates/core/src/bigint.rs` Montgomery ladder | 32-32-32 479,810 → 207,620 · 24-32-24 338,167 → 202,788 · 16-32-16 220,236 → 200,067 · 32-e1-32 19,192 → 11,741 | 115.2 → ~49.8 |
+
+Not routed, measured: MUL (95 rows compiled vs 141 inline), EXP, ADDMOD,
+MODEXP with ≤ 8-byte moduli (ladder would be +38%), 64+-byte moduli and
+even moduli (aurora software path), BLAKE2F with rounds ≠ 12 or a 128-bit
+counter (software), the one software SHA-256 per block in the EIP-7685
+requests hash. Adversarial 60M-gas single-op blocks: P256VERIFY 32.35B →
+4.29B rows (3.0× the worst real block, 1.43B); SHA256/8 KiB 10.23B → 4.72B;
+BLAKE2F r12 4.51B → 3.58B; BLAKE2F r1000 13.94B unchanged; MODEXP/32-32-32
+loop ≈ 6.9B → ≈ 3.0B.
+
+### Ten-block set (jolt-amber-nolane @ a0d7b74baa; before = the no-lane ledger above)
+
+| Block | Gas | Rows before | Rows after | Δ rows | c/g before | c/g after | Perms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 603,187,863 | 601,992,101 | -1,195,762 | 13.638429 | 13.611392 | 115,373 |
+| 25905782 | 47,065,991 | 721,922,345 | 715,141,963 | -6,780,382 | 15.338514 | 15.194452 | 124,117 |
+| 25905783 | 25,320,107 | 333,212,717 | 333,107,908 | -104,809 | 13.160004 | 13.155865 | 61,886 |
+| 25905784 | 19,039,352 | 251,155,774 | 250,985,973 | -169,801 | 13.191403 | 13.182485 | 51,424 |
+| 25905785 | 47,351,982 | 629,550,111 | 628,588,538 | -961,573 | 13.295116 | 13.274809 | 121,623 |
+| 25905786 | 26,354,048 | 291,933,012 | 291,810,444 | -122,568 | 11.077350 | 11.072699 | 59,024 |
+| 25905787 | 27,961,947 | 401,722,269 | 395,621,866 | -6,100,403 | 14.366749 | 14.148581 | 70,085 |
+| 25905788 | 6,217,605 | 92,465,042 | 92,464,391 | -651 | 14.871489 | 14.871384 | 19,238 |
+| 25905789 | 44,608,380 | 677,090,274 | 676,244,012 | -846,262 | 15.178544 | 15.159573 | 133,642 |
+| 25905790 | 32,881,199 | 432,652,906 | 432,649,242 | -3,664 | 13.158064 | 13.157952 | 90,051 |
+| Gas-weighted | 321,027,690 | 4,434,892,313 | 4,418,606,438 | -16,285,875 | 13.814672 | **13.763942** | 846,463 |
+
+−16,285,875 rows, 13.814672 → **13.763942 c/g** (−0.37%). The set has no
+P256VERIFY or BLAKE2F calls and 15 SHA256 calls; the rows come from MULMOD
+(781 5,288 calls; 782 29,480; 787 15,710) and MODEXP (787 58 calls, 785 8,
+789 6). The set-wide win is small by construction — these inlines cap the
+adversarial per-op cost, which is where the study found the 20× gap.
+The feature-off build of this tree traces every block 14 rows under the
+ledger (build-path layout, identical sources); per-lane deltas were measured
+tree-internally.
+
+### Gates
+
+- `run-native` and `jeth trace` block hashes equal the records on all ten
+  blocks; keccak permutation counts equal the ledger on all ten.
+- Forged/edge blocks (synth harness, outputs SSTOREd, guest hash == native
+  hash): P256VERIFY 38 vectors (r/s ∈ {0, n, n−1, 2²⁵⁶−1}, pk off-curve /
+  x ≥ p / (0,0) / −Q, msg ≥ n, z = 0 with Q ∈ {G, 2G, 3G}, lengths 0/159/161,
+  RIP-7212 + high-s twins); SHA256 18 lengths incl. 55/56/63/64/65/119/120;
+  BLAKE2F 21 (EIP-152 vectors 3–7, t[1] ≠ 0, counter max, r0/r1/r11/r13/r1000);
+  MULMOD 142 triples (N ∈ {0, 1, even, 2²⁵⁵}, a = b = N−1); MODEXP 761 calls
+  (even/zero/empty/over-padded moduli, 33–64-byte bases, 30-step chains).
+- Native differential tests: p256 vs revm's `verify_impl` (edge vectors +
+  seeded random 200 keys + 200 garbage inputs), sha2 vs the `sha2` crate,
+  blake2 vs revm `algo::compress` (4,000 random), MULMOD vs ruint, MODEXP vs
+  aurora-engine-modexp — workspace nextest 37/37; pre-commit fmt + clippy
+  `-D warnings` on every commit.
+- P-256 semantics: the inline `ecdsa_verify` rejects z = 0 while the
+  software path accepts it; jeth rewrites that case to the equivalent
+  instance `(z' = r, r, s, Q − G)` (or `(n − r, r, s, 2G)` when Q = G) —
+  proven in `.journals/lanes/inlines-a-p256.md`, pinned by tests.
+
+### Reproduce
+
+As in the previous section with `cd /Volumes/Dev/worktrees/jeth/inlines-a`,
+`CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-inlines-a`,
+`JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-inlines-a-guest`;
+copy `data/<block>/input.bin` elsewhere before tracing (`jeth trace` writes
+`trace-summary.json` beside its input). Per-op numbers: the synth harness
+(`crates/host/src/bin/synth.rs`, `.journals/opcode-max-cg/`), lane copies in
+`.journals/lanes/inlines-a-{p256,hash,bigint}.md`.
