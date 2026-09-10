@@ -10,12 +10,8 @@ edition = "2021"
 [workspace]
 
 [features]
-default = ["keccak-census", "bigint-inline"]
+default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
-# EVM MULMOD 512-bit product via the BIGINT256_MUL inline (the vendored revm-interpreter
-# calls the `jeth_mul_mod` hook in lib.rs): 1,239 -> 1,005 rows per MULMOD unit on the
-# synth harness, -1.16M rows on block 25905781 (.journals/lanes/inlines-a-bigint.md).
-bigint-inline = ["jeth-core/bigint-inline", "revm-interpreter/bigint-inline"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
 # normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
 # 21 rows per keccak call; `--no-default-features` drops it.
@@ -35,9 +31,11 @@ compute_advice = ["jeth-core/compute_advice"]
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", features = ["bump-alloc"] }
 jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
 
-jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "p256-inline", "guest-instrument"] }
-# Direct dependency only to reach the vendored crate's `bigint-inline` feature.
-revm-interpreter = { version = "35.0.1", default-features = false }
+jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "p256-inline", "bigint-inline", "guest-instrument"] }
+# Direct dependency only to reach the vendored crate's `bigint-inline` feature:
+# EVM MULMOD through the `jeth_mul_mod` hook in lib.rs (always on, like the
+# jeth-core inline features above).
+revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline"] }
 
 # `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM
 # KECCAK256 opcode, address derivation) to our `native_keccak256` shim → Jolt inline.

@@ -120,7 +120,7 @@ enum Command {
         pcs_of: Option<String>,
         /// With --rows: count entries (PC == symbol start) of every symbol
         /// containing one of these substrings (comma-separated) — call counts.
-        #[arg(long, value_delimiter = ',', default_value = "")]
+        #[arg(long, value_delimiter = ',')]
         entries: Vec<String>,
         /// Skip rebuilding the (symbolized) guest ELF pair if it already exists.
         #[arg(long)]
@@ -235,11 +235,7 @@ fn main() -> Result<()> {
                 .filter(|f| !f.is_empty())
                 .map(|f| f.as_str())
                 .collect();
-            let entries: Vec<&str> = entries
-                .iter()
-                .filter(|f| !f.is_empty())
-                .map(|f| f.as_str())
-                .collect();
+            let entries: Vec<&str> = entries.iter().map(String::as_str).collect();
             profile::run(
                 &input,
                 every,

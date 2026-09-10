@@ -228,10 +228,11 @@ pub unsafe extern "C" fn jeth_ecrecover_prehash(
     }
 }
 
-/// Hook for the vendored revm-interpreter's MULMOD (`bigint-inline` feature):
-/// `(a * b) % m` through the Jolt BIGINT256_MUL inline, remainder written over
-/// `m` (the top-of-stack word). Zero when `m` is zero.
-#[cfg(all(feature = "guest", feature = "bigint-inline"))]
+/// Hook for the vendored revm-interpreter's MULMOD: `(a * b) % m` through the
+/// Jolt BIGINT256_MUL inline, remainder written over `m` (the top-of-stack
+/// word). Zero when `m` is zero. Unconditional because Cargo.toml enables the
+/// interpreter's `bigint-inline` feature (which emits the extern declaration)
+/// in every configuration of this crate.
 #[no_mangle]
 pub unsafe extern "C" fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64) {
     use alloy_primitives::U256;

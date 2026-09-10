@@ -30,12 +30,9 @@ pub fn mul_mod(a: &U256, b: &U256, modulus: &mut U256) {
 /// MODEXP precompile arithmetic (`base^exp mod modulus`, big-endian operands)
 /// for an odd modulus of 9..=32 significant bytes and a base of at most 32:
 /// a 4-limb Montgomery ladder whose products come from the inline. Any other
-/// shape returns `None` for the caller's software fallback (aurora beats the
-/// fixed-width ladder on one-limb moduli: 569 vs 783 rows per exponent bit).
-/// The result is the minimal big-endian encoding (`[0]` for zero); revm pads
-/// or truncates it to the declared modulus length, so the precompile output
-/// matches aurora-engine-modexp byte for byte even though aurora keeps whole
-/// limbs.
+/// shape returns `None` for the caller's software fallback (aurora is cheaper
+/// than the fixed-width ladder on one-limb moduli). The result is the 32-byte
+/// big-endian value; revm pads or truncates it to the modulus length.
 pub fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
     fn strip(bytes: &[u8]) -> &[u8] {
         let first = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
@@ -50,9 +47,6 @@ pub fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let n = U256::from_be_slice(modulus);
-    if exp.is_empty() {
-        return Some(alloc::vec![1]);
-    }
     // -n^-1 mod 2^64 by Newton iteration (n0 is odd, so n0 is its own inverse mod 8).
     let n0 = n.as_limbs()[0];
     let mut inv = n0;
@@ -73,12 +67,11 @@ pub fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
             }
         }
     }
-    let out = mont_mul(&x, &U256::from(1), &n, n_prime);
-    Some(if out.is_zero() {
-        alloc::vec![0]
-    } else {
-        out.to_be_bytes_trimmed_vec()
-    })
+    Some(
+        mont_mul(&x, &U256::from(1), &n, n_prime)
+            .to_be_bytes::<32>()
+            .to_vec(),
+    )
 }
 
 /// `a * b * 2^-256 mod n` for `a, b < n` (odd `n`, `n_prime = -n^-1 mod 2^64`):
@@ -227,7 +220,6 @@ mod tests {
         assert_eq!(got.is_some(), ladder_shape(base, modulus));
         if let Some(got) = &got {
             let want = aurora_engine_modexp::modexp(base, exp, modulus);
-            assert!(got.len() <= modulus.len());
             assert_eq!(
                 pad(got, modulus.len()),
                 pad(&want, modulus.len()),
