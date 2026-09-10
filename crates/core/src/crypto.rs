@@ -153,6 +153,12 @@ fn blake2b_compress_inline(h: &mut [u64; 8], m: &[u64; 16], t0: u64, f: bool) {
             options(nostack)
         );
     }
+
+    #[cfg(all(feature = "p256-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn secp256r1_verify_signature(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
+        crate::p256::verify(msg, sig, pk)
+    }
 }
 
 /// Recover `keccak(pubkey)` from a prehash signature via the Jolt secp256k1

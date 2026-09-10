@@ -43,6 +43,7 @@ jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
+jolt-inlines-p256 = { workspace = true, features = ["host"] }
 
 # profiler: guest ELF symbolization
 object = "0.36"

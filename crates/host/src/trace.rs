@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
-// Register the keccak256 + secp256k1 + sha2 + blake2 inline opcode handlers with the tracer (inventory).
+// Register the keccak256, secp256k1, sha2, blake2 and P-256 inline opcode handlers with the tracer (inventory).
 extern crate jolt_inlines_blake2 as _;
 extern crate jolt_inlines_keccak256 as _;
+extern crate jolt_inlines_p256 as _;
 extern crate jolt_inlines_secp256k1 as _;
 extern crate jolt_inlines_sha2 as _;
 
