@@ -1,0 +1,16 @@
+[package]
+name = "jeth-inlines-blake2f"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+host = ["jolt-inlines-sdk/host"]
+
+[dependencies]
+jolt-inlines-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/sdk", default-features = false }
+
+[dev-dependencies]
+jolt-inlines-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/sdk", default-features = false, features = ["test-utils"] }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/tracer", features = ["std", "test-utils"] }

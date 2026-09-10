@@ -1,6 +1,6 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
-**Latest (2026-09-09, branch `inlines-a` on `amber-nolane`): the ten-block set 25905781–25905790 validates at 13.763942 c/g gas-weighted SELF (amber-nolane 13.814672; wave-4 baseline 19.780546, −30.42%) — the Jolt p256 / sha2 / blake2 / bigint inlines wired into P256VERIFY (539 → 71.5 c/g), SHA256, BLAKE2F, MULMOD and MODEXP; see the last section.**
+**Latest (2026-09-10, branch `inlines-b` on `inlines-a`/`amber-nolane`): the ten-block set 25905781–25905790 validates at 13.653997 c/g gas-weighted SELF (amber-nolane 13.814672; wave-4 baseline 19.780546, −30.98%) — Phase A wires the Jolt p256 / sha2 / blake2 / bigint inlines (P256VERIFY 539 → 71.5 c/g); Phase B adds custom bn254 Fq, BLS12-381 Fp and BLAKE2b-round inlines written in this repo (bn254 pairing −20%, BLS G2/pairing −13%, BLAKE2F r1000 232 → 85 c/g); see the last two sections.**
 
 **Headline (after Workstream A — JEF zero-parse input, 2026-08-18): recent mainnet
 blocks validate inside the Jolt RV64IMAC guest at 28.2–30.5 cycles/gas fully
@@ -2023,10 +2023,148 @@ tree-internally.
 
 ### Reproduce
 
-As in the previous section with `cd /Volumes/Dev/worktrees/jeth/inlines-a`,
-`CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-inlines-a`,
-`JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-inlines-a-guest`;
+As in the previous section with `cd /Volumes/Dev/worktrees/jeth/inlines-a`
+(each worktree builds into its own `target/`; the guest ELF pair goes to
+`target/guest-*`, override with `JETH_GUEST_TARGET_DIR`);
 copy `data/<block>/input.bin` elsewhere before tracing (`jeth trace` writes
 `trace-summary.json` beside its input). Per-op numbers: the synth harness
 (`crates/host/src/bin/synth.rs`, `.journals/opcode-max-cg/`), lane copies in
 `.journals/lanes/inlines-a-{p256,hash,bigint}.md`.
+
+## Campaign inlines-b — custom Jolt inlines written in jeth: bn254 Fq, BLS12-381 Fp, BLAKE2b rounds (2026-09-10)
+
+Three inline crates authored in this repository (`crates/inlines/{bn254,
+bls12-381,blake2f}`, opcode 0x2B = the custom-1 space the Jolt book reserves
+for user inlines), registered through the same inventory path as the stock
+crates under a one-variant jolt-side addition (`InlineExtension::External`,
+jolt-private branch `jolt-inlines-b` @ `3158917254` = `jolt-amber-nolane` +
+that commit; no lookup tables, no instruction kinds, `MAX_SUFFIXES`
+untouched). The field inlines are deterministic product-scanning Montgomery
+multiplications (no advice, no assert rows) hooked into a vendored ark-ff
+0.5.0 (`crates/vendor/ark-ff`, byte-identical upstream plus cfg'd arms in
+`MontBackend::{mul_assign, sum_of_products}` and the Fp2 multiplication,
+guest-only) so every arkworks-backed precompile picks them up; the BLAKE2b
+round inlines cover every BLAKE2F round count and 128-bit counter the stock
+12-round inline cannot. Each crate carries an `InlineSpec` harness (≥ 10k
+random + edge cases through the tracer against an independent big-integer
+model), direct sequence-vs-upstream-arkworks tests, golden row counts, and a
+structural row test; each lane had an independent adversarial soundness
+review before merging.
+
+| inline op | rows (golden) | replaces (compiled, rows/call) | hooked site |
+|---|---:|---:|---|
+| BN254 MULQ / SOPQ2 / FP2MULQ | 273 / 415 / 797 | 310 / 507 / ≈1,000 | ark-ff `MontBackend<FqConfig,4>` mul_assign, sum_of_products (M = 2), Fq2 mul; squaring left compiled (257) |
+| BLS12-381 MULP / SOPP2 / FP2MUL | 647 / 957 / 1,875 | 714 / 1,183 / 2,567 | ark-ff `MontBackend<FqConfig,6>` mul_assign, sum_of_products (M = 2), Fq2 mul; squaring left compiled (581) |
+| BLAKE2b FULL10 / PREFIX_r (r = 1..9) | 880 / 80r + 80 | 253 rows per software round | BLAKE2F for rounds ≠ 12 or t[1] ≠ 0 (software init/fold around ⌊rounds/10⌋ × FULL10 + PREFIX_(rounds mod 10)) |
+
+| precompile / config | rows per unit before → after | c/g before → after |
+|---|---:|---:|
+| BN254PAIRING k1 / k2 / k4 / k8 | 11,872,925 → 9,544,692 · 16,398,981 → 13,093,035 · 26,755,440 → 21,338,705 · 48,843,571 → 38,935,488 | 150.1 → 120.6 · 145.0 → 115.8 · 147.7 → 117.8 · 154.0 → 122.8 |
+| BN254MUL full scalar · BN254ADD | 790,027 → 745,722 · 61,535 → 61,139 | 129.1 → 121.9 · 228.8 → 227.3 |
+| BLS_G2MSM k1 (k8 −18.4%) | 9,925,612 → 8,114,948 (−18.2%) | 438.9 → 358.8 |
+| BLS_PAIRING k1 (k2 −17.6%) | 20,818,507 → 17,141,281 (−17.7%) | 295.6 → 243.4 |
+| POINTEVAL · MAP_FP2_TO_G2 · G2ADD · G1MSM · MAP_FP_TO_G1 · G1ADD | −16.5% · −11.7% · −5.9% · −4.9% · −3.3% · −0.7% | |
+| BLAKE2F r1 · r10 · r12 (t[1] ≠ 0) · r13 · r20 · r100 · r1000 | 7,042 → 6,970 · 9,318 → 7,691 · 9,822 → 7,931 · 10,071 → 8,007 · 11,837 → 8,562 · 32,084 → 15,625 · 259,756 → 94,977 | 58.7 → 58.1 · 72.2 → 59.6 · 75.0 → 60.5 · 76.3 → 60.7 · 85.2 → 61.6 · 146.5 → 71.4 · **232.1 → 84.9** |
+
+Correction to the max-c/g study: its POINTEVAL row used a degenerate input
+(zero polynomial, infinity commitment/proof → 283 c/g). A valid KZG proof
+measures 37,923,831 → 31,672,325 rows per call (757 → 632 c/g), so after this
+campaign POINTEVAL is the worst precompile bound (above the old P256VERIFY
+539), followed by BLS_G2MSM k1 359, MAP_FP_TO_G1 287, G1MSM k1 271, G1ADD 261.
+
+Adversarial 60M-gas single-op blocks: BLAKE2F r1000 13.93B → 5.09B rows;
+BN254PAIRING ≈ 9.0B → 7.2B; BLS_G2MSM k1 26.3B → 21.5B. The BLS G1 paths
+gain little (Fp-only, one MULP saves 9%); the G2/pairing/KZG paths sit on
+Fp2 and gain the fused op. Pre-gates recorded in the lane journals: bn254
+mul_assign 310 / sum_of_products 507 / square 257 rows per call on 781 (the
+design's GO rule for the fused-Fp2 package); BLS G2MSM 73% of rows in Fp
+multiplication.
+
+### Ten-block set + the heaviest top-50 block (jolt-inlines-b @ 3158917254)
+
+| Block | Gas | Rows inlines-a | Rows inlines-b | Δ rows | c/g before | c/g after | Perms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 601,992,101 | 596,202,724 | -5,789,377 | 13.611392 | 13.480491 | 115,373 |
+| 25905782 | 47,065,991 | 715,141,963 | 703,571,840 | -11,570,123 | 15.194452 | 14.948625 | 124,117 |
+| 25905783 | 25,320,107 | 333,107,908 | 327,442,400 | -5,665,508 | 13.155865 | 12.932110 | 61,886 |
+| 25905784 | 19,039,352 | 250,985,973 | 250,985,973 | +0 | 13.182485 | 13.182485 | 51,424 |
+| 25905785 | 47,351,982 | 628,588,538 | 624,144,707 | -4,443,831 | 13.274809 | 13.180963 | 121,623 |
+| 25905786 | 26,354,048 | 291,810,444 | 291,810,444 | +0 | 11.072699 | 11.072699 | 59,024 |
+| 25905787 | 27,961,947 | 395,621,866 | 392,228,863 | -3,393,003 | 14.148581 | 14.027237 | 70,085 |
+| 25905788 | 6,217,605 | 92,464,391 | 92,464,391 | +0 | 14.871384 | 14.871384 | 19,238 |
+| 25905789 | 44,608,380 | 676,244,012 | 671,810,582 | -4,433,430 | 15.159573 | 15.060188 | 133,642 |
+| 25905790 | 32,881,199 | 432,649,242 | 432,649,242 | +0 | 13.157952 | 13.157952 | 90,051 |
+| Gas-weighted | 321,027,690 | 4,418,606,438 | 4,383,311,166 | -35,295,272 | 13.763942 | **13.653997** | 846,463 |
+| 25694235 (Aztec, top-50 worst) | 59,999,955 | 1,426,158,765 | 1,375,135,731 | -51,023,034 | 23.769331 | 22.918946 | 193,806 |
+
+Ten blocks 13.763942 → **13.653997 c/g** (−35,295,272 rows, −0.80%), all
+from bn254 (781: 17,556 Fq muls + 28,133 sum-of-products in ecmul/pairing;
+782 −1.62%, 783 −1.70%); the set has no BLS or BLAKE2F calls (rows measured on the BLS lane worktree at
+the union tree; a rebuild in `inlines-b` reproduces 781 at 596,202,686 — a
+38-row layout shift from the embedded worktree path, same hash and perms). On the
+heaviest block of the top-50 profile (25694235, four Aztec rollup txs on
+BLS12-381 + bn254) the union saves 51.0M rows (−3.58%): BLS share 125.1M →
+≈ 94M, the rest bn254. Cumulative since amber-nolane: 13.814672 → 13.653997
+(−1.16%); since the wave-4 baseline −30.98%.
+
+### Gates
+
+- `run-native` and `jeth trace` hashes equal the records on all ten blocks
+  and on 25694235; keccak permutation counts equal the ledger everywhere.
+- Forged/edge synth blocks (outputs SSTOREd, guest hash == native hash):
+  bn254 62 txs (infinity, off-curve, coordinates q and q+1, scalars 0/1/n/
+  n±1/2²⁵⁶−1/q, G2 off-twist and outside the r-torsion, swapped re/im,
+  truncated/extra input, k=1..8 identities); BLS 199 cases (every EIP-2537
+  vector incl. all fail-* vectors, infinity encodings, coords p/p+1, padding
+  bit, scalars 0/r/r−1/2²⁵⁶−1, MSM k=0/duplicates, pairing with infinity,
+  KZG wrong proof/commitment/versioned hash, z = r, infinity commitment);
+  BLAKE2F 30 vectors (EIP-152 3–8 incl. the bad-flag failure and the
+  2³²−1-round OOG, rounds 0/1/9/10/11/12/13/100/1000, t[1] ≠ 0, counter max).
+- Inline tests: 10k random + edge cartesian per op through the tracer
+  harness vs independent models; sequences vs upstream arkworks (bn254 20k
+  random + 22³ adversarial triples; BLS 1k + edges); structural row tests
+  (virtual-only destinations, loads before stores, zero advice/assert rows,
+  reset set == written set); golden row counts. Workspace nextest 71/71;
+  fmt + clippy `-D warnings` on every commit.
+- Soundness (per review): every sequence is straight-line RV64IM + virtual
+  ops with total semantics — no prover freedom; Montgomery bounds t < 1.378q
+  (bn254, one caller-side conditional subtraction) and t < 1.25p (BLS,
+  in-inline branch-free subtraction), column carries ≤ 33 terms ≪ 2⁶⁴,
+  `lo(m_k·q₀)` replaced by the exact carry `[r_k ≠ 0]`; hooks keyed by
+  compile-time modulus + layout checks (bn254 Fr and other fields fall
+  through); canonical invariant preserved at every hooked path.
+- **Proof gate (2026-09-10): every custom inline family proves AND
+  verifies.** Jolt example guest `examples/jeth-inlines-proof-gate` on
+  `jolt-inlines-b` @ `c0e9fb845f` (standalone workspace; guest patches
+  ark-ff to the vendored crate with both hook features, host links the three
+  jeth crates for registration; legacy prover, `RV64IMAC_JOLT_ALL_INLINES`
+  incl. `External`), Apple M4 16 GiB, outputs checked against native
+  arkworks / EIP-152: bn254 pairing e(P,Q) 8,621,982 cycles (10,495,866
+  unhooked, −17.9%), padded 2²⁴, prove 173.7 s, verify 0.60 s, 7.77 GiB —
+  PASS; bn254 e(P,Q)·e(−P,Q) = 1 multi-pairing 11,548,881 cycles
+  (15,028,695 unhooked, −23.2%), prove 201.2 s, verify 0.26 s — PASS;
+  BLS12-381 G2 add + 2-term G2 MSM 2,931,348 cycles, 2²², prove 69.7 s,
+  verify 0.27 s — PASS; BLAKE2F r12 (FULL10 + PREFIX_2, EIP-152 vector 5),
+  r13, r20 (128-bit counter) 6,892 / 6,972 / 9,066 cycles, prove ≈ 1 s each
+  — PASS. Trace census inside the proven guests: bn254 1,870 × MULQ (273) +
+  15 × SOPQ2 (415) + 5,261 × FP2MULQ (797) = 55% of rows; BLS 962 × MULP
+  (647) + 692 × FP2MUL (1,875) = 52%. `jolt-inlines-fixtures` 3/3, golden
+  file untouched. Reproduce: `cd …/jolt-inlines-b/examples/jeth-inlines-proof-gate
+  && cargo build --release && ./target/release/jeth-inlines-proof-gate
+  {blake2f|bls|bn254|bn254-check}`; journal `.journals/lanes/proof-gate.md`.
+- Finding from the proof-gate guest: the BLS Fq2 hook guard (`is_fq2`) did
+  not const-fold there (runtime 48-byte memcmp + negation ≈ 711 rows per Fq2
+  mul in that guest, ≈ 103 in the jeth guest); fixed by making the guard a
+  const fn over compile-time constants (`92a1093`, round-2 reviewed):
+  BLS_G2MSM −13.9% → −18.2%, pairing −13.0% → −17.7%, POINTEVAL −12.5% →
+  −16.5%, Aztec block −3.15% → −3.58% — the tables above carry the fixed
+  numbers. The bn254 guard was folded by the compiler already; it received
+  the same const treatment for robustness (rows unchanged).
+
+### Reproduce
+
+`cd /Volumes/Dev/worktrees/jeth/inlines-b` (jolt pin
+`/Volumes/Dev/worktrees/jolt/jolt-inlines-b`, CLI
+`…/jolt-inlines-b/target/release/jolt`; builds live in the worktree's
+`target/`), then as above. Lane journals with the per-op derivations and
+harness copies: `.journals/lanes/inlines-b-{bn254,bls,blake2f}.md`.

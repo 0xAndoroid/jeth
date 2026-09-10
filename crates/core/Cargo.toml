@@ -13,10 +13,18 @@ secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
 sha2-inline = ["secp-inline", "dep:jolt-inlines-sha2"]
 # BLAKE2F (0x09) precompile on the Jolt BLAKE2b inline for 12-round, 64-bit-counter calls.
 blake2-inline = ["secp-inline", "dep:jolt-inlines-blake2"]
+# BLAKE2F calls the fixed inline cannot take (rounds != 12 or a 128-bit counter) on the round inlines.
+blake2f-inline = ["blake2-inline", "dep:jeth-inlines-blake2f"]
 # RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
 p256-inline = ["dep:jolt-inlines-p256"]
 # EVM MULMOD product through the BIGINT256_MUL inline (`bigint.rs`; the guest hooks it into revm-interpreter).
 bigint-inline = ["dep:jolt-inlines-bigint"]
+# bn254 Fq multiplication (ecadd/ecmul/pairing precompiles) through the BN254_* inlines: the
+# vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.
+bn254-inline = ["dep:jeth-inlines-bn254", "ark-ff/jolt-bn254-inline"]
+# BLS12-381 Fq multiplication (EIP-2537 precompiles, KZG point evaluation) through the BLS12_381_*
+# inlines: the vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.
+bls12-381-inline = ["ark-ff/jolt-bls12-381-inline"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []
@@ -39,8 +47,10 @@ zeth-mpt.workspace = true
 jolt-inlines-secp256k1 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
 jolt-inlines-blake2 = { workspace = true, optional = true }
+jeth-inlines-blake2f = { workspace = true, optional = true }
 jolt-inlines-p256 = { workspace = true, optional = true }
 jolt-inlines-bigint = { workspace = true, optional = true }
+jeth-inlines-bn254 = { path = "../inlines/bn254", default-features = false, optional = true }
 
 alloy-rpc-types-debug.workspace = true
 alloy-trie.workspace = true
@@ -77,10 +87,11 @@ serde.workspace = true
 # native builds never touch jolt-sdk — the native gate calls advice bodies
 # directly (see src/advice.rs build matrix).
 [target.'cfg(target_arch = "riscv64")'.dependencies]
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", default-features = false }
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-sdk", default-features = false }
 
 [dev-dependencies]
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jeth-inlines-blake2f.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
 sha2 = { version = "0.10", default-features = false }

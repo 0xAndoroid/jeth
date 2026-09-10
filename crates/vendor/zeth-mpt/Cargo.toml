@@ -40,4 +40,4 @@ rlp_serialize = []
 
 # Advice tape IO intrinsics; riscv64-only (native builds never touch jolt-sdk).
 [target.'cfg(target_arch = "riscv64")'.dependencies]
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", default-features = false }
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-sdk", default-features = false }
