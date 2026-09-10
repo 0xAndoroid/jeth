@@ -1,17 +1,22 @@
 use ark_bn254::{Fq, Fq2, FqConfig};
-use ark_ff::{Field, Fp2Config, MontConfig, PrimeField};
+use ark_ff::{AdditiveGroup, Field, Fp2Config, MontConfig, PrimeField};
 use jolt_inlines_sdk::host::InlineOp;
-use jolt_inlines_sdk::{assert_edge_cases_match_reference, assert_random_cases_match_reference};
+use jolt_inlines_sdk::{
+    assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
+};
 use rand::SeedableRng;
 use tracer::emulator::mmu::DRAM_BASE;
 use tracer::instruction::format::format_inline::FormatInline;
 use tracer::instruction::inline::INLINE;
+use tracer::instruction::Instruction;
 use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness, RegisterMapping};
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 use crate::exec;
 use crate::sequence_builder::{Bn254Fp2MulQ, Bn254MulQ, Bn254SopQ2};
-use crate::spec::{canonical, concat, fq, geq_modulus, limbs, random_element, random_pair, Limbs};
+use crate::spec::{
+    canonical, concat, edge_elements, fq, geq_modulus, limbs, random_element, random_pair, Limbs,
+};
 use crate::{BN254_INV, BN254_MINUS_ONE, BN254_MODULUS};
 
 fn row_count<Op: InlineOp>() -> usize {
@@ -222,5 +227,182 @@ fn out_of_domain_inputs_match_model() {
             concat(b, a),
         ));
     }
+    let q = BN254_MODULUS;
+    let above_q = [q[0] - 1, u64::MAX, u64::MAX, q[3]];
+    jolt_inlines_sdk::assert_reference_matches_harness::<Bn254MulQ>(&(above_q, above_q));
     assert_eq!(exec::mulq(&[u64::MAX; 4], &[u64::MAX; 4]).len(), 4);
+}
+
+fn run_in<S: InlineSpec>(harness: &mut InlineTestHarness, input: &S::Input) -> S::Output {
+    harness.setup_registers();
+    S::load(harness, input);
+    harness.execute_inline(S::instruction());
+    S::read(harness)
+}
+
+/// The sequences themselves (not the model) against upstream ark-ff arithmetic.
+fn assert_sequences_match_ark(
+    harnesses: &mut [InlineTestHarness; 3],
+    (a0, a1, b0, b1): (Limbs, Limbs, Limbs, Limbs),
+) {
+    let [h_mul, h_sop, h_fp2] = harnesses;
+    let t = run_in::<Bn254MulQ>(h_mul, &(a0, b0));
+    assert_eq!(
+        canonical(&t),
+        limbs(fq(&a0) * fq(&b0)),
+        "mulq {a0:x?} {b0:x?}"
+    );
+    let (a, b) = (concat(a0, a1), concat(b0, b1));
+    let t = run_in::<Bn254SopQ2>(h_sop, &(a, b));
+    let expected = Fq::sum_of_products(&[fq(&a0), fq(&a1)], &[fq(&b0), fq(&b1)]);
+    assert_eq!(canonical(&t), limbs(expected), "sopq2 {a:x?} {b:x?}");
+    let c = run_in::<Bn254Fp2MulQ>(h_fp2, &(a, b));
+    let expected = Fq2::new(fq(&a0), fq(&a1)) * Fq2::new(fq(&b0), fq(&b1));
+    assert_eq!(
+        canonical(&c[..4].try_into().unwrap()),
+        limbs(expected.c0),
+        "fp2 c0"
+    );
+    assert_eq!(
+        canonical(&c[4..].try_into().unwrap()),
+        limbs(expected.c1),
+        "fp2 c1"
+    );
+}
+
+fn harnesses() -> [InlineTestHarness; 3] {
+    [
+        Bn254MulQ::harness(),
+        Bn254SopQ2::harness(),
+        Bn254Fp2MulQ::harness(),
+    ]
+}
+
+#[test]
+fn sequences_match_ark_on_random_inputs() {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0xb254_0008);
+    let mut harnesses = harnesses();
+    for _ in 0..20_000 {
+        let quad = core::array::from_fn(|_| random_element(&mut rng));
+        assert_sequences_match_ark(&mut harnesses, quad.into());
+    }
+}
+
+/// Every ordered triple (a₀, a₁, b₀) of the adversarial set with b₁ cycling through it:
+/// 0, 1, R, R², q − 1, q − 2, (q − 1)³, −1, 2, 1⁻¹, 2ᵏ in the low and the top limb, saturated limbs.
+#[test]
+fn sequences_match_ark_on_adversarial_inputs() {
+    let q = BN254_MODULUS;
+    let q_minus_1 = [q[0] - 1, q[1], q[2], q[3]];
+    let mut set = edge_elements();
+    set.extend([
+        [q[0] - 2, q[1], q[2], q[3]],
+        [u64::MAX, u64::MAX, q[2] - 1, q[3]],
+        [2, 0, 0, 0],
+        [1 << 63, 0, 0, 0],
+        [0, 0, 0, 1],
+        [0, 0, 0, 1 << 61],
+        limbs(fq(&q_minus_1) * fq(&q_minus_1) * fq(&q_minus_1)),
+        limbs(-Fq::ONE),
+        limbs(Fq::ONE.double()),
+        limbs(fq(&[1, 0, 0, 0]).inverse().unwrap()),
+    ]);
+    assert!(set.iter().all(|x| !geq_modulus(x)));
+    let n = set.len();
+    let mut harnesses = harnesses();
+    for i in 0..n {
+        for j in 0..n {
+            for k in 0..n {
+                let quad = (set[i], set[j], set[k], set[(i + j + k) % n]);
+                assert_sequences_match_ark(&mut harnesses, quad);
+            }
+        }
+    }
+}
+
+/// Every row writes a virtual register or memory through rs3; loads use rs1/rs2 as base and all
+/// precede the stores; no advice or assert rows; the trailing resets cover exactly the registers
+/// the body wrote.
+#[test]
+fn sequence_structure() {
+    for (name, funct3) in [
+        ("MULQ", Bn254MulQ::FUNCT3),
+        ("SOPQ2", Bn254SopQ2::FUNCT3),
+        ("FP2MULQ", Bn254Fp2MulQ::FUNCT3),
+    ] {
+        let inline = INLINE {
+            opcode: crate::INLINE_OPCODE,
+            funct3,
+            funct7: crate::BN254_FUNCT7,
+            address: 0x8000_0000,
+            operands: FormatInline {
+                rs1: 10,
+                rs2: 11,
+                rs3: 12,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let sequence = inline.inline_sequence(&VirtualRegisterAllocator::default());
+        let (mut last_load, mut first_store) = (None, None);
+        let mut written = std::collections::BTreeSet::new();
+        let mut resets = std::collections::BTreeSet::new();
+        for (index, instruction) in sequence.iter().enumerate() {
+            let debug = format!("{instruction:?}");
+            assert!(
+                !debug.starts_with("VirtualAdvice") && !debug.starts_with("VirtualAssert"),
+                "{name}: {debug}"
+            );
+            match instruction {
+                Instruction::LD(load) => {
+                    assert!(
+                        matches!(load.operands.rs1, 10 | 11),
+                        "{name}: load base {debug}"
+                    );
+                    last_load = Some(index);
+                }
+                Instruction::SD(store) => {
+                    assert_eq!(store.operands.rs1, 12, "{name}: store base {debug}");
+                    assert!(store.operands.rs2 >= 32, "{name}: store data {debug}");
+                    first_store.get_or_insert(index);
+                    continue;
+                }
+                _ => {}
+            }
+            let row = instruction.try_jolt_instruction_row().expect(name);
+            let rd = row.operands.rd.expect(name);
+            assert!(rd >= 32, "{name}: writes x{rd}: {debug}");
+            match instruction {
+                Instruction::ADDI(addi) if addi.operands.rs1 == 0 && addi.operands.imm == 0 => {
+                    resets.insert(rd);
+                }
+                _ => {
+                    written.insert(rd);
+                }
+            }
+        }
+        assert!(
+            last_load.unwrap() < first_store.unwrap(),
+            "{name}: load after store"
+        );
+        assert_eq!(written, resets, "{name}: reset set != written set");
+    }
+}
+
+/// t stays below 2q on the extremes (`canonical` panics on a borrow after one subtraction).
+#[test]
+fn outputs_below_two_q_on_extremes() {
+    let q = BN254_MODULUS;
+    let q_minus_1 = [q[0] - 1, q[1], q[2], q[3]];
+    let saturated = [u64::MAX, u64::MAX, u64::MAX, q[3] - 1];
+    let mut harnesses = harnesses();
+    for (a, b) in [
+        (q_minus_1, q_minus_1),
+        (saturated, q_minus_1),
+        (saturated, saturated),
+    ] {
+        assert_sequences_match_ark(&mut harnesses, (a, a, b, b));
+        assert_sequences_match_ark(&mut harnesses, (a, a, b, [0; 4]));
+    }
 }

@@ -37,7 +37,7 @@ unsafe fn subtract_modulus(limbs: *mut u64) {
 /// a ← a·b·R⁻¹ mod q for canonical four-limb Montgomery elements.
 #[inline(always)]
 pub(crate) fn mul_assign<F>(a: &mut F, b: &F) {
-    debug_assert_eq!(size_of::<F>(), 32);
+    assert!(size_of::<F>() == 32);
     let out = a as *mut F as *mut u64;
     // SAFETY: `F` is four u64 limbs; the inline reads both operands before writing `out`.
     unsafe {
@@ -49,7 +49,7 @@ pub(crate) fn mul_assign<F>(a: &mut F, b: &F) {
 /// (a₀·b₀ + a₁·b₁)·R⁻¹ mod q for canonical four-limb Montgomery elements.
 #[inline(always)]
 pub(crate) fn sum_of_products_2<F: Copy, const M: usize>(a: &[F; M], b: &[F; M]) -> F {
-    debug_assert!(M == 2 && size_of::<F>() == 32);
+    assert!(M == 2 && size_of::<F>() == 32);
     let mut out = MaybeUninit::<F>::uninit();
     // SAFETY: `[F; 2]` is eight contiguous limbs; the inline writes all four limbs of `out`.
     unsafe {
@@ -65,6 +65,8 @@ pub(crate) fn sum_of_products_2<F: Copy, const M: usize>(a: &[F; M], b: &[F; M])
 
 /// The quadratic extension of bn254 Fq by the nonresidue −1, with `c0` at offset 0 and `c1` at
 /// offset 32 (the layout the fused inline reads and writes).
+/// Every operand is a compile-time constant, so each monomorphization folds to `true`/`false`:
+/// the Fq2 path costs FP2MULQ (797 rows, golden-tested) plus two conditional subtractions.
 #[inline(always)]
 pub(crate) fn is_fq2<P: QuadExtConfig>() -> bool {
     if size_of::<P::BaseField>() != 32
