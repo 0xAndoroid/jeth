@@ -2061,13 +2061,13 @@ review before merging.
 |---|---:|---:|
 | BN254PAIRING k1 / k2 / k4 / k8 | 11,872,925 → 9,544,692 · 16,398,981 → 13,093,035 · 26,755,440 → 21,338,705 · 48,843,571 → 38,935,488 | 150.1 → 120.6 · 145.0 → 115.8 · 147.7 → 117.8 · 154.0 → 122.8 |
 | BN254MUL full scalar · BN254ADD | 790,027 → 745,722 · 61,535 → 61,139 | 129.1 → 121.9 · 228.8 → 227.3 |
-| BLS_G2MSM k1 (k8 same ratio) | 9,925,612 → 8,542,744 (−13.9%) | 438.9 → 377.7 |
-| BLS_PAIRING k1 (k2 −13.1%) | 20,818,507 → 18,120,306 (−13.0%) | 295.6 → 257.3 |
-| POINTEVAL · MAP_FP2_TO_G2 · G1MSM · G2ADD · MAP_FP_TO_G1 · G1ADD | −12.5% · −9.3% · −4.9% · −4.4% · −3.3% · −0.7% | |
+| BLS_G2MSM k1 (k8 −18.4%) | 9,925,612 → 8,114,948 (−18.2%) | 438.9 → 358.8 |
+| BLS_PAIRING k1 (k2 −17.6%) | 20,818,507 → 17,141,281 (−17.7%) | 295.6 → 243.4 |
+| POINTEVAL · MAP_FP2_TO_G2 · G2ADD · G1MSM · MAP_FP_TO_G1 · G1ADD | −16.5% · −11.7% · −5.9% · −4.9% · −3.3% · −0.7% | |
 | BLAKE2F r1 · r10 · r12 (t[1] ≠ 0) · r13 · r20 · r100 · r1000 | 7,042 → 6,970 · 9,318 → 7,691 · 9,822 → 7,931 · 10,071 → 8,007 · 11,837 → 8,562 · 32,084 → 15,625 · 259,756 → 94,977 | 58.7 → 58.1 · 72.2 → 59.6 · 75.0 → 60.5 · 76.3 → 60.7 · 85.2 → 61.6 · 146.5 → 71.4 · **232.1 → 84.9** |
 
 Adversarial 60M-gas single-op blocks: BLAKE2F r1000 13.93B → 5.09B rows;
-BN254PAIRING ≈ 9.0B → 7.2B; BLS_G2MSM k1 26.3B → 22.7B. The BLS G1 paths
+BN254PAIRING ≈ 9.0B → 7.2B; BLS_G2MSM k1 26.3B → 21.5B. The BLS G1 paths
 gain little (Fp-only, one MULP saves 9%); the G2/pairing/KZG paths sit on
 Fp2 and gain the fused op. Pre-gates recorded in the lane journals: bn254
 mul_assign 310 / sum_of_products 507 / square 257 rows per call on 781 (the
@@ -2089,7 +2089,7 @@ multiplication.
 | 25905789 | 44,608,380 | 676,244,012 | 671,810,582 | -4,433,430 | 15.159573 | 15.060188 | 133,642 |
 | 25905790 | 32,881,199 | 432,649,242 | 432,649,242 | +0 | 13.157952 | 13.157952 | 90,051 |
 | Gas-weighted | 321,027,690 | 4,418,606,438 | 4,383,311,166 | -35,295,272 | 13.763942 | **13.653997** | 846,463 |
-| 25694235 (Aztec, top-50 worst) | 59,999,955 | 1,426,158,765 | 1,381,243,122 | -44,915,643 | 23.769331 | 23.020736 | 193,806 |
+| 25694235 (Aztec, top-50 worst) | 59,999,955 | 1,426,158,765 | 1,375,135,731 | -51,023,034 | 23.769331 | 22.918946 | 193,806 |
 
 Ten blocks 13.763942 → **13.653997 c/g** (−35,295,272 rows, −0.80%), all
 from bn254 (781: 17,556 Fq muls + 28,133 sum-of-products in ecmul/pairing;
@@ -2097,8 +2097,8 @@ from bn254 (781: 17,556 Fq muls + 28,133 sum-of-products in ecmul/pairing;
 the union tree; a rebuild in `inlines-b` reproduces 781 at 596,202,686 — a
 38-row layout shift from the embedded worktree path, same hash and perms). On the
 heaviest block of the top-50 profile (25694235, four Aztec rollup txs on
-BLS12-381 + bn254) the union saves 44.9M rows (−3.15%): BLS share 125.1M →
-99.8M, the rest bn254. Cumulative since amber-nolane: 13.814672 → 13.653997
+BLS12-381 + bn254) the union saves 51.0M rows (−3.58%): BLS share 125.1M →
+≈ 94M, the rest bn254. Cumulative since amber-nolane: 13.814672 → 13.653997
 (−1.16%); since the wave-4 baseline −30.98%.
 
 ### Gates
@@ -2148,8 +2148,12 @@ BLS12-381 + bn254) the union saves 44.9M rows (−3.15%): BLS share 125.1M →
   {blake2f|bls|bn254|bn254-check}`; journal `.journals/lanes/proof-gate.md`.
 - Finding from the proof-gate guest: the BLS Fq2 hook guard (`is_fq2`) did
   not const-fold there (runtime 48-byte memcmp + negation ≈ 711 rows per Fq2
-  mul, eating the fused op's saving); the bn254 guard folds. Fix and
-  re-measurement of the BLS numbers above: see the addendum below.
+  mul in that guest, ≈ 103 in the jeth guest); fixed by making the guard a
+  const fn over compile-time constants (`92a1093`, round-2 reviewed):
+  BLS_G2MSM −13.9% → −18.2%, pairing −13.0% → −17.7%, POINTEVAL −12.5% →
+  −16.5%, Aztec block −3.15% → −3.58% — the tables above carry the fixed
+  numbers. The bn254 guard was folded by the compiler already; it received
+  the same const treatment for robustness (rows unchanged).
 
 ### Reproduce
 
