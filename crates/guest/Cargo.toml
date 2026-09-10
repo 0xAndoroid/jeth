@@ -31,7 +31,7 @@ compute_advice = ["jeth-core/compute_advice"]
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-sdk", features = ["bump-alloc"] }
 jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/keccak256", default-features = false }
 
-jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "p256-inline", "bigint-inline", "guest-instrument"] }
+jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "blake2f-inline", "p256-inline", "bigint-inline", "guest-instrument"] }
 # Direct dependency only to reach the vendored crate's `bigint-inline` feature:
 # EVM MULMOD through the `jeth_mul_mod` hook in lib.rs (always on, like the
 # jeth-core inline features above).

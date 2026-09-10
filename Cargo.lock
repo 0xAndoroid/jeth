@@ -2351,6 +2351,7 @@ dependencies = [
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "aurora-engine-modexp",
+ "jeth-inlines-blake2f",
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
@@ -2391,6 +2392,7 @@ dependencies = [
  "clap",
  "common",
  "jeth-core",
+ "jeth-inlines-blake2f",
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-keccak256",
@@ -2412,6 +2414,15 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "zeth-mpt",
+]
+
+[[package]]
+name = "jeth-inlines-blake2f"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+ "rand 0.8.7",
+ "tracer",
 ]
 
 [[package]]
@@ -2466,6 +2477,7 @@ dependencies = [
  "jolt-program",
  "jolt-riscv",
  "num-bigint",
+ "rand 0.8.7",
  "tracer",
 ]
 
@@ -4699,6 +4711,7 @@ dependencies = [
  "object 0.40.0",
  "paste",
  "postcard",
+ "rand 0.8.7",
  "rayon",
  "serde",
  "serde_json",

@@ -121,15 +121,21 @@ impl Crypto for JoltCrypto {
     }
 
     /// The Jolt BLAKE2b inline is the fixed 12-round compression with a 64-bit counter, so only
-    /// `rounds == 12 && t[1] == 0` calls take it; every other (rounds, t) stays on revm's
-    /// software compress, whose sigma schedule (`SIGMA[r % 10]`) and IV the inline matches for
-    /// those 12 rounds.
+    /// `rounds == 12 && t[1] == 0` calls take it (1067 rows; its sigma schedule `SIGMA[r % 10]`
+    /// and IV match revm's for those 12 rounds). Every other (rounds, t) runs the round inlines:
+    /// software init/fold around `rounds / 10` ten-round ops and one `rounds % 10`-round op
+    /// (`80·k + 80` rows per `k`-round op — 12 rounds that way cost 1120 rows plus the software
+    /// init/fold, so the fixed inline keeps its case), or revm's software compress without the
+    /// `blake2f-inline` feature.
     #[cfg(all(feature = "blake2-inline", target_arch = "riscv64"))]
     #[inline]
     fn blake2_compress(&self, rounds: u32, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool) {
         if rounds == 12 && t[1] == 0 {
             blake2b_compress_inline(h, m, t[0], f);
         } else {
+            #[cfg(feature = "blake2f-inline")]
+            jeth_inlines_blake2f::compress(rounds, h, m, t, f);
+            #[cfg(not(feature = "blake2f-inline"))]
             reth_evm::revm::precompile::blake2::algo::compress(rounds as usize, h, m, t, f);
         }
     }
@@ -462,6 +468,91 @@ mod tests {
             let mut sw = h;
             compress(12, &mut sw, &m, &[3, 0], f);
             assert_eq!(sw, want, "revm f = {f}");
+            let mut rounds = h;
+            jeth_inlines_blake2f::compress(12, &mut rounds, &m, &[3, 0], f);
+            assert_eq!(rounds, want, "round inlines f = {f}");
         }
+    }
+
+    /// The round-inline decomposition (software init, `rounds / 10` ten-round ops, one
+    /// `rounds % 10`-round op, software fold) against revm's compress for every round count the
+    /// routing can see, both counter words at their edges, both flags, random and saturated
+    /// (h, m). Off the RISC-V target the ops are the crate's software reference — the function
+    /// the tracer-harness tests pin the inline rows to.
+    #[test]
+    fn blake2f_round_inlines_match_revm_compress() {
+        let mut rng = 0x5eed_b1a2_e2f0_0d15u64;
+        let round_counts = (0..=13u32).chain([19, 20, 21, 100, 1000]);
+        for rounds in round_counts {
+            for case in 0..24u64 {
+                let (mut h, mut m) = ([0u64; 8], [0u64; 16]);
+                match case % 3 {
+                    0 => {
+                        h.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+                        m.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+                    }
+                    1 => {
+                        h = [u64::MAX; 8];
+                        m = [u64::MAX; 16];
+                    }
+                    _ => {
+                        h = jolt_inlines_blake2::IV;
+                        m[0] = xorshift(&mut rng);
+                    }
+                }
+                let edge = |k: u64, rng: &mut u64| match k % 4 {
+                    0 => 0,
+                    1 => 1,
+                    2 => u64::MAX,
+                    _ => xorshift(rng),
+                };
+                let t = [edge(case, &mut rng), edge(case / 4, &mut rng)];
+                let f = (case / 2) % 2 == 1;
+                let mut want = h;
+                compress(rounds as usize, &mut want, &m, &t, f);
+                let mut got = h;
+                jeth_inlines_blake2f::compress(rounds, &mut got, &m, &t, f);
+                assert_eq!(got, want, "rounds {rounds} case {case} t {t:?} f {f}");
+            }
+        }
+    }
+
+    /// The round inlines' tables are revm's.
+    #[test]
+    fn blake2f_round_inline_tables_match_revm() {
+        use reth_evm::revm::precompile::blake2::algo;
+        assert_eq!(jeth_inlines_blake2f::IV, algo::IV);
+        assert_eq!(jeth_inlines_blake2f::SIGMA, algo::SIGMA);
+    }
+
+    /// EIP-152 test vectors 4–7 (rounds 0, 12, 12, 1) through the round-inline compress (vector 8
+    /// is 2^32 − 1 rounds — infeasible here and out of gas in any block).
+    #[test]
+    fn blake2f_round_inlines_match_eip152_vectors() {
+        fn le_words<const N: usize>(hex: &str) -> [u64; N] {
+            let bytes = hex_bytes(hex);
+            core::array::from_fn(|i| {
+                u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap())
+            })
+        }
+        let h = "48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b";
+        let m = "6162630000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        let vectors: [(u32, bool, &str); 4] = [
+            (0, true, "08c9bcf367e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d282e6ad7f520e511f6c3e2b8c68059b9442be0454267ce079217e1319cde05b"),
+            (12, true, "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"),
+            (12, false, "75ab69d3190a562c51aef8d88f1c2775876944407270c42c9844252c26d2875298743e7f6d5ea2f2d3e8d226039cd31b4e426ac4f2d3d666a610c2116fde4735"),
+            (1, true, "b63a380cb2897d521994a85234ee2c181b5f844d2c624c002677e9703449d2fba551b3a8333bcdf5f2f7e08993d53923de3d64fcc68c034e717b9293fed7a421"),
+        ];
+        for (rounds, f, want) in vectors {
+            let mut got: [u64; 8] = le_words(h);
+            jeth_inlines_blake2f::compress(rounds, &mut got, &le_words(m), &[3, 0], f);
+            assert_eq!(got, le_words::<8>(want), "rounds {rounds} f {f}");
+        }
+    }
+
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
     }
 }

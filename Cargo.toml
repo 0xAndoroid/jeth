@@ -4,7 +4,7 @@ resolver = "2"
 # package (own [workspace] table) built exclusively through the `jolt` CLI for
 # riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
 # from native host builds.
-members = ["crates/core", "crates/host"]
+members = ["crates/core", "crates/host", "crates/inlines/blake2f"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,8 @@ edition = "2021"
 
 [workspace.dependencies]
 jeth-core = { path = "crates/core" }
+# Custom inlines (opcode 0x2B, `InlineExtension::External`), registered with the tracer by jeth-host.
+jeth-inlines-blake2f = { path = "crates/inlines/blake2f", default-features = false }
 
 # stateless execution stack — zeth 0.3's proven pin set (PLAN.md §4)
 stateless = { git = "https://github.com/paradigmxyz/stateless.git", rev = "6e55612" }

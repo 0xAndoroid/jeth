@@ -8,6 +8,7 @@ use std::process::Command;
 use std::time::Instant;
 
 // Register the keccak256, secp256k1, sha2, blake2, P-256 and bigint inline opcode handlers with the tracer (inventory).
+extern crate jeth_inlines_blake2f as _;
 extern crate jolt_inlines_bigint as _;
 extern crate jolt_inlines_blake2 as _;
 extern crate jolt_inlines_keccak256 as _;
