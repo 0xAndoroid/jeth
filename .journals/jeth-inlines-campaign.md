@@ -66,7 +66,7 @@ Phase B prep in flight:
 |---|---|---|---|
 | B-bn254 | inlines-b-bn254 | d65966f1 (card 329) | running (fable-max) |
 | B-bls | inlines-b-bls | 546e8ca6 (card 330) | running (fable-max) |
-| B-blake2f | inlines-b-blake2f @ 3fb9b6a | 675c6d21 done (FULL10 880 rows, PREFIX_r 80r+80; r1000 232 → 84.9 c/g; set Δ0) | review 3b0e30a1 (fable-high) |
+| B-blake2f | inlines-b-blake2f @ 3fb9b6a | 675c6d21 done (FULL10 880 rows, PREFIX_r 80r+80; r1000 232 → 84.9 c/g; set Δ0) | review 3b0e30a1 APPROVE (F1 const-assert R∈1..=10 + nits applied a7532a9) → rebased + ff-merged into inlines-b @ a7532a9; 781 verification /Volumes/Dev/jeth-scratch/inlines-b-merged-781.log |
 - Killed before spawning: MODEXP big limbs (BIGINT256_MUL = 8.8 rows/partial product = compiled; no lever), Fr variants, squaring inlines. Parked: jolt-inlines-p256 limb-compare port (39k rows/verify) — jolt-side, after the B lanes (shared path dep must not move under them).
 - 23:27 INCIDENT: every /Volumes/Dev/cargo-target/jeth-* and jolt-cli-* dir deleted externally (~317 GiB freed; 40+ → 19 entries; not by any lane). Jolt CLI gone → guest builds blocked; rebuilding jolt-cli-inlines-b (started 23:30, /tmp/jolt-cli-inlines-b-build.log). All three lanes messaged: poll for the CLI, rebuild host, keep inputs/scratch in /Volumes/Dev/jeth-scratch/<lane>/ (never under cargo-target). Cost: ~15–25 min per lane. Inputs at /Volumes/Dev/jeth-inputs survived.
 - B-bls pre-gate (before the wipe): G2MSM k1 — sop2 1,183 rows/call × 4,116 + mul 714 × 3,372 = 73% of 9.93M rows/op; inline SOPP2 918 / MULP 620 → −14.1% per op (−18% est. with fused Fp2) → GO.
