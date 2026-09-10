@@ -7,6 +7,7 @@ use crate::{IV, STATE_LEN};
 /// aligned. Off the RISC-V target this is the software reference the inline is tested against.
 #[inline(always)]
 pub fn round_op<const R: usize>(v: &mut [u64; STATE_LEN], m: &[u64; STATE_LEN]) {
+    const { assert!(R >= 1 && R <= 10, "round ops exist for 1..=10 rounds only") };
     #[cfg(target_arch = "riscv64")]
     // SAFETY: both arrays are 8-byte aligned and exactly the 128 bytes the inline reads; only
     // `v` is written.

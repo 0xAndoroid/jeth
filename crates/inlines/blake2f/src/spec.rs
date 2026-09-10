@@ -8,7 +8,10 @@ use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness, 
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 use crate::sequence_builder::Blake2bRounds;
-use crate::{rounds_reference, IV, ROUND_COUNTS, STATE_LEN};
+use crate::{rounds_reference, IV, STATE_LEN};
+
+/// Every round count with an op, in registration order.
+const ROUND_COUNTS: [usize; 10] = [10, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /// `(v, m)`: working state at rs1, message block at rs2.
 pub type RoundsInput = ([u64; STATE_LEN], [u64; STATE_LEN]);

@@ -120,13 +120,10 @@ impl Crypto for JoltCrypto {
         Sha256::digest(input)
     }
 
-    /// The Jolt BLAKE2b inline is the fixed 12-round compression with a 64-bit counter, so only
-    /// `rounds == 12 && t[1] == 0` calls take it (1067 rows; its sigma schedule `SIGMA[r % 10]`
-    /// and IV match revm's for those 12 rounds). Every other (rounds, t) runs the round inlines:
-    /// software init/fold around `rounds / 10` ten-round ops and one `rounds % 10`-round op
-    /// (`80·k + 80` rows per `k`-round op — 12 rounds that way cost 1120 rows plus the software
-    /// init/fold, so the fixed inline keeps its case), or revm's software compress without the
-    /// `blake2f-inline` feature.
+    /// The stock Jolt BLAKE2b inline is the fixed 12-round compression with a 64-bit counter, so
+    /// only `rounds == 12 && t[1] == 0` calls take it; every other (rounds, t) runs the round
+    /// inlines (software init/fold around `rounds / 10` ten-round ops and one `rounds % 10`-round
+    /// op), or revm's software compress without the `blake2f-inline` feature.
     #[cfg(all(feature = "blake2-inline", target_arch = "riscv64"))]
     #[inline]
     fn blake2_compress(&self, rounds: u32, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool) {

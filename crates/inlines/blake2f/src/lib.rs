@@ -5,6 +5,7 @@
 //! followed by the `r`-round op (`r > 0`), each picking up where the previous one left off.
 //! Encoding (opcode 0x2B): `k = 10` and `k = 1..=7` use funct7 [`FUNCT7_LOW`] with funct3
 //! `k % 10`; `k = 8, 9` use funct7 [`FUNCT7_HIGH`] with funct3 `k − 8`.
+//! Tests live behind the `host` feature (`cargo test --features host`).
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x2B;
@@ -15,9 +16,6 @@ pub const FUNCT7_HIGH: u32 = 0x03;
 
 /// Working-state and message-block length in 64-bit words.
 pub const STATE_LEN: usize = 16;
-/// Every round count with an op, in registration order.
-pub const ROUND_COUNTS: [usize; 10] = [10, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-
 pub const fn funct3(rounds: usize) -> u32 {
     ((rounds % 10) % 8) as u32
 }
