@@ -19,6 +19,7 @@ pub mod container;
 mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
+mod keccak_memo;
 #[cfg(feature = "premeasure")]
 pub mod premeasure;
 mod recover;

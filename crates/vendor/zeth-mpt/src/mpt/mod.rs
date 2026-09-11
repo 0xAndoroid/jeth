@@ -15,18 +15,20 @@
 //! A sparse Merkle Patricia trie implementation.
 
 use alloc::vec::Vec;
-use alloy_primitives::{keccak256, map::B256IndexMap, Bytes, B256};
+use alloy_primitives::{map::B256IndexMap, Bytes, B256};
 #[allow(unused_imports)]
 use alloc::vec;
 use alloy_trie::Nibbles;
-use children::{Children, Slot};
 use core::{cmp::PartialEq, fmt::Debug};
 use memoize::{Cache, NoCache};
 use nibbles::NibbleSlice;
 use node::Node;
+use rlp::MapResolver;
 
 mod advice;
+mod arena;
 mod children;
+mod decode;
 
 mod memoize;
 mod nibbles;
@@ -42,7 +44,8 @@ mod rlp;
 mod serde;
 
 pub use alloy_trie::EMPTY_ROOT_HASH;
-pub use rlp::{decode_header, le_words_32, DigestResolver};
+pub use decode::{decode_header, le_words_32};
+pub use rlp::DigestResolver;
 
 /// A sparse Merkle Patricia trie storing byte values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -115,51 +118,6 @@ impl Trie {
         self.0 = Node::Null
     }
 
-    /// Resolves currently unresolved nodes within the trie using the provided RLP-encoded nodes.
-    ///
-    /// This method iterates through the provided RLP-encoded nodes, computes the Keccak-256 hash of
-    /// each node, and attempts to replace any internal `Node::Digest` entries matching that hash
-    /// with the decoded node.
-    ///
-    /// # Errors
-    ///
-    /// This function returns an error if it encounters any issues during the decoding of RLP
-    /// encoded nodes or if the provided nodes result in an invalid trie structure.
-    pub fn hydrate_from_rlp<T: AsRef<[u8]>>(
-        &mut self,
-        nodes: impl IntoIterator<Item = T>,
-    ) -> alloy_rlp::Result<()> {
-        let rlp_by_digest = nodes.into_iter().map(|rlp| (keccak256(&rlp), rlp)).collect();
-        self.0.resolve_digests(&rlp_by_digest)
-    }
-
-    /// Converts the trie into a [CachedTrie].
-    pub fn into_cached(self) -> CachedTrie {
-        fn rec(root: Node<NoCache>) -> Node<Cache> {
-            match root {
-                Node::Null => Node::Null,
-                Node::Leaf(prefix, value, _) => Node::Leaf(prefix, value, Cache::default()),
-                Node::Extension(prefix, child, _) => {
-                    Node::Extension(prefix, rec(*child).into(), Cache::default())
-                }
-                Node::Branch(children, _) => {
-                    let mut cached_children = Children::default();
-                    for (i, slot) in children.into_iter().enumerate() {
-                        *cached_children.slot_mut(i as u8) = match slot {
-                            Slot::Empty => Slot::Empty,
-                            Slot::Digest(digest) => Slot::Digest(digest),
-                            Slot::Node(child) => Slot::Node(rec(*child).into()),
-                        };
-                    }
-                    Node::Branch(cached_children, Cache::default())
-                }
-                Node::Digest(digest) => Node::Digest(digest),
-            }
-        }
-
-        CachedTrie { inner: rec(self.0), hash: None }
-    }
-
     /// Returns the RLP-encoded nodes of the trie in preorder. It may return duplicate nodes.
     ///
     /// Each value but the first, represents a node with RLP-length >= 32, while shorter nodes are
@@ -194,27 +152,8 @@ impl Trie {
         Ok(Self(Node::from_rlp(nodes)?))
     }
 
-    /// Creates a new trie from a root digest and a map of pre-hashed, RLP-encoded nodes.
-    ///
-    /// This method offers an efficient way to construct a trie when the node digests are already
-    /// known, as it avoids re-computing the hashes.
-    ///
-    /// It is crucial that the provided `rlp_by_digest` map contains keys that are the correct
-    /// `keccak256` hashes of their corresponding RLP-encoded values. If the hashes are incorrect,
-    /// the resulting trie will be invalid, potentially leading to a different root hash than
-    /// the one provided and subsequent logical errors.
-    #[inline]
-    pub fn from_prehashed_nodes(
-        root: B256,
-        rlp_by_digest: &B256IndexMap<impl AsRef<[u8]>>,
-    ) -> alloy_rlp::Result<Self> {
-        let mut trie = Self::from_digest(root);
-        trie.0.resolve_digests(rlp_by_digest)?;
-        Ok(trie)
-    }
-
-    /// jeth (advice-trie): build from a root digest, resolving nodes through a
-    /// [`DigestResolver`] (zero-copy decode). Replaces the prehashed-map path.
+    /// Build from a root digest, resolving nodes through a [`DigestResolver`]
+    /// (zero-copy decode).
     #[inline]
     pub fn from_resolver_zc(
         root: B256,
@@ -284,8 +223,8 @@ impl CachedTrie {
         self.hash = None;
     }
 
-    /// jeth (advice-trie): [`Self::insert`] with on-demand digest resolution —
-    /// stubs on the insertion path resolve through `r` (miss ⇒ panic, INV-W3).
+    /// [`Self::insert`] with on-demand digest resolution — stubs on the
+    /// insertion path resolve through `r` (miss ⇒ panic).
     #[inline]
     pub fn insert_with(
         &mut self,
@@ -309,8 +248,8 @@ impl CachedTrie {
         true
     }
 
-    /// jeth (advice-trie): [`Self::remove`] with on-demand digest resolution
-    /// (traversal stubs and the branch-collapse sibling; miss ⇒ panic, INV-W3).
+    /// [`Self::remove`] with on-demand digest resolution (traversal stubs and
+    /// the branch-collapse sibling; miss ⇒ panic).
     #[inline]
     pub fn remove_with(&mut self, key: impl AsRef<[u8]>, r: &mut impl DigestResolver) -> bool {
         if !self.inner.remove_with(NibbleSlice::from(Nibbles::unpack(key)), r) {
@@ -355,9 +294,9 @@ impl CachedTrie {
     #[inline]
     pub fn hash(&mut self) -> B256 {
         *self.hash.get_or_insert_with(|| {
-            // Phase 3a: dirty nodes encode into one reused scratch buffer
-            // (single-pass, sealed length advice) instead of per-node Vecs.
-            let mut scratch = rlp::Scratch::new();
+            // dirty nodes encode into one reused scratch buffer (single-pass,
+            // sealed length advice) instead of per-node Vecs
+            let mut scratch = arena::Scratch::new();
             self.inner.memoize_arena(&mut scratch);
             self.inner.hash()
         })
@@ -373,18 +312,6 @@ impl CachedTrie {
     #[inline]
     pub const fn is_cached(&self) -> bool {
         self.hash.is_some()
-    }
-
-    /// Resolves currently unresolved nodes within the trie using the provided RLP-encoded nodes.
-    ///
-    /// See [`Trie::hydrate_from_rlp`] for detailed documentation.
-    #[inline]
-    pub fn hydrate_from_rlp<T: AsRef<[u8]>>(
-        &mut self,
-        nodes: impl IntoIterator<Item = T>,
-    ) -> alloy_rlp::Result<()> {
-        let rlp_by_digest = nodes.into_iter().map(|rlp| (keccak256(&rlp), rlp)).collect();
-        self.inner.resolve_digests(&rlp_by_digest)
     }
 
     /// Returns the RLP-encoded nodes of the trie in preorder.
@@ -415,22 +342,9 @@ impl CachedTrie {
         Ok(Self { inner: root, hash: None })
     }
 
-    /// Creates a new trie from a root digest and a map of pre-hashed, RLP-encoded nodes.
-    ///
-    /// See [`Trie::from_prehashed_nodes`] for detailed documentation.
-    #[inline]
-    pub fn from_prehashed_nodes(
-        root: B256,
-        rlp_by_digest: &B256IndexMap<impl AsRef<[u8]>>,
-    ) -> alloy_rlp::Result<Self> {
-        let mut trie = Self::from_digest(root);
-        trie.inner.resolve_digests(rlp_by_digest)?;
-        Ok(trie)
-    }
-
-    /// jeth (advice-trie): build from a root digest, resolving nodes through a
-    /// [`DigestResolver`] (zero-copy decode). Replaces the prehashed-map path.
-    /// `EMPTY_ROOT_HASH` short-circuits to the empty trie — no resolver call.
+    /// Build from a root digest, resolving nodes through a [`DigestResolver`]
+    /// (zero-copy decode). `EMPTY_ROOT_HASH` short-circuits to the empty trie —
+    /// no resolver call.
     #[inline]
     pub fn from_resolver_zc(
         root: B256,
@@ -439,6 +353,20 @@ impl CachedTrie {
         let mut trie = Self::from_digest(root);
         trie.inner.resolve_with(resolver)?;
         Ok(trie)
+    }
+
+    /// Creates a new trie from a root digest and a map of pre-hashed, RLP-encoded
+    /// nodes. Upstream API used by `tries::zeth`; jeth builds through
+    /// [`Self::from_resolver_zc`], so this copies the encodings.
+    pub fn from_prehashed_nodes(
+        root: B256,
+        rlp_by_digest: &B256IndexMap<impl AsRef<[u8]>>,
+    ) -> alloy_rlp::Result<Self> {
+        let owned: B256IndexMap<Bytes> = rlp_by_digest
+            .iter()
+            .map(|(digest, rlp)| (*digest, Bytes::copy_from_slice(rlp.as_ref())))
+            .collect();
+        Self::from_resolver_zc(root, &mut MapResolver(&owned))
     }
 }
 

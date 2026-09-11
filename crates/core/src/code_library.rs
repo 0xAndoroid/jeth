@@ -136,16 +136,22 @@ impl<'a> LibraryView<'a> {
         })
     }
 
+    /// The hash of record `index` (in bounds: `new` checked the index length).
+    fn hash_at(&self, index: usize) -> &'a [u8; 32] {
+        let start = INDEX_HEADER_SIZE + index * INDEX_RECORD_SIZE + HASH_OFFSET;
+        self.index[start..start + 32].try_into().unwrap()
+    }
+
+    /// Binary search over the hash-sorted records; only the hit is decoded.
     pub fn lookup(&self, hash: &B256) -> Result<Option<LibraryEntry<'a>>, LibraryError> {
         let mut low = 0usize;
         let mut high = self.count;
         while low < high {
             let mid = low + (high - low) / 2;
-            let entry = self.entry(mid)?;
-            match entry.hash.as_slice().cmp(hash.as_slice()) {
+            match self.hash_at(mid).cmp(&hash.0) {
                 core::cmp::Ordering::Less => low = mid + 1,
                 core::cmp::Ordering::Greater => high = mid,
-                core::cmp::Ordering::Equal => return Ok(Some(entry)),
+                core::cmp::Ordering::Equal => return self.entry(mid).map(Some),
             }
         }
         Ok(None)
@@ -222,37 +228,36 @@ pub const LIBRARY_ID_LO: u64 = u64::from_le_bytes([
     LIBRARY_ID[7],
 ]);
 
-#[cfg(feature = "code-library")]
-pub fn embedded() -> LibraryView<'static> {
-    LibraryView::new(
-        embedded::LIBRARY_INDEX,
-        embedded::LIBRARY_CODES,
-        embedded::LIBRARY_JUMP_TABLES,
-    )
-    .expect("embedded code library")
+/// The library baked into this build, if any.
+fn embedded() -> Option<LibraryView<'static>> {
+    #[cfg(feature = "code-library")]
+    {
+        Some(
+            LibraryView::new(
+                embedded::LIBRARY_INDEX,
+                embedded::LIBRARY_CODES,
+                embedded::LIBRARY_JUMP_TABLES,
+            )
+            .expect("embedded code library"),
+        )
+    }
+    #[cfg(not(feature = "code-library"))]
+    {
+        None
+    }
 }
 
-#[cfg(feature = "code-library")]
 pub fn lookup(hash: &B256) -> Option<Bytecode> {
-    embedded().lookup_bytecode(hash)
+    embedded()?.lookup_bytecode(hash)
 }
 
-#[cfg(not(feature = "code-library"))]
-pub fn lookup(_hash: &B256) -> Option<Bytecode> {
-    None
-}
-
-#[cfg(feature = "code-library")]
 pub fn append_raw_codes(codes: &mut alloc::vec::Vec<Bytes>) {
-    let library = embedded();
+    let Some(library) = embedded() else { return };
     codes.extend((0..library.len()).map(|index| {
         let entry = library.entry(index).expect("embedded code-library entry");
         Bytes::from_static(&entry.code[..entry.original_len])
     }));
 }
-
-#[cfg(not(feature = "code-library"))]
-pub fn append_raw_codes(_codes: &mut alloc::vec::Vec<Bytes>) {}
 
 #[cfg(test)]
 mod tests {
@@ -278,7 +283,7 @@ mod tests {
     #[cfg(feature = "code-library")]
     #[test]
     fn embedded_entries_match_revm_analysis() {
-        let library = embedded();
+        let library = embedded().unwrap();
         library.validate().unwrap();
         for index in 0..library.len() {
             let entry = library.entry(index).unwrap();

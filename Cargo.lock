@@ -2358,6 +2358,7 @@ dependencies = [
  "revm-database-interface",
  "revm-state",
  "serde",
+ "sha3",
  "stateless",
  "tries",
  "zeth-mpt",
@@ -5348,7 +5349,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-trie",
- "jolt-sdk",
 ]
 
 [[package]]

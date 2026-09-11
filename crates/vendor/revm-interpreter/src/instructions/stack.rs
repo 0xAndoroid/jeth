@@ -43,8 +43,7 @@ pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
 ) -> Ip {
     // PUSH1..=PUSH32 share one static gas.
     static_gas!(context.interpreter, PUSH1);
-    // SAFETY: `ip` points at the N immediate bytes, and analysed bytecode has at
-    // least one byte after them (see `read_be_immediate`).
+    // SAFETY: `ip` points at the N immediate bytes (see `read_be_immediate`).
     let value = unsafe { crate::interpreter::words::read_be_immediate::<N>(ip) };
     if !context.interpreter.stack.push(value) {
         return context.interpreter.halt(InstructionResult::StackOverflow);

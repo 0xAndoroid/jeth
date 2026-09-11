@@ -1,9 +1,9 @@
-use super::{Immediates, Jumps, LegacyBytecode};
+use super::{Jumps, LegacyBytecode};
 use crate::{
     interpreter_types::{Ip, LoopControl},
     InterpreterAction,
 };
-use bytecode::{utils::read_u16, Bytecode};
+use bytecode::Bytecode;
 use core::ops::Deref;
 use primitives::B256;
 
@@ -121,11 +121,6 @@ impl LoopControl for ExtBytecode {
 
 impl Jumps for ExtBytecode {
     #[inline]
-    fn relative_jump(&mut self, offset: isize) {
-        self.instruction_pointer = unsafe { self.instruction_pointer.offset(offset) };
-    }
-
-    #[inline]
     fn absolute_jump(&mut self, offset: usize) {
         self.instruction_pointer = unsafe { self.base.bytes_ref().as_ptr().add(offset) };
     }
@@ -171,34 +166,6 @@ impl Jumps for ExtBytecode {
         // SAFETY: `ip` should be at an offset from the start of the bytes.
         // In practice this is always true unless a caller modifies the `instruction_pointer` field manually.
         unsafe { ip.offset_from_unsigned(self.base.bytes_ref().as_ptr()) }
-    }
-}
-
-impl Immediates for ExtBytecode {
-    #[inline]
-    fn read_u16(&self) -> u16 {
-        unsafe { read_u16(self.instruction_pointer) }
-    }
-
-    #[inline]
-    fn read_u8(&self) -> u8 {
-        unsafe { *self.instruction_pointer }
-    }
-
-    #[inline]
-    fn read_slice(&self, len: usize) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.instruction_pointer, len) }
-    }
-
-    #[inline]
-    fn read_offset_u16(&self, offset: isize) -> u16 {
-        unsafe {
-            read_u16(
-                self.instruction_pointer
-                    // Offset for max_index that is one byte
-                    .offset(offset),
-            )
-        }
     }
 }
 

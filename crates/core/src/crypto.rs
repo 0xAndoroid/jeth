@@ -35,9 +35,7 @@ const SQRT_EXP: [u64; 4] = [
 /// revm's `Crypto` (ecrecover precompile) AND alloy-consensus's pluggable
 /// `CryptoProvider` backend — the latter covers EIP-7702 authority recovery
 /// (alloy-evm's `TxEnv` conversion calls
-/// `alloy_consensus::crypto::secp256k1::recover_signer` per authorization;
-/// software k256 measured ~1.5M rows/authorization vs ~230k inline — 16% of
-/// block 25698070).
+/// `alloy_consensus::crypto::secp256k1::recover_signer` per authorization).
 pub fn install_jolt_crypto() -> bool {
     let consensus_ok = alloy_consensus::crypto::backend::install_default_provider(
         alloc::sync::Arc::new(JoltCryptoProvider),
