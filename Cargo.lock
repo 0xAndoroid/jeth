@@ -871,6 +871,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-secp256r1"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+dependencies = [
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+]
+
+[[package]]
 name = "ark-serialize"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2340,9 +2350,15 @@ dependencies = [
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "aurora-engine-modexp",
+ "jolt-inlines-bigint",
+ "jolt-inlines-blake2",
+ "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "k256",
+ "p256",
  "postcard",
  "reth-chainspec",
  "reth-consensus",
@@ -2358,6 +2374,7 @@ dependencies = [
  "revm-database-interface",
  "revm-state",
  "serde",
+ "sha2",
  "sha3",
  "stateless",
  "tries",
@@ -2375,8 +2392,12 @@ dependencies = [
  "clap",
  "common",
  "jeth-core",
+ "jolt-inlines-bigint",
+ "jolt-inlines-blake2",
  "jolt-inlines-keccak256",
+ "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "k256",
  "object 0.36.7",
  "postcard",
@@ -2391,6 +2412,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "zeth-mpt",
 ]
 
 [[package]]
@@ -2404,10 +2426,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-bigint"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-p256"
+version = "0.1.0"
+dependencies = [
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-secp256r1",
+ "jolt-inlines-sdk",
+ "num-bigint",
+ "serde",
 ]
 
 [[package]]
@@ -2432,6 +2480,13 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "serde",
+]
+
+[[package]]
+name = "jolt-inlines-sha2"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
 ]
 
 [[package]]

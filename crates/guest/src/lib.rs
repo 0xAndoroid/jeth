@@ -227,6 +227,21 @@ pub unsafe extern "C" fn jeth_ecrecover_prehash(
     }
 }
 
+/// Hook for the vendored revm-interpreter's MULMOD: `(a * b) % m` through the
+/// Jolt BIGINT256_MUL inline, remainder written over `m` (the top-of-stack
+/// word). Zero when `m` is zero. Unconditional because Cargo.toml enables the
+/// interpreter's `bigint-inline` feature (which emits the extern declaration)
+/// in every configuration of this crate.
+#[no_mangle]
+pub unsafe extern "C" fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64) {
+    use alloy_primitives::U256;
+    jeth_core::bigint::mul_mod(
+        &*(a as *const U256),
+        &*(b as *const U256),
+        &mut *(m as *mut U256),
+    );
+}
+
 /// `once_cell`'s critical-section backend (via reth-primitives-traits) needs a
 /// [`critical_section::Impl`]. The Jolt guest is a single hart with no interrupts,
 /// so acquire/release are no-ops.
