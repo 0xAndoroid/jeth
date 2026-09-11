@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use super::{
+    arena::Scratch,
     memoize::Memoization,
     node::{Child, Digest, Node},
-    rlp::Scratch,
 };
 use alloc::boxed::Box;
 use core::{
@@ -195,19 +195,9 @@ impl<M> Children<M> {
 }
 
 impl<M: Memoization> Children<M> {
-    #[inline]
-    #[allow(dead_code)] // superseded by memoize_arena (kept for upstream parity)
-    pub(super) fn memoize(&mut self) {
-        for slot in &mut self.0 {
-            if let Slot::Node(child) = slot {
-                child.memoize();
-            }
-        }
-    }
-
-    /// jeth (advice-trie Phase 3a): [`Self::memoize`] through the reused
-    /// arena scratch buffer. Empty and digest slots cost a tag test; clean
-    /// children a cache test; neither a call.
+    /// Encode every dirty child through the reused arena scratch buffer.
+    /// Empty and digest slots cost a tag test; clean children a cache test;
+    /// neither a call.
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
         for slot in &mut self.0 {
             if let Slot::Node(child) = slot {

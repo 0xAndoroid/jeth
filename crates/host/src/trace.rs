@@ -204,7 +204,7 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
 /// ELF pair, run pass 1 (full emulation of the compute ELF — writes the advice
 /// tape; its rows never count), and return the tape positioned for reading.
 ///
-/// Advice-trie two-pass (spec §6): jeth drives builds itself, so the SDK's
+/// Advice-trie two-pass: jeth drives builds itself, so the SDK's
 /// automatic two-pass does not apply. The two builds are DIFFERENT ELFs with
 /// the same `JOLT_FUNC_NAME`; a forgotten tape panics the proven pass at the
 /// smoke sentinel.

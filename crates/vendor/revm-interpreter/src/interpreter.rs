@@ -278,7 +278,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     /// Yields the frame at `ip`: persists `ip` so the frame resumes at the next instruction,
     /// sets `action`, and returns the null [`Ip`] that stops the run loop.
     ///
-    /// Together with the `halt*` helpers this is the only producer of a null [`Ip`].
+    /// Like the `halt*` helpers, this produces the null [`Ip`] that stops the run loop.
     #[inline]
     #[must_use]
     pub fn set_action_at(&mut self, ip: Ip, action: InterpreterAction) -> Ip {

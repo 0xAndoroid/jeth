@@ -305,8 +305,7 @@ impl Stack {
             // byte-granularity swap, which LLVM lowers to per-byte loads/stores
             // on riscv64 without unaligned-scalar-mem — ~128 byte ops per swap,
             // and Jolt expands each sub-word access into a multi-row virtual
-            // sequence (measured: SWAP1–16 = 16.9% of all trace rows on a real
-            // Ethereum block). Swapping limb by limb through registers compiles
+            // sequence. Swapping limb by limb through registers compiles
             // to 8 ld + 8 sd; a whole-word `read` temporary left a dead 32-byte
             // stack frame (2 rows) on every SWAP.
             let a = self.data.as_mut_ptr().add(len - 1 - n).cast::<u64>();
