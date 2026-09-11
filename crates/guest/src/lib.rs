@@ -102,8 +102,7 @@ fn validate_block_advice(input: jolt::TrustedAdvice<&[u8]>) -> ValidationResult 
 }
 
 /// Trusted-digest path: pre-computed witness-node keccaks + code hashes arrive
-/// as TRUSTED ADVICE, so the reveal phase skips hashing the witness entirely
-/// (measured 274M rows on block 25698189).
+/// as TRUSTED ADVICE, so the reveal phase skips hashing the witness entirely.
 ///
 /// SOUNDNESS CAVEAT: the digest map is verifier-trusted, per Jolt's trusted
 /// advice semantics. The proof statement weakens to "this block is valid GIVEN

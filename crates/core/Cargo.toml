@@ -25,7 +25,7 @@ pertx-markers = ["guest-instrument"]
 # Defer bytecode analysis to first execution instead of analyzing every witness
 # code up front (upstream stateless HEAD behavior).
 lazy-analysis = []
-# §8.1 pre-measurement counters + phase snapshots (native runs only).
+# Resolver probe/hit/decode counters + phase snapshots (native runs only).
 premeasure = ["zeth-mpt/premeasure"]
 # Advice two-pass, pass-1 build: #[cfg] resolves in the DEFINING crate, so the
 # feature lives here and the guest forwards it. Pass-1 ELF runs advice bodies
@@ -78,6 +78,10 @@ serde.workspace = true
 # directly (see src/advice.rs build matrix).
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", default-features = false }
+
+[build-dependencies]
+# Recomputes the code-library id over the embedded artifacts.
+sha3 = { version = "0.11", default-features = false }
 
 [dev-dependencies]
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }

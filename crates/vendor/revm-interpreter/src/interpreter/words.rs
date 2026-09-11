@@ -184,23 +184,21 @@ pub(crate) fn bswap64(x: u64) -> u64 {
 /// with aligned `LD`s only.
 ///
 /// `N <= 4`: byte loads shifted in (cheaper than a word gather plus swap).
-/// `N >= 5`: loads the 8-aligned words containing bytes `[p, p + N]`, funnels
+/// `N >= 5`: loads the 8-aligned words containing bytes `[p, p + N)`, funnels
 /// them into the immediate's byte stream eight bytes at a time, byte-swaps
 /// each chunk and right-aligns the value with a constant shift, so the up to
 /// seven bytes past the immediate riding along in the last word fall off.
 ///
 /// # Safety
 ///
-/// `p` must point at `N` readable bytes followed by at least one more readable
-/// byte. Analysed bytecode always has a byte after a PUSH immediate: analysis
-/// pads truncated immediates and appends a STOP (`revm_bytecode`'s
-/// `analyze_legacy`). The loads then touch only 8-aligned words holding at
-/// least one of those `N + 1` bytes; on the Jolt guest (flat, word-granular
-/// RAM) such words are addressable — the containing-word rule of the guest's
-/// `mem.rs`/`keccak.rs`. In Rust's abstract machine the bytes beyond `p + N`
-/// inside those words lie outside the caller's slice; the loads are volatile,
-/// so nothing is inferred from them, and the bits they contribute are shifted
-/// out. The native tests give every buffer a word of slack on both sides.
+/// `p` must point at `N` readable bytes. The loads touch only the 8-aligned
+/// words holding at least one of those bytes; on the Jolt guest (flat,
+/// word-granular RAM) such words are addressable — the containing-word rule of
+/// the guest's `mem.rs`/`keccak.rs`. In Rust's abstract machine the other
+/// bytes inside those words lie outside the caller's slice; the loads are
+/// volatile, so nothing is inferred from them, and the bits they contribute
+/// are shifted out. The native tests give every buffer a word of slack on
+/// both sides.
 #[inline(always)]
 pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     const { assert!(1 <= N && N <= 32) };
@@ -214,15 +212,15 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     let s = p as usize & 7;
     let base = (p as usize & !7) as *const u64;
     // `c` 8-byte chunks make up the immediate's byte stream. Words 0..c each
-    // hold immediate bytes for every `s`; word c holds one of the N + 1
-    // guaranteed bytes exactly when `s + N >= 8c` (always for N % 8 == 0), and
-    // is needed only when the stream spills into it.
+    // hold immediate bytes for every `s`; word c holds one exactly when the
+    // stream spills into it (`s + N > 8c`) and is read only then — its bytes
+    // past the immediate are shifted out below.
     let c = N.div_ceil(8);
     let mut w = [0u64; 5];
     for (i, word) in w.iter_mut().enumerate().take(c) {
         *word = read_volatile(base.add(i));
     }
-    if s + N >= 8 * c {
+    if s + N > 8 * c {
         w[c] = read_volatile(base.add(c));
     }
     let sh = (s * 8) as u32;
