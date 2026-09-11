@@ -47,14 +47,16 @@ pub fn set_trusted_digests(state: &'static [[u8; 32]], codes: &'static [[u8; 32]
 fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> {
     unsafe { TRUSTED_DIGESTS.take() }
 }
+use crate::resolver::{b256_from_le_words, words_eq, WitnessResolver};
 use alloy_primitives::{
     keccak256,
     map::{indexmap::map::Entry, B256IndexMap},
-    Address, Bytes, B256, KECCAK256_EMPTY, U256,
+    Address, B256, KECCAK256_EMPTY, U256,
 };
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_trie::{TrieAccount, EMPTY_ROOT_HASH};
-use reth_trie_common::HashedPostState;
+use reth_evm::revm::database::BundleAccount;
+use reth_trie_common::{HashedPostState, HashedStorage};
 use revm_bytecode::Bytecode;
 use zeth_mpt::CachedTrie;
 
@@ -74,15 +76,24 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
         }
     }
 
-    pub fn from_prehashed(
-        root: B256,
-        rlp_by_digest: &B256IndexMap<Bytes>,
-    ) -> alloy_rlp::Result<Self> {
-        // jeth: zero-copy decode — leaf values reference the witness bytes.
-        Ok(Self::new(CachedTrie::from_prehashed_nodes_zc(
-            root,
-            rlp_by_digest,
-        )?))
+    pub fn from_resolver(root: B256, resolver: &mut WitnessResolver) -> alloy_rlp::Result<Self> {
+        // jeth: zero-copy decode — leaf values reference the witness bytes;
+        // digests resolve through the advice-indexed resolver (no map).
+        Ok(Self::new(CachedTrie::from_resolver_zc(root, resolver)?))
+    }
+
+    /// Lazy trie anchored at `root` — nothing resolved up front; mutations
+    /// resolve on demand. `EMPTY_ROOT_HASH` short-circuits to the empty trie.
+    pub fn from_digest_root(root: B256) -> Self {
+        Self::new(CachedTrie::from_digest(root))
+    }
+
+    pub fn insert_with(&mut self, key: impl AsRef<[u8]>, value: T, r: &mut WitnessResolver) {
+        self.inner.insert_with(key, alloy_rlp::encode(value), r);
+    }
+
+    pub fn remove_with(&mut self, key: impl AsRef<[u8]>, r: &mut WitnessResolver) -> bool {
+        self.inner.remove_with(key, r)
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> alloy_rlp::Result<Option<T>> {
@@ -104,51 +115,234 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
 
 /// Represents a sparse version of the Ethereum world state.
 /// This is significantly more performant than the Reth default.
+///
+/// Phase 1b (advice-trie): storage tries are never materialized for reads —
+/// `storage()` byte-walks raw witness RLP anchored at the account's
+/// `storage_root` (recorded by `account()`); tries exist only for WRITTEN
+/// accounts, created at post-root and hydrated on demand along dirty paths.
 #[derive(Debug, Clone)]
 pub struct SparseState {
-    /// state MPT containing all used accounts
+    /// state MPT containing all used accounts (still eagerly revealed)
     state: RlpTrie<TrieAccount>,
-    /// storage MPTs sorted by the hashed address of their account
-    storages: RefCell<B256IndexMap<RlpTrie<U256>>>,
+    /// storage tries of written accounts — created at post-root only (§4.3)
+    storages: B256IndexMap<RlpTrie<U256>>,
+    /// hashed_address → storage_root (as words), recorded on every successful
+    /// `account()` (pre-state leaves are immutable during execution, so
+    /// re-records agree)
+    storage_roots: RefCell<B256IndexMap<[u64; 4]>>,
+    /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
+    resolver: RefCell<WitnessResolver>,
+    address_hashes: RefCell<AddressMemo>,
+    /// slot → keccak(slot): address-independent, so one entry serves every
+    /// contract that touches the same slot number. Keyed by the limbs; the
+    /// big-endian form is only built for the keccak.
+    slot_hashes: RefCell<SlotMemo>,
+    /// last address resolved by `account()` / `storage()`: consecutive reads
+    /// of one contract skip the address-hash and storage-root map probes
+    last_read: RefCell<LastRead>,
+}
 
-    /// all relevant MPT nodes by their Keccak hash
-    rlp_by_digest: B256IndexMap<Bytes>,
+type AddressMemo = KeccakMemo<3>;
+type SlotMemo = KeccakMemo<4>;
+
+/// Flat open-addressing keccak memo: `K` key words → digest words. A
+/// hashbrown probe costs ≈300 rows on Jolt (byte-wise control-group scan,
+/// sub-word stores, a four-word hash fold, a second probe on insert); a linear
+/// probe over whole-word entries costs ≈25. `live` marks occupancy, so a zero
+/// key is an ordinary key.
+#[derive(Debug, Clone)]
+struct KeccakMemo<const K: usize> {
+    entries: Vec<MemoEntry<K>>,
+    len: usize,
+    /// `64 - log2(entries.len())`: the slot is the top bits of the hash.
+    shift: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct MemoEntry<const K: usize> {
+    live: u64,
+    key: [u64; K],
+    digest: [u64; 4],
+}
+
+impl<const K: usize> MemoEntry<K> {
+    const EMPTY: Self = Self {
+        live: 0,
+        key: [0; K],
+        digest: [0; 4],
+    };
+}
+
+impl<const K: usize> KeccakMemo<K> {
+    /// Sized for about `expected` keys; the table doubles past a 0.7 load.
+    fn with_capacity(expected: usize) -> Self {
+        Self::with_slots(expected.next_power_of_two().max(64))
+    }
+
+    fn with_slots(slots: usize) -> Self {
+        Self {
+            entries: alloc::vec![MemoEntry::EMPTY; slots],
+            len: 0,
+            shift: 64 - slots.trailing_zeros(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Fibonacci hash of the XOR-folded key words.
+    #[inline(always)]
+    fn slot(&self, key: &[u64; K]) -> usize {
+        let folded = key.iter().fold(0u64, |acc, word| acc ^ word);
+        (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
+    }
+
+    /// The digest memoized for `key`, or `digest()` recorded for it.
+    #[inline(always)]
+    fn get_or_insert_with(&mut self, key: [u64; K], digest: impl FnOnce() -> [u64; 4]) -> [u64; 4] {
+        let mask = self.entries.len() - 1;
+        let mut i = self.slot(&key);
+        loop {
+            let entry = &self.entries[i];
+            if entry.live == 0 {
+                return self.insert_at(i, key, digest);
+            }
+            let mut diff = 0;
+            for j in 0..K {
+                diff |= entry.key[j] ^ key[j];
+            }
+            if diff == 0 {
+                return entry.digest;
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    /// Miss path, kept out of line so the hit path above stays a few
+    /// instructions with no frame of its own.
+    #[cold]
+    #[inline(never)]
+    fn insert_at(
+        &mut self,
+        i: usize,
+        key: [u64; K],
+        digest: impl FnOnce() -> [u64; 4],
+    ) -> [u64; 4] {
+        let digest = digest();
+        self.entries[i] = MemoEntry {
+            live: 1,
+            key,
+            digest,
+        };
+        self.len += 1;
+        if 10 * self.len > 7 * self.entries.len() {
+            self.grow();
+        }
+        digest
+    }
+
+    fn grow(&mut self) {
+        let mut grown = Self::with_slots(2 * self.entries.len());
+        let mask = grown.entries.len() - 1;
+        for entry in self.entries.iter().filter(|entry| entry.live != 0) {
+            let mut i = grown.slot(&entry.key);
+            while grown.entries[i].live != 0 {
+                i = (i + 1) & mask;
+            }
+            grown.entries[i] = *entry;
+        }
+        grown.len = self.len;
+        *self = grown;
+    }
+}
+
+/// A `B256` at an 8-byte boundary. A bare `B256` is align 1, so materializing
+/// one from words stores its 32 bytes one at a time (≈220 rows); into an
+/// aligned slot it is four whole-word stores.
+#[derive(Clone, Copy)]
+#[repr(C, align(8))]
+struct AlignedB256(B256);
+
+impl AlignedB256 {
+    #[inline(always)]
+    fn from_le_words(words: [u64; 4]) -> Self {
+        Self(b256_from_le_words(words))
+    }
+
+    /// The four little-endian words (whole-word loads: the bytes are 8-aligned).
+    #[inline(always)]
+    fn words(&self) -> [u64; 4] {
+        let bytes = &self.0 .0;
+        core::array::from_fn(|i| u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap()))
+    }
+}
+
+/// The 20 address bytes as three little-endian words (word 2 holds bytes
+/// 16..20). `Address` is align 1, so this is 20 byte loads; it stays
+/// in-bounds and free of pointer-to-integer casts so that every caller passing
+/// the address by value hands over its own copy — LLVM elides that copy only
+/// for callees it can prove read-only and non-capturing, and a gather from the
+/// containing aligned words (cheaper here) made each caller repack the address
+/// byte-wise before the call instead.
+#[inline(always)]
+fn address_words(address: &Address) -> [u64; 3] {
+    let bytes = &address.0 .0;
+    [
+        u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+        u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+        u32::from_le_bytes(bytes[16..].try_into().unwrap()) as u64,
+    ]
+}
+
+/// One-entry memo of the address → (hashed address, storage root) chain.
+/// Pre-state storage roots are immutable during execution, so an entry never
+/// goes stale. Invariant: `last_read ≡ storage_roots[hashed(address)]` — the
+/// pre-state trie mutates only in `calculate_state_root`, which never reads
+/// the memo. Everything is held as words: an `Address`/`B256` field is
+/// compared and copied byte-wise (`memcmp`/`memcpy` calls), words in
+/// registers.
+#[derive(Debug, Clone, Copy)]
+struct LastRead {
+    root: [u64; 4],
+    hashed: [u64; 4],
+    address: [u64; 3],
+}
+
+impl LastRead {
+    /// Matches no address: word 2 of a real address ([`address_words`]) is
+    /// below 2^32.
+    const NONE: Self = Self {
+        root: [0; 4],
+        hashed: [0; 4],
+        address: [u64::MAX; 3],
+    };
 }
 
 impl SparseState {
     /// Removes an account from the state.
     fn remove_account(&mut self, hashed_address: &B256) {
         self.state.remove(hashed_address);
-        self.storages.get_mut().remove(hashed_address);
+        self.storages.remove(hashed_address);
     }
 
-    /// Clears the storage of an account.
-    fn clear_storage(&mut self, hashed_address: B256) -> &mut RlpTrie<U256> {
-        match self.storages.get_mut().entry(hashed_address) {
-            Entry::Occupied(mut entry) => {
-                entry.insert(RlpTrie::default());
-                entry
-            }
-            Entry::Vacant(entry) => entry.insert_entry(RlpTrie::default()),
-        }
-        .into_mut()
+    /// `HashedPostState::from_bundle_state::<KeccakKeyHasher>` with the address
+    /// and slot digests taken from the execution-time memos: every changed
+    /// account went through `account()` and every SSTORE'd slot was first
+    /// SLOADed through `storage()`. Memo misses (slots of created accounts,
+    /// never read) fall back to keccak.
+    pub fn hashed_post_state<'a>(
+        &self,
+        state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
+    ) -> HashedPostState {
+        hashed_post_state(state, &self.address_hashes, &self.slot_hashes)
     }
 
-    /// Returns a mutable version of the storage trie of the given account.
-    fn storage_trie_mut(&mut self, hashed_address: B256) -> alloy_rlp::Result<&mut RlpTrie<U256>> {
-        let trie = match self.storages.get_mut().entry(hashed_address) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                // build the storage trie matching the storage root of the account
-                let storage_root = self
-                    .state
-                    .get(hashed_address)?
-                    .map_or(EMPTY_ROOT_HASH, |a| a.storage_root);
-                entry.insert(RlpTrie::from_prehashed(storage_root, &self.rlp_by_digest)?)
-            }
-        };
-
-        Ok(trie)
+    /// `keccak256(address)` through the `account()` memo (log emitters were
+    /// all loaded during execution).
+    pub fn hashed_address(&self, address: Address) -> B256 {
+        hash_address(&address, &self.address_hashes).0
     }
 }
 
@@ -164,21 +358,12 @@ impl SparseState {
             state_digests.len() == witness.state.len() && code_hashes.len() == witness.codes.len()
         });
 
-        let rlp_by_digest: B256IndexMap<_> = match trusted {
-            Some((state_digests, _)) => state_digests
-                .iter()
-                .zip(witness.state.iter())
-                .map(|(digest, rlp)| (B256::from(*digest), rlp.clone()))
-                .collect(),
-            None => witness
-                .state
-                .iter()
-                .map(|rlp| (keccak256(rlp), rlp.clone()))
-                .collect(),
-        };
+        let mut resolver = WitnessResolver::new(&witness.state, trusted.map(|(s, _)| s));
 
-        let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
+        let state = RlpTrie::from_resolver(pre_state_root, &mut resolver)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::STATE_BUILD.record();
 
         // hash all the supplied bytecode (or adopt trusted hashes); analysis is
         // deferred per the CodeMap policy.
@@ -197,8 +382,12 @@ impl SparseState {
         Ok((
             Self {
                 state,
-                storages: RefCell::new(B256IndexMap::default()),
-                rlp_by_digest,
+                storages: B256IndexMap::default(),
+                storage_roots: RefCell::new(B256IndexMap::default()),
+                resolver: RefCell::new(resolver),
+                address_hashes: RefCell::new(AddressMemo::with_capacity(witness.state.len() / 8)),
+                slot_hashes: RefCell::new(SlotMemo::with_capacity(witness.state.len() / 8)),
+                last_read: RefCell::new(LastRead::NONE),
             },
             codes,
         ))
@@ -232,24 +421,16 @@ impl StatelessTrie for SparseState {
             state_digests.len() == witness.state.len() && code_hashes.len() == witness.codes.len()
         });
 
-        // first, obtain a digest for every RLP node: keccak them (self-verifying)
-        // or adopt the trusted-advice digests (see module docs for soundness).
-        let rlp_by_digest: B256IndexMap<_> = match trusted {
-            Some((state_digests, _)) => state_digests
-                .iter()
-                .zip(witness.state.iter())
-                .map(|(digest, rlp)| (B256::from(*digest), rlp.clone()))
-                .collect(),
-            None => witness
-                .state
-                .iter()
-                .map(|rlp| (keccak256(rlp), rlp.clone()))
-                .collect(),
-        };
+        // digest resolution goes through the advice-indexed resolver: no map
+        // build — self-verifying mode keccaks each witness entry at first
+        // resolve (memoized), trusted mode seeds the memo from the blob.
+        let mut resolver = WitnessResolver::new(&witness.state, trusted.map(|(s, _)| s));
 
         // construct the state trie from the witness data and the given state root
-        let state = RlpTrie::from_prehashed(pre_state_root, &rlp_by_digest)
+        let state = RlpTrie::from_resolver(pre_state_root, &mut resolver)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::STATE_BUILD.record();
 
         // hash all the supplied bytecode (or adopt trusted hashes)
         let bytecode = match trusted {
@@ -268,8 +449,12 @@ impl StatelessTrie for SparseState {
         Ok((
             Self {
                 state,
-                storages: RefCell::new(B256IndexMap::default()),
-                rlp_by_digest,
+                storages: B256IndexMap::default(),
+                storage_roots: RefCell::new(B256IndexMap::default()),
+                resolver: RefCell::new(resolver),
+                address_hashes: RefCell::new(AddressMemo::with_capacity(witness.state.len() / 8)),
+                slot_hashes: RefCell::new(SlotMemo::with_capacity(witness.state.len() / 8)),
+                last_read: RefCell::new(LastRead::NONE),
             },
             bytecode,
         ))
@@ -277,22 +462,30 @@ impl StatelessTrie for SparseState {
 
     /// Returns the `TrieAccount` that corresponds to the `Address`.
     fn account(&self, address: Address) -> Result<Option<TrieAccount>, WitnessDbError> {
-        let hashed_address = keccak256(address);
-        match self.state.get(hashed_address)? {
+        let words = address_words(&address);
+        let hashed_address = {
+            let last = self.last_read.borrow();
+            if words_eq(&last.address, &words) {
+                AlignedB256::from_le_words(last.hashed)
+            } else {
+                hash_address_words(words, &self.address_hashes)
+            }
+        };
+        match self.state.get(&hashed_address.0)? {
             None => Ok(None),
             Some(account) => {
-                // each time an account is accessed, check whether its storage trie already exists
-                // otherwise construct it from the witness data and the account's storage root
-                match self.storages.borrow_mut().entry(hashed_address) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(RlpTrie::from_prehashed(
-                            account.storage_root,
-                            &self.rlp_by_digest,
-                        )?);
-                    }
-                    Entry::Occupied(_) => {}
-                }
-
+                // record the storage anchor for byte-walk reads; no
+                // materialization (the account leaf is authenticated chain to
+                // pre_state_root, so the root is authenticated too)
+                let root = zeth_mpt::le_words_32(account.storage_root.as_slice());
+                self.storage_roots
+                    .borrow_mut()
+                    .insert(hashed_address.0, root);
+                *self.last_read.borrow_mut() = LastRead {
+                    root,
+                    hashed: hashed_address.words(),
+                    address: words,
+                };
                 Ok(Some(account))
             }
         }
@@ -300,44 +493,114 @@ impl StatelessTrie for SparseState {
 
     /// Returns the storage slot value that corresponds to the given (address, slot) tuple.
     fn storage(&self, address: Address, slot: U256) -> Result<U256, WitnessDbError> {
-        let storages = self.storages.borrow();
-        // storage() is always be called after account(), so the storage trie must already exist
-        let storage_trie = storages.get(&keccak256(address)).unwrap();
-        Ok(storage_trie
-            .get(keccak256(B256::from(slot)))?
+        // storage() is always called after account(), so the anchor must exist
+        // (same revm-enforced invariant as the old trie-must-exist unwrap)
+        let words = address_words(&address);
+        let memo = {
+            let last = self.last_read.borrow();
+            words_eq(&last.address, &words).then_some(last.root)
+        };
+        let root = match memo {
+            Some(root) => root,
+            None => {
+                let hashed = hash_address_words(words, &self.address_hashes);
+                let root = *self.storage_roots.borrow().get(&hashed.0).unwrap();
+                *self.last_read.borrow_mut() = LastRead {
+                    root,
+                    hashed: hashed.words(),
+                    address: words,
+                };
+                root
+            }
+        };
+        let key = hash_slot(slot, &self.slot_hashes);
+        Ok(self
+            .resolver
+            .borrow_mut()
+            .walk_storage(root, &key.0)?
             .unwrap_or(U256::ZERO))
     }
 
     /// Computes the new state root from the HashedPostState.
     fn calculate_state_root(&mut self, state: HashedPostState) -> Result<B256, StatelessTrieError> {
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::EXEC_END.record();
+        let Self {
+            state: state_trie,
+            storages,
+            storage_roots,
+            resolver,
+            ..
+        } = self;
+        let storage_roots = storage_roots.get_mut();
+        let resolver = resolver.get_mut();
+
         let mut removed_accounts = Vec::new();
-        for (hashed_address, account) in state.accounts {
+        // DET-1 (L5): `state.accounts` is a foldhash HashMap — advice calls
+        // (on-demand dirty-path resolution) must never be sequenced under
+        // unsorted map iteration. Sorting also pins the perm order.
+        let mut accounts: Vec<_> = state.accounts.into_iter().collect();
+        accounts.sort_unstable_by_key(|(hashed_address, _)| *hashed_address);
+        for (hashed_address, account) in accounts {
             // nonexisting accounts must be removed from the state
             let Some(account) = account else {
                 removed_accounts.push(hashed_address);
                 continue;
             };
 
-            // apply storage changes before computing the storage root
+            // §4.3 storage-arena creation rules
             let storage_root = match state.storages.get(&hashed_address) {
-                None => self.storage_trie_mut(hashed_address).unwrap().hash(),
+                // no storage changes → cached root passthrough, zero work
+                None => match storage_roots.get(&hashed_address) {
+                    Some(root) => b256_from_le_words(*root),
+                    // never read during execution: fall back to the (pre-state)
+                    // account leaf, exactly like the old storage_trie_mut
+                    None => state_trie
+                        .get(hashed_address)
+                        .unwrap()
+                        .map_or(EMPTY_ROOT_HASH, |a| a.storage_root),
+                },
                 Some(storage) => {
                     let storage_trie = if storage.wiped {
-                        self.clear_storage(hashed_address)
+                        // fresh empty trie, discard the pre-root: merging
+                        // against the pre-trie would demand witness paths that
+                        // legitimately don't exist (selfdestruct/recreate)
+                        storages.insert(hashed_address, RlpTrie::default());
+                        storages.get_mut(&hashed_address).unwrap()
                     } else {
-                        self.storage_trie_mut(hashed_address).unwrap()
+                        match storages.entry(hashed_address) {
+                            Entry::Occupied(entry) => entry.into_mut(),
+                            Entry::Vacant(entry) => {
+                                // anchor at the recorded root (or the pre-state
+                                // leaf); EMPTY_ROOT_HASH → empty trie, no
+                                // resolver call; everything else stays a stub
+                                // hydrated on demand by the mutations below
+                                let anchor = match storage_roots.get(&hashed_address) {
+                                    Some(root) => b256_from_le_words(*root),
+                                    None => state_trie
+                                        .get(hashed_address)
+                                        .unwrap()
+                                        .map_or(EMPTY_ROOT_HASH, |a| a.storage_root),
+                                };
+                                entry.insert(RlpTrie::from_digest_root(anchor))
+                            }
+                        }
                     };
 
+                    // DET-2 (L5): sort storage updates by hashed slot.
+                    let mut slots: Vec<_> = storage.storage.iter().collect();
+                    slots.sort_unstable_by_key(|(hashed_key, _)| *hashed_key);
                     // apply all state modifications
-                    for (hashed_key, value) in &storage.storage {
+                    for &(hashed_key, value) in &slots {
                         if !value.is_zero() {
-                            storage_trie.insert(hashed_key, *value);
+                            storage_trie.insert_with(hashed_key, *value, resolver);
                         }
                     }
                     // removals must happen last, otherwise unresolved orphans might still exist
-                    for (hashed_key, value) in &storage.storage {
+                    // (DET-3: insert-before-remove preserved)
+                    for &(hashed_key, value) in &slots {
                         if value.is_zero() {
-                            storage_trie.remove(hashed_key);
+                            storage_trie.remove_with(hashed_key, resolver);
                         }
                     }
 
@@ -352,12 +615,313 @@ impl StatelessTrie for SparseState {
                 storage_root,
                 code_hash: account.bytecode_hash.unwrap_or(KECCAK256_EMPTY),
             };
-            self.state.insert(hashed_address, account);
+            state_trie.insert(hashed_address, account);
         }
         removed_accounts
             .iter()
             .for_each(|hashed_address| self.remove_account(hashed_address));
 
-        Ok(self.state.hash())
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::PRE_STATE_HASH.record();
+        let root = self.state.hash();
+        #[cfg(feature = "premeasure")]
+        crate::premeasure::POST_ROOT.record();
+        Ok(root)
+    }
+}
+
+fn hash_address(address: &Address, memo: &RefCell<AddressMemo>) -> AlignedB256 {
+    let digest = hash_address_words(address_words(address), memo);
+    #[cfg(test)]
+    debug_assert_eq!(digest.0, keccak256(address));
+    digest
+}
+
+/// [`hash_address`] from the address words alone: the miss path rebuilds the
+/// 20 bytes in an 8-aligned buffer (three word stores) for the keccak instead
+/// of borrowing the caller's `Address` — a reference escaping into the
+/// out-of-line miss path would make every caller up the chain copy its
+/// by-value `Address` byte-wise before the call.
+fn hash_address_words(words: [u64; 3], memo: &RefCell<AddressMemo>) -> AlignedB256 {
+    #[repr(C, align(8))]
+    struct Buffer([[u8; 8]; 3]);
+    let digest = memo.borrow_mut().get_or_insert_with(words, || {
+        let buffer = Buffer(words.map(u64::to_le_bytes));
+        zeth_mpt::le_words_32(keccak256(&buffer.0.as_flattened()[..20]).as_slice())
+    });
+    AlignedB256::from_le_words(digest)
+}
+
+fn hashed_post_state<'a>(
+    state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
+    address_hashes: &RefCell<AddressMemo>,
+    slot_hashes: &RefCell<SlotMemo>,
+) -> HashedPostState {
+    state
+        .into_iter()
+        .map(|(address, account)| {
+            let hashed_address = hash_address(address, address_hashes).0;
+            let hashed_account = account.info.as_ref().map(Into::into);
+            let hashed_storage = HashedStorage::from_iter(
+                account.status.was_destroyed(),
+                account
+                    .storage
+                    .iter()
+                    .map(|(slot, value)| (hash_slot(*slot, slot_hashes).0, value.present_value)),
+            );
+            (
+                hashed_address,
+                hashed_account,
+                (!hashed_storage.is_empty()).then_some(hashed_storage),
+            )
+        })
+        .collect()
+}
+
+fn hash_slot(slot: U256, memo: &RefCell<SlotMemo>) -> AlignedB256 {
+    let digest = memo.borrow_mut().get_or_insert_with(*slot.as_limbs(), || {
+        zeth_mpt::le_words_32(keccak256(B256::from(slot)).as_slice())
+    });
+    let digest = AlignedB256::from_le_words(digest);
+    #[cfg(test)]
+    debug_assert_eq!(digest.0, keccak256(B256::from(slot)));
+    digest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn address_memo_matches_direct_hashes() {
+        let memo = RefCell::new(AddressMemo::with_capacity(0));
+        let mut rng = 0x9432_1735_abc0_ef89u64;
+        let addresses: Vec<_> = (0..1024)
+            .map(|_| {
+                let mut bytes = [0u8; 20];
+                for byte in &mut bytes {
+                    rng ^= rng << 13;
+                    rng ^= rng >> 7;
+                    rng ^= rng << 17;
+                    *byte = rng as u8;
+                }
+                Address::from(bytes)
+            })
+            .collect();
+        for _ in 0..2 {
+            for &address in &addresses {
+                let expected = keccak256(address);
+                assert_eq!(hash_address(&address, &memo).0, expected);
+            }
+        }
+        assert_eq!(memo.borrow().len(), addresses.len());
+    }
+
+    /// Ten thousand random keys through both memos, from the minimum table
+    /// size (several doublings): every digest is the keccak, repeats hit.
+    #[test]
+    fn memos_match_keccak_across_growth() {
+        let mut rng = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        let mut addresses = Vec::new();
+        let mut slots = Vec::new();
+        for i in 0..10_000u64 {
+            let mut bytes = [0u8; 20];
+            bytes[..8].copy_from_slice(&next().to_le_bytes());
+            bytes[8..16].copy_from_slice(&next().to_le_bytes());
+            bytes[16..].copy_from_slice(&(next() as u32).to_le_bytes());
+            addresses.push(Address::from(bytes));
+            // half small slot numbers, half hash-like
+            slots.push(if i % 2 == 0 {
+                U256::from(i)
+            } else {
+                U256::from_limbs([next(), next(), next(), next()])
+            });
+        }
+        let address_memo = RefCell::new(AddressMemo::with_capacity(0));
+        let slot_memo = RefCell::new(SlotMemo::with_capacity(0));
+        for _ in 0..2 {
+            for (address, slot) in addresses.iter().zip(&slots) {
+                assert_eq!(hash_address(address, &address_memo).0, keccak256(address));
+                assert_eq!(hash_slot(*slot, &slot_memo).0, keccak256(B256::from(*slot)));
+            }
+            assert_eq!(address_memo.borrow().len(), addresses.len());
+            assert_eq!(slot_memo.borrow().len(), slots.len());
+        }
+        assert!(address_memo.borrow().entries.len() >= 16_384);
+        assert_eq!(core::mem::align_of::<AlignedB256>(), 8);
+        // every source alignment of the address bytes gathers the same words
+        let mut buffer = [0u8; 28];
+        for offset in 0..8 {
+            buffer[offset..offset + 20].copy_from_slice(addresses[0].as_slice());
+            let address = Address::from_slice(&buffer[offset..offset + 20]);
+            assert_eq!(
+                address_words(&address),
+                address_words(&addresses[0]),
+                "offset={offset}"
+            );
+            let mut expected = [0u8; 24];
+            expected[..20].copy_from_slice(addresses[0].as_slice());
+            let words = address_words(&address);
+            assert_eq!(words[0].to_le_bytes(), expected[..8]);
+            assert_eq!(words[1].to_le_bytes(), expected[8..16]);
+            assert_eq!(words[2].to_le_bytes(), expected[16..]);
+        }
+    }
+
+    #[test]
+    fn slot_memo_matches_direct_hashes() {
+        let memo = RefCell::new(SlotMemo::with_capacity(0));
+        let slots: Vec<_> = (0u64..64)
+            .flat_map(|i| {
+                [
+                    U256::from(i),
+                    U256::from_be_bytes(keccak256(i.to_be_bytes()).0),
+                ]
+            })
+            .collect();
+        for _ in 0..2 {
+            for &slot in &slots {
+                assert_eq!(hash_slot(slot, &memo).0, keccak256(B256::from(slot)));
+            }
+        }
+        assert_eq!(memo.borrow().len(), slots.len());
+    }
+
+    #[test]
+    fn memo_post_state_matches_from_bundle_state() {
+        use reth_evm::revm::database::{states::StorageSlot, AccountStatus};
+        use reth_trie_common::KeccakKeyHasher;
+        use revm_state::AccountInfo;
+
+        let address = |i: u8| Address::repeat_byte(i);
+        let info = |nonce: u64| AccountInfo {
+            nonce,
+            balance: U256::from(nonce) * U256::from(1_000_000_007u64),
+            code_hash: if nonce % 2 == 0 {
+                KECCAK256_EMPTY
+            } else {
+                keccak256([nonce as u8])
+            },
+            ..Default::default()
+        };
+        let mapping_slot = U256::from_be_bytes(keccak256(b"mapping").0);
+        let storage = |slots: &[(U256, u64, u64)]| {
+            slots
+                .iter()
+                .map(|&(slot, old, new)| {
+                    (
+                        slot,
+                        StorageSlot::new_changed(U256::from(old), U256::from(new)),
+                    )
+                })
+                .collect()
+        };
+        let accounts = [
+            // changed account: read slots 0/7, plus slot 9 written without a read
+            (
+                address(1),
+                BundleAccount::new(
+                    Some(info(1)),
+                    Some(info(2)),
+                    storage(&[
+                        (U256::ZERO, 1, 2),
+                        (U256::from(7), 3, 0),
+                        (U256::from(9), 0, 4),
+                    ]),
+                    AccountStatus::Changed,
+                ),
+            ),
+            // created (never in the pre-state): slots never read; shares slot 0
+            (
+                address(2),
+                BundleAccount::new(
+                    None,
+                    Some(info(3)),
+                    storage(&[(U256::ZERO, 0, 5), (mapping_slot, 0, 6)]),
+                    AccountStatus::InMemoryChange,
+                ),
+            ),
+            // destroyed: wiped storage, no slots
+            (
+                address(3),
+                BundleAccount::new(
+                    Some(info(4)),
+                    None,
+                    Default::default(),
+                    AccountStatus::Destroyed,
+                ),
+            ),
+            // destroyed and recreated in the same block
+            (
+                address(4),
+                BundleAccount::new(
+                    Some(info(5)),
+                    Some(info(6)),
+                    storage(&[(mapping_slot, 0, 8)]),
+                    AccountStatus::DestroyedChanged,
+                ),
+            ),
+            // balance-only change
+            (
+                address(5),
+                BundleAccount::new(
+                    Some(info(7)),
+                    Some(info(8)),
+                    Default::default(),
+                    AccountStatus::Changed,
+                ),
+            ),
+            // touched but non-existent
+            (
+                address(6),
+                BundleAccount::new(
+                    None,
+                    None,
+                    Default::default(),
+                    AccountStatus::LoadedNotExisting,
+                ),
+            ),
+        ];
+
+        // execution-time reads: every account but the created one was loaded,
+        // slots 0/7 of address(1) and the mapping slot of address(4) were read
+        let address_hashes = RefCell::new(AddressMemo::with_capacity(0));
+        let slot_hashes = RefCell::new(SlotMemo::with_capacity(0));
+        for i in [1, 3, 4, 5, 6] {
+            hash_address(&address(i), &address_hashes);
+        }
+        for slot in [U256::ZERO, U256::from(7), mapping_slot] {
+            hash_slot(slot, &slot_hashes);
+        }
+        assert_eq!(
+            (address_hashes.borrow().len(), slot_hashes.borrow().len()),
+            (5, 3)
+        );
+
+        let expected = HashedPostState::from_bundle_state::<KeccakKeyHasher>(
+            accounts.iter().map(|(address, account)| (address, account)),
+        );
+        let got = hashed_post_state(
+            accounts.iter().map(|(address, account)| (address, account)),
+            &address_hashes,
+            &slot_hashes,
+        );
+        assert_eq!(got, expected);
+        assert_eq!(got.accounts.len(), 6);
+        assert_eq!(got.storages.len(), 4);
+        assert!(got.storages[&keccak256(address(3))].wiped);
+        assert!(got.storages[&keccak256(address(4))].wiped);
+        // misses were filled in: address(2) and slot 9; repeats (slot 0, the
+        // mapping slot) hit the existing entries
+        assert_eq!(
+            (address_hashes.borrow().len(), slot_hashes.borrow().len()),
+            (6, 4)
+        );
     }
 }

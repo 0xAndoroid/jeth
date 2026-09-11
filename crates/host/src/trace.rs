@@ -2,7 +2,7 @@
 //! execute-only streaming count (no trace materialization, no proving).
 
 use anyhow::{bail, Context, Result};
-use jolt_common::jolt_device::MemoryConfig;
+use jolt_common::jolt_device::{MemoryConfig, MemoryLayout};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -22,8 +22,8 @@ const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4194304; // 4 MiB (validate_block_truste
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
 const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
-const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-guest";
-const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli/release/jolt";
+const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-amber-nolane-guest";
+const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt";
 
 /// Guest entry point variant.
 #[derive(Clone, Copy, PartialEq)]
@@ -60,6 +60,10 @@ pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
 /// `#[jolt::provable]` attributes — see constants above / guest lib.rs).
 pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
     let (_, _, program_end, _) = tracer::decode(elf);
+    memory_config_for_program(program_end - RAM_START_ADDRESS, variant)
+}
+
+fn memory_config_for_program(program_size: u64, variant: Variant) -> MemoryConfig {
     let (input_size, trusted_size) = match variant {
         Variant::Input => (MAX_INPUT_SIZE, MAX_ADVICE_SIZE),
         Variant::Advice => (MAX_ADVICE_SIZE, MAX_INPUT_SIZE),
@@ -72,8 +76,37 @@ pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
         max_untrusted_advice_size: MAX_ADVICE_SIZE,
         stack_size: STACK_SIZE,
         heap_size: HEAP_SIZE,
-        program_size: Some(program_end - RAM_START_ADDRESS),
+        program_size: Some(program_size),
     }
+}
+
+/// Address at which the postcard stream for the first guest argument is mapped.
+///
+/// The JEF self-align prefix only depends on this address mod 8; every region
+/// start is 8-aligned by `MemoryLayout` construction, which is what lets one
+/// input.bin serve all three variants (Advice maps it at trusted_advice_start).
+pub fn stream_start(variant: Variant) -> u64 {
+    let layout = MemoryLayout::new(&memory_config_for_program(0, variant));
+    match variant {
+        Variant::Advice => layout.trusted_advice_start,
+        Variant::Input | Variant::Trusted => layout.input_start,
+    }
+}
+
+/// Address at which the Trusted variant's digest blob (second argument,
+/// trusted advice) is mapped.
+fn digest_stream_start() -> u64 {
+    MemoryLayout::new(&memory_config_for_program(0, Variant::Trusted)).trusted_advice_start
+}
+
+pub fn wrap_input(raw: &[u8]) -> Result<Vec<u8>> {
+    Ok(postcard::to_stdvec(&raw)?)
+}
+
+pub fn decode_input(raw: &[u8]) -> Result<jeth_core::BlockInput> {
+    let stream: &'static [u8] = Box::leak(wrap_input(raw)?.into_boxed_slice());
+    let bytes: &'static [u8] = postcard::from_bytes(stream).context("decoding JEF argument")?;
+    jeth_core::decode_container(bytes).map_err(anyhow::Error::msg)
 }
 
 /// Build with symbols preserved (JOLT_BACKTRACE=1 — metadata only, identical
@@ -82,7 +115,7 @@ pub fn build_guest_symbols_features(variant: Variant, extra_features: &[&str]) -
     build_guest_inner(variant, true, extra_features)
 }
 
-/// Build the guest ELF via the `jolt` CLI (branch merge-1717-main build recipe:
+/// Build the guest ELF via the `jolt` CLI (jolt-amber-nolane build recipe:
 /// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.)
 /// with extra guest cargo features (e.g. `pertx` for per-tx markers).
 pub fn build_guest_features(variant: Variant, extra_features: &[&str]) -> Result<()> {
@@ -145,24 +178,76 @@ fn build_guest_inner(variant: Variant, symbols: bool, extra_features: &[&str]) -
 /// Pre-compute witness-node digests + code hashes for the trusted variant.
 /// Blob: u32 LE state count | state digests | code hashes (32 B each).
 fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
-    let input: jeth_core::BlockInput =
-        postcard::from_bytes(input_bin).context("parsing input.bin for digest precompute")?;
-    let mut blob =
-        Vec::with_capacity(4 + 32 * (input.witness.state.len() + input.witness.codes.len()));
-    blob.extend_from_slice(&(input.witness.state.len() as u32).to_le_bytes());
-    for node in &input.witness.state {
+    let stream = wrap_input(input_bin)?;
+    let bytes: &[u8] = postcard::from_bytes(&stream).context("decoding JEF argument")?;
+    let input = jeth_core::container::ContainerReader::read(bytes).map_err(anyhow::Error::msg)?;
+    let mut blob = Vec::with_capacity(4 + 32 * (input.state.len() + input.codes.len()));
+    blob.extend_from_slice(&(input.state.len() as u32).to_le_bytes());
+    for node in &input.state {
         blob.extend_from_slice(alloy_primitives::keccak256(node).as_slice());
     }
-    for code in &input.witness.codes {
+    for code in &input.codes {
         blob.extend_from_slice(alloy_primitives::keccak256(code).as_slice());
     }
+    let blob = jeth_core::container::self_align(blob, digest_stream_start(), 4)
+        .map_err(anyhow::Error::msg)?;
     println!(
         "digest blob: {} state + {} code digests ({} bytes)",
-        input.witness.state.len(),
-        input.witness.codes.len(),
+        input.state.len(),
+        input.codes.len(),
         blob.len()
     );
     Ok(blob)
+}
+
+/// Build (unless `skip_build` and both ELFs exist) the proven + `compute_advice`
+/// ELF pair, run pass 1 (full emulation of the compute ELF — writes the advice
+/// tape; its rows never count), and return the tape positioned for reading.
+///
+/// Advice-trie two-pass (spec §6): jeth drives builds itself, so the SDK's
+/// automatic two-pass does not apply. The two builds are DIFFERENT ELFs with
+/// the same `JOLT_FUNC_NAME`; a forgotten tape panics the proven pass at the
+/// smoke sentinel.
+pub fn advice_pass1(
+    variant: Variant,
+    extra_features: &[&str],
+    skip_build: bool,
+    input_stream: &[u8],
+    trusted_stream: &[u8],
+) -> Result<tracer::AdviceTape> {
+    let compute_features: Vec<&str> = extra_features
+        .iter()
+        .copied()
+        .chain(["compute_advice"])
+        .collect();
+    let compute_elf_file = elf_path_with(variant, &compute_features);
+    if !skip_build || !compute_elf_file.exists() {
+        build_guest_features(variant, &compute_features)?;
+    }
+    let compute_elf = std::fs::read(&compute_elf_file).context("reading compute-advice ELF")?;
+    let memory_config = memory_config(&compute_elf, variant);
+
+    println!("advice pass 1 (compute_advice ELF, full emulation)...");
+    let start = Instant::now();
+    let (_, device, mut tape) = tracer::execute(
+        &compute_elf,
+        Some(&compute_elf_file),
+        input_stream,
+        &[],
+        trusted_stream,
+        &memory_config,
+        None,
+    );
+    if device.panic {
+        bail!("compute_advice pass PANICKED — advice bodies failed");
+    }
+    tape.reset_read_position();
+    println!(
+        "advice tape: {} bytes in {:.1?}",
+        tape.len(),
+        start.elapsed()
+    );
+    Ok(tape)
 }
 
 pub fn run(
@@ -185,8 +270,8 @@ pub fn run(
 
     let raw = std::fs::read(input_path).context("reading input.bin")?;
     println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
-    // The guest fn takes `&[u8]` — postcard-wrap the payload (varint len + bytes).
-    let wrapped = postcard::to_stdvec(&raw)?;
+    // Jolt's generated entry point adds only the &[u8] argument length prefix.
+    let wrapped = wrap_input(&raw)?;
     if wrapped.len() as u64 > MAX_INPUT_SIZE {
         bail!(
             "input {} bytes exceeds guest size budget {}",
@@ -195,7 +280,7 @@ pub fn run(
         );
     }
     let digest_blob = match variant {
-        Variant::Trusted => Some(postcard::to_stdvec(&digest_blob_for(&raw)?)?),
+        Variant::Trusted => Some(wrap_input(&digest_blob_for(&raw)?)?),
         _ => None,
     };
     let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {
@@ -203,6 +288,15 @@ pub fn run(
         Variant::Advice => (&[], &wrapped),
         Variant::Trusted => (&wrapped, digest_blob.as_deref().unwrap()),
     };
+
+    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
+    let tape = advice_pass1(
+        variant,
+        extra_features,
+        skip_build,
+        input_stream,
+        trusted_stream,
+    )?;
 
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
     let memory_config = memory_config(&elf, variant);
@@ -219,7 +313,7 @@ pub fn run(
         &[],
         trusted_stream,
         &memory_config,
-        None,
+        Some(tape),
     );
     let wall = start.elapsed();
 
@@ -269,4 +363,21 @@ pub fn run(
     println!("summary → {}", summary_path.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The JEF self-align prefix is computed against one region start but the
+    /// same input.bin is mapped at a different region per variant. That only
+    /// works while every stream start is 8-aligned — pin it against jolt
+    /// MemoryLayout drift.
+    #[test]
+    fn all_stream_starts_are_8_aligned() {
+        for variant in [Variant::Input, Variant::Advice, Variant::Trusted] {
+            assert_eq!(stream_start(variant) % 8, 0);
+        }
+        assert_eq!(digest_stream_start() % 8, 0);
+    }
 }

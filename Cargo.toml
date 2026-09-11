@@ -42,13 +42,15 @@ revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database-interface = { version = "11.0.1", default-features = false }
 revm-state = { version = "11.0.1", default-features = false }
 
-# jolt (branch merge-1717-main @ af1c2aef5c, read-only worktree; path deps per PLAN.md D2)
-jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
-jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/secp256k1", default-features = false }
-tracer = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/tracer" }
-jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/common" }
-jolt-program = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/crates/jolt-program" }
+# jolt branch `jolt-amber-nolane` @ a0d7b74baa (private mirror 0xAndoroid/jolt-private) = a16z/jolt main f09bbc1e34
+# + keccak-f θ/ρ fusion (a16z/jolt#1845, 3087→2511 rows/perm), `bump-alloc` sdk feature, secp256k1 sdk limb
+# compares / MaybeUninit outputs — read-only worktree; the last three still need upstream PRs.
+jolt-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
+jolt-inlines-secp256k1 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/secp256k1", default-features = false }
+tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/tracer" }
+jolt-common = { package = "common", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/common" }
+jolt-program = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/crates/jolt-program" }
 
 # misc
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
@@ -66,8 +68,8 @@ k256 = { version = "0.13", default-features = false }
 opt-level = 3
 lto = "thin"
 
-# jeth fork of zeth-mpt (boxed branch children + zero-copy decode) — see
-# crates/vendor/zeth-mpt. Applies to jeth-core in this workspace; the guest
+# jeth fork of zeth-mpt (inline slot children, in-place decode, zero-copy
+# values) — see crates/vendor/zeth-mpt. Applies to jeth-core in this workspace; the guest
 # workspace carries the same patch.
 [patch."https://github.com/paradigmxyz/stateless.git"]
 zeth-mpt = { path = "crates/vendor/zeth-mpt" }

@@ -7,14 +7,22 @@ edition.workspace = true
 name = "jeth"
 path = "src/main.rs"
 
+[features]
+default = ["code-library"]
+code-library = ["jeth-core/code-library"]
+# §8.1 pre-measurement report after run-native (see jeth-core/premeasure).
+premeasure = ["jeth-core/premeasure"]
+secp-inline = ["jeth-core/secp-inline"]
+
 [dependencies]
-jeth-core.workspace = true
+jeth-core = { workspace = true, features = ["std"] }
 
 reth-ethereum-primitives = { workspace = true, features = ["std", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde", "k256"] }
 alloy-rlp.workspace = true
+revm-bytecode.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 serde = { workspace = true, features = ["std"] }
@@ -26,7 +34,7 @@ ureq.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# jolt tracer stack (path deps into the read-only merge-1717-main worktree).
+# jolt tracer stack (path deps into the read-only keccak-9340a77 worktree).
 # jolt-inlines-keccak256 "host" registers the inline's opcode handler with the
 # tracer via inventory — without it the emulator panics on the guest's keccak insn.
 tracer.workspace = true

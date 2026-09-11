@@ -7,6 +7,8 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
+use reth_evm::revm::database::BundleAccount;
+use reth_trie_common::HashedPostState;
 use tries::{StatelessTrie, StatelessTrieError, WitnessDbError};
 
 extern "C" {
@@ -45,6 +47,19 @@ impl InstrumentedTrie {
         phase_end("witness_reveal");
         result.map(|(inner, codes)| (Self(inner), codes))
     }
+
+    /// [`crate::zeth_trie::SparseState::hashed_post_state`].
+    pub fn hashed_post_state<'a>(
+        &self,
+        state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
+    ) -> HashedPostState {
+        self.0.hashed_post_state(state)
+    }
+
+    /// [`crate::zeth_trie::SparseState::hashed_address`].
+    pub fn hashed_address(&self, address: Address) -> B256 {
+        self.0.hashed_address(address)
+    }
 }
 
 impl StatelessTrie for InstrumentedTrie {
@@ -75,10 +90,7 @@ impl StatelessTrie for InstrumentedTrie {
         self.0.storage(address, slot)
     }
 
-    fn calculate_state_root(
-        &mut self,
-        state: reth_trie_common::HashedPostState,
-    ) -> Result<B256, StatelessTrieError> {
+    fn calculate_state_root(&mut self, state: HashedPostState) -> Result<B256, StatelessTrieError> {
         phase_start("post_root");
         let result = self.0.calculate_state_root(state);
         phase_end("post_root");

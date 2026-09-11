@@ -237,18 +237,26 @@ impl Gas {
         self.record_regular_cost(cost)
     }
 
-    /// Records an explicit cost without bounds checking (unsafe path).
+    /// Charges a constant static gas cost. Returns `true` on out-of-gas, leaving `remaining`
+    /// untouched (same contract as [`Self::record_regular_cost`]).
     ///
-    /// Returns `true` if the gas limit is exceeded. Values wrap on underflow.
-    /// Only the regular gas check is meaningful here; total remaining can underflow
-    /// without consequence if the caller handles it.
+    /// The subtraction is opaque to LLVM on RISC-V so the out-of-gas test is one `bltu`
+    /// against the result (`ld, addi, bltu, sd`); a plain `remaining < COST` compiles to
+    /// `li`/`sltiu` plus a branch, one row more per executed opcode.
     #[inline(always)]
     #[must_use = "In case of not enough gas, the interpreter should halt with an out-of-gas error"]
-    pub fn record_cost_unsafe(&mut self, cost: u64) -> bool {
+    pub fn record_static_cost<const COST: u64>(&mut self) -> bool {
+        if COST == 0 {
+            return false;
+        }
         let remaining = self.tracker.remaining();
-        let oog = remaining < cost;
-        self.tracker.set_remaining(remaining.wrapping_sub(cost));
-        oog
+        let new_remaining = sub_const::<COST>(remaining);
+        // Wrapped iff `remaining < COST`.
+        if new_remaining > remaining {
+            return true;
+        }
+        self.tracker.set_remaining(new_remaining);
+        false
     }
 
     /// Records a state gas cost (EIP-8037 reservoir model).
@@ -272,6 +280,34 @@ impl Gas {
     pub fn record_regular_cost(&mut self, cost: u64) -> bool {
         self.tracker.record_regular_cost(cost)
     }
+}
+
+/// `x.wrapping_sub(COST)` as a single `addi` LLVM cannot fold into the following compare.
+#[cfg(target_arch = "riscv64")]
+#[inline(always)]
+fn sub_const<const COST: u64>(x: u64) -> u64 {
+    if COST <= 2047 {
+        let r: u64;
+        // SAFETY: register-only arithmetic; no memory, stack, or flags are touched.
+        unsafe {
+            core::arch::asm!(
+                "addi {r}, {x}, {neg}",
+                r = lateout(reg) r,
+                x = in(reg) x,
+                neg = const -(COST as i64),
+                options(pure, nomem, nostack),
+            );
+        }
+        r
+    } else {
+        x.wrapping_sub(COST)
+    }
+}
+
+#[cfg(not(target_arch = "riscv64"))]
+#[inline(always)]
+fn sub_const<const COST: u64>(x: u64) -> u64 {
+    x.wrapping_sub(COST)
 }
 
 /// Result of attempting to extend memory during execution.

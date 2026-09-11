@@ -14,36 +14,116 @@
 
 use super::{
     memoize::Memoization,
-    node::{Child, Node},
+    node::{Child, Digest, Node},
+    rlp::Scratch,
 };
 use alloc::boxed::Box;
-use core::slice::Iter;
+use core::{
+    mem,
+    slice::{Iter, IterMut},
+};
+
+/// One child slot of a branch node.
+///
+/// Unresolved children — most slots of a witness branch — are held inline as
+/// their digest; only decoded and embedded nodes are boxed, so decoding a
+/// branch allocates nothing per digest child. The 8-byte tag makes every slot
+/// write a whole-word store. A `Node` slot never holds [`Node::Null`] (the
+/// mutating walks clear it) or [`Node::Digest`] ([`Slot::from_child`]
+/// canonicalizes it to `Slot::Digest`), so each logical child has exactly
+/// one representation and slot equality is structural.
+#[derive(Debug, Clone)]
+#[repr(u64)]
+pub(super) enum Slot<M> {
+    Empty,
+    Digest(Digest),
+    Node(Child<M>),
+}
+
+impl<M> Default for Slot<M> {
+    #[inline(always)]
+    fn default() -> Self {
+        Slot::Empty
+    }
+}
+
+impl<M> PartialEq for Slot<M> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Slot::Empty, Slot::Empty) => true,
+            (Slot::Digest(d1), Slot::Digest(d2)) => d1 == d2,
+            (Slot::Node(c1), Slot::Node(c2)) => c1 == c2,
+            _ => false,
+        }
+    }
+}
+
+impl<M> Eq for Slot<M> {}
+
+impl<M> Slot<M> {
+    /// The slot holding `child`, which must not be `Node::Null`.
+    #[inline]
+    pub(super) fn from_child(child: Child<M>) -> Self {
+        assert!(!matches!(*child, Node::Null));
+        if let Node::Digest(digest) = *child {
+            return Slot::Digest(digest);
+        }
+        Slot::Node(child)
+    }
+
+    #[inline(always)]
+    pub(super) const fn is_empty(&self) -> bool {
+        matches!(self, Slot::Empty)
+    }
+
+    /// Fill this `Empty` slot with a digest stub. `Empty` owns nothing, so the
+    /// old value is forgotten instead of dropped: an assignment would re-read
+    /// the tag and emit the `Node` drop glue on every decoded child.
+    #[inline(always)]
+    pub(super) fn fill_digest(&mut self, digest: Digest) {
+        debug_assert!(self.is_empty());
+        mem::forget(mem::replace(self, Slot::Digest(digest)));
+    }
+
+    /// Empty the slot when its node has become `Node::Null` (after a removal).
+    #[inline]
+    pub(super) fn clear_null(&mut self) {
+        if matches!(self, Slot::Node(child) if matches!(**child, Node::Null)) {
+            *self = Slot::Empty;
+        }
+    }
+}
 
 /// Implements a helper wrapper for the children of a Branch node.
 ///
 /// This wrapper offers various convenience features and assures that there is never a Null child.
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent),
-    serde(bound(serialize = "Node<M>: serde::Serialize")),
-    serde(bound(deserialize = "Node<M>: serde::Deserialize<'de>"))
-)]
-#[cfg_attr(
-    feature = "rkyv",
-    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize),
-    rkyv(bytecheck(bounds(__C: rkyv::validation::ArchiveContext, __C::Error: rkyv::rancor::Source))),
-    rkyv(serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source)),
-    rkyv(deserialize_bounds(__D::Error: rkyv::rancor::Source, M: Default))
-)]
-pub(super) struct Children<M>(
-    #[cfg_attr(feature = "rkyv", rkyv(omit_bounds))] [Option<Box<Node<M>>>; 16],
-);
+pub(super) struct Children<M>([Slot<M>; 16]);
 
 impl<M> Default for Children<M> {
+    /// Sixteen explicit `Slot::Empty` writes — one tag store each. An array
+    /// repeat of the constant copies whole 40-byte slots instead, and LLVM
+    /// folds their undefined payload bytes into a 640-byte `memset`.
+    #[inline(always)]
     fn default() -> Self {
-        Self(Default::default())
+        Self([
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+            Slot::Empty,
+        ])
     }
 }
 
@@ -55,132 +135,87 @@ impl<M> PartialEq for Children<M> {
 
 impl<M> Eq for Children<M> where Node<M>: Eq {}
 
-/// A view into a single entry in a children map, which may either be vacant or occupied.
-///
-/// This `enum` is constructed from the [`Children::entry`] method.
-pub(super) enum Entry<'a, M> {
-    Vacant(VacantEntry<'a, M>),
-    Occupied(OccupiedEntry<'a, M>),
-}
-
-/// A view into a vacant entry in a children map.
-/// It is part of the [`Entry`] enum.
-pub(super) struct VacantEntry<'a, M> {
-    child: &'a mut Option<Child<M>>,
-}
-
-/// A view into an occupied entry in a children map.
-/// It is part of the [`Entry`] enum.
-pub(super) struct OccupiedEntry<'a, M> {
-    child: &'a mut Option<Child<M>>,
-}
-
-impl<M> Drop for OccupiedEntry<'_, M> {
-    fn drop(&mut self) {
-        if matches!(self.get(), Node::Null) {
-            *self.child = None;
-        }
-    }
-}
-
-impl<'a, M> Entry<'a, M> {
-    #[inline]
-    const fn new(child: &'a mut Option<Child<M>>) -> Self {
-        match child {
-            None => Entry::Vacant(VacantEntry { child }),
-            Some(_) => Entry::Occupied(OccupiedEntry { child }),
-        }
-    }
-}
-
-impl<M> VacantEntry<'_, M> {
-    /// Sets the child of the entry with the `VacantEntry`'s index, and returns a mutable reference
-    /// to it.
-    #[inline]
-    pub(super) fn insert(self, child: Child<M>) {
-        assert!(!matches!(child.as_ref(), Node::Null));
-        *self.child = Some(child)
-    }
-}
-
-impl<M> OccupiedEntry<'_, M> {
-    /// Gets a reference to the child node in the entry.
-    #[inline]
-    pub(super) fn get(&self) -> &Node<M> {
-        // SAFETY: an OccupiedEntry is only created for a child that is not `None`
-        unsafe { self.child.as_deref().unwrap_unchecked() }
-    }
-
-    /// Gets a mutable reference to the child node in the entry.
-    #[inline]
-    pub(super) fn get_mut(&mut self) -> &mut Node<M> {
-        // SAFETY: an OccupiedEntry is only created for a child that is not `None`
-        unsafe { self.child.as_deref_mut().unwrap_unchecked() }
-    }
-}
-
 #[allow(dead_code)]
 impl<M> Children<M> {
-    #[inline]
-    pub(super) fn get(&self, idx: u8) -> Option<&Node<M>> {
-        self.0[idx as usize].as_deref()
+    #[inline(always)]
+    pub(super) fn get(&self, idx: u8) -> &Slot<M> {
+        &self.0[idx as usize]
     }
 
-    #[inline]
-    pub(super) unsafe fn get_unchecked(&self, idx: u8) -> Option<&Node<M>> {
-        self.0.get_unchecked(idx as usize).as_deref()
-    }
-
-    #[inline]
-    pub(super) const fn entry(&mut self, idx: u8) -> Entry<'_, M> {
-        Entry::new(&mut self.0[idx as usize])
+    #[inline(always)]
+    pub(super) fn slot_mut(&mut self, idx: u8) -> &mut Slot<M> {
+        &mut self.0[idx as usize]
     }
 
     #[inline]
     pub(super) fn insert(&mut self, idx: u8, child: Child<M>) {
-        assert!(!matches!(child.as_ref(), Node::Null));
-        self.0[idx as usize] = Some(child);
+        self.0[idx as usize] = Slot::from_child(child);
     }
 
     #[inline]
     pub(super) fn len(&self) -> usize {
-        self.0.iter().flatten().count()
+        self.0.iter().filter(|slot| !slot.is_empty()).count()
     }
 
+    /// Take the only child if exactly one slot is occupied. A digest stub comes
+    /// out boxed as a [`Node::Digest`] for the caller to resolve or refuse.
     pub(super) fn take_single_child(&mut self) -> Option<(u8, Child<M>)> {
-        let mut child_idx = None;
-        for (i, child) in self.0.iter().enumerate() {
-            if child.is_some() {
-                if child_idx.is_some() {
+        let mut single = None;
+        for (i, slot) in self.0.iter().enumerate() {
+            if !slot.is_empty() {
+                if single.is_some() {
                     return None; // more than one child found
                 }
-                child_idx = Some(i);
+                single = Some(i);
             }
         }
-        // SAFETY: if `child_idx` is only set when the corresponding child is `Some`
-        child_idx.map(|i| (i as u8, unsafe { self.0[i].take().unwrap_unchecked() }))
+        let i = single?;
+        let child = match mem::take(&mut self.0[i]) {
+            Slot::Node(child) => child,
+            Slot::Digest(digest) => Box::new(Node::Digest(digest)),
+            Slot::Empty => unreachable!(), // `single` is only set for an occupied slot
+        };
+        Some((i as u8, child))
     }
 
     #[inline]
-    pub(super) fn iter(&self) -> Iter<'_, Option<Child<M>>> {
+    pub(super) fn iter(&self) -> Iter<'_, Slot<M>> {
         self.0.iter()
     }
 
     #[inline]
-    pub(super) fn into_iter(self) -> impl Iterator<Item = Option<Child<M>>> {
-        self.0.into_iter()
+    pub(super) fn iter_mut(&mut self) -> IterMut<'_, Slot<M>> {
+        self.0.iter_mut()
     }
 
     #[inline]
-    pub(super) fn entries(&mut self) -> impl Iterator<Item = Entry<'_, M>> {
-        self.0.iter_mut().map(Entry::new)
+    pub(super) fn into_iter(self) -> impl Iterator<Item = Slot<M>> {
+        self.0.into_iter()
     }
 }
 
 impl<M: Memoization> Children<M> {
     #[inline]
+    #[allow(dead_code)] // superseded by memoize_arena (kept for upstream parity)
     pub(super) fn memoize(&mut self) {
-        self.0.iter_mut().flatten().for_each(|child| child.memoize())
+        for slot in &mut self.0 {
+            if let Slot::Node(child) = slot {
+                child.memoize();
+            }
+        }
+    }
+
+    /// jeth (advice-trie Phase 3a): [`Self::memoize`] through the reused
+    /// arena scratch buffer. Empty and digest slots cost a tag test; clean
+    /// children a cache test; neither a call.
+    pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
+        for slot in &mut self.0 {
+            if let Slot::Node(child) = slot {
+                if child.needs_memo() {
+                    child.encode_dirty(scratch);
+                }
+            }
+        }
     }
 }
 

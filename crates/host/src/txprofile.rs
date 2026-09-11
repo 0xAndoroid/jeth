@@ -64,13 +64,13 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
 
     let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let wrapped = postcard::to_stdvec(&raw)?;
+    let wrapped = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     // ---- native pass: tx metadata + per-tx gas from receipts ----------------
     /// (hash, to, selector, tx_type, input_len)
     type TxMeta = (String, Option<String>, Option<String>, u8, usize);
-    let input: jeth_core::BlockInput = postcard::from_bytes(&raw)?;
+    let input = crate::trace::decode_input(&raw)?;
     let block_number = input.block.header.number;
     let txs_meta: Vec<TxMeta> = {
         use alloy_consensus::transaction::Transaction as _;
@@ -111,6 +111,9 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     let capture = Capture::default();
     let subscriber = tracing_subscriber::registry().with(capture.clone());
 
+    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
+    let tape = crate::trace::advice_pass1(variant, &features, skip_build, &wrapped, &[])?;
+
     println!("tracing with per-tx markers (execute-only streaming count)...");
     let start = Instant::now();
     let (trace_rows, device, _advice) = tracing::subscriber::with_default(subscriber, || {
@@ -121,7 +124,7 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
             &[],
             &[],
             &memory_config,
-            None,
+            Some(tape),
         )
     });
     let wall = start.elapsed();

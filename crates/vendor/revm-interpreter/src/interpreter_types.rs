@@ -5,6 +5,14 @@ use core::{
 };
 use primitives::{hardfork::SpecId, Address, Bytes, B256, U256};
 
+/// Instruction pointer threaded through the run loop in a register.
+///
+/// An instruction receives the pointer to the byte after its opcode and returns the pointer
+/// to the next opcode. A null pointer means the frame halted or yielded: an
+/// [`InterpreterAction`] has been set (`Interpreter::halt*` / `Interpreter::set_action_at`)
+/// and the loop stops. Only those helpers produce a null.
+pub type Ip = *const u8;
+
 /// Helper function to read immediates data from the bytecode
 pub trait Immediates {
     /// Reads next 16 bits as signed integer from the bytecode.
@@ -77,6 +85,15 @@ pub trait Jumps {
     fn pc(&self) -> usize;
     /// Returns instruction opcode.
     fn opcode(&self) -> u8;
+    /// Returns the persisted instruction pointer (where a frame starts or resumes).
+    fn ip(&self) -> Ip;
+    /// Persists the instruction pointer (where a yielding frame resumes).
+    fn set_ip(&mut self, ip: Ip);
+    /// Pointer to the instruction at `offset`, already validated with
+    /// [`is_valid_legacy_jump`](Self::is_valid_legacy_jump).
+    fn jump_target(&self, offset: usize) -> Ip;
+    /// Program counter of `ip`.
+    fn pc_of(&self, ip: Ip) -> usize;
 }
 
 /// Trait for Interpreter memory operations.
@@ -140,6 +157,24 @@ pub trait MemoryTr {
     /// Uses [`slice`][MemoryTr::slice] internally.
     fn slice_len(&self, offset: usize, len: usize) -> impl Deref<Target = [u8]> + '_ {
         self.slice(offset..offset + len)
+    }
+
+    /// Reads the 32-byte big-endian word at `offset` (MLOAD).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + 32` is out of scope of allocated memory.
+    fn get_u256(&self, offset: usize) -> U256 {
+        U256::try_from_be_slice(&self.slice_len(offset, 32)).unwrap()
+    }
+
+    /// Writes `value` as a 32-byte big-endian word at `offset` (MSTORE).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `offset + 32` is out of scope of allocated memory.
+    fn set_u256(&mut self, offset: usize, value: U256) {
+        self.set(offset, &value.to_be_bytes::<32>());
     }
 
     /// Resizes memory to new size
@@ -257,16 +292,17 @@ pub trait ReturnData {
 }
 
 /// Trait controls execution of the loop.
+///
+/// The run loop itself stops on the null [`Ip`] returned by the instruction that set the
+/// action; these methods serve single-stepping callers such as inspectors.
 pub trait LoopControl {
-    /// Returns `true` if the loop should continue.
+    /// Returns `true` while no action is set.
     fn is_not_end(&self) -> bool;
     /// Is end of the loop.
     #[inline]
     fn is_end(&self) -> bool {
         !self.is_not_end()
     }
-    /// Sets the `end` flag internally. Action should be taken after.
-    fn reset_action(&mut self);
     /// Set return action.
     fn set_action(&mut self, action: InterpreterAction);
     /// Returns the current action.

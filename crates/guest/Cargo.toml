@@ -10,15 +10,26 @@ edition = "2021"
 [workspace]
 
 [features]
-guest = []
+default = ["keccak-census"]
+guest = ["jeth-core/code-library"]
+# Keccak census: per-call counters + `keccak[phase]` println lines in the
+# normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
+# 21 rows per keccak call; `--no-default-features` drops it.
+keccak-census = []
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
 lazy = ["jeth-core/lazy-analysis"]
+# Advice two-pass, pass-1 build (see jeth-core/compute_advice). The two builds
+# are different ELFs; trace.rs builds and runs both.
+compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-sdk" }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/merge-1717-main/jolt-inlines/keccak256", default-features = false }
+# `bump-alloc`: no-free bump heap (alloc ~10 rows, dealloc no-op, in-place realloc
+# of the newest block) instead of the size-class allocator. Peak heap = total
+# bytes ever allocated; the tracer aborts if a block exceeds the 1.5 GiB heap.
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", features = ["bump-alloc"] }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
 
 jeth-core = { path = "../core", features = ["secp-inline", "guest-instrument"] }
 
@@ -32,12 +43,6 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 # bare metal; the Jolt guest is single-hart with no interrupts → no-op impl.
 critical-section = "1.2"
 
-# Replace ZeroOS's linked_list_allocator (first-fit; measured 85.7% of ALL guest
-# cycles on block validation) with an O(1) segregated-recycling bump allocator.
-# See crates/alloc-o1. Patch applies to this (standalone) guest workspace only.
-[patch."https://github.com/LayerZero-Labs/ZeroOS.git"]
-zeroos-allocator-linked-list = { path = "../alloc-o1" }
-
 # Word-wise Stack::exchange (SWAP1-16 measured at 16.9% of trace rows via the
 # untyped byte-swap codegen). One-function patch; see crates/vendor/README.
 #
@@ -47,11 +52,16 @@ zeroos-allocator-linked-list = { path = "../alloc-o1" }
 [patch.crates-io]
 revm-interpreter = { path = "../vendor/revm-interpreter" }
 alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
+# Fixed foldhash seeds (design law L5): hashbrown iteration order must be
+# identical across the compute_advice/proven ELF pair — upstream seeds from
+# stack/fn/static addresses, which differ between two ELFs. Guest-only patch.
+foldhash = { path = "../vendor/foldhash" }
 
-# zeth-mpt fork: boxed branch children + zero-copy decode (Bytes::slice_ref
-# views into witness node bytes) — decode-driven struct moves + value copies
-# measured ~190M rows across reveal/execution/post_root. Same patch in the
-# root workspace so the native gate runs identical trie code.
+# zeth-mpt fork: inline slot children (digest stubs unboxed), in-place node
+# decode + zero-copy values (Bytes::slice_ref views into witness node bytes) —
+# decode-driven struct moves + value copies measured ~190M rows across
+# reveal/execution/post_root. Same patch in the root workspace so the native
+# gate runs identical trie code.
 [patch."https://github.com/paradigmxyz/stateless.git"]
 zeth-mpt = { path = "../vendor/zeth-mpt" }
 

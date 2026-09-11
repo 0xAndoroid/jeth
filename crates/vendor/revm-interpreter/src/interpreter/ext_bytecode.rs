@@ -1,5 +1,8 @@
 use super::{Immediates, Jumps, LegacyBytecode};
-use crate::{interpreter_types::LoopControl, InterpreterAction};
+use crate::{
+    interpreter_types::{Ip, LoopControl},
+    InterpreterAction,
+};
 use bytecode::{utils::read_u16, Bytecode};
 use core::ops::Deref;
 use primitives::B256;
@@ -10,10 +13,10 @@ mod serde;
 /// Extended bytecode structure that wraps base bytecode with additional execution metadata.
 #[derive(Debug)]
 pub struct ExtBytecode {
-    /// The current instruction pointer.
+    /// The instruction pointer where the next run starts: the bytecode start for a new frame,
+    /// the instruction after the yielding CALL/CREATE for a resumed one. The run loop keeps
+    /// the live pointer in a register ([`Ip`]) and only writes it back when the frame yields.
     instruction_pointer: *const u8,
-    /// Whether the execution should continue.
-    continue_execution: bool,
     /// Bytecode Keccak-256 hash.
     /// This is `None` if it hasn't been calculated yet.
     /// Since it's not necessary for execution, it's not calculated by default.
@@ -64,7 +67,6 @@ impl ExtBytecode {
             instruction_pointer,
             bytecode_hash: hash,
             action: None,
-            continue_execution: true,
         }
     }
 
@@ -97,27 +99,17 @@ impl ExtBytecode {
 impl LoopControl for ExtBytecode {
     #[inline]
     fn is_not_end(&self) -> bool {
-        self.continue_execution
-    }
-
-    #[inline]
-    fn reset_action(&mut self) {
-        self.continue_execution = true;
+        self.action.is_none()
     }
 
     #[inline]
     fn set_action(&mut self, action: InterpreterAction) {
-        debug_assert_eq!(
-            !self.continue_execution,
-            self.action.is_some(),
-            "has_set_action out of sync"
-        );
         debug_assert!(
-            self.continue_execution,
+            self.action.is_none(),
             "action already set;\nold: {:#?}\nnew: {:#?}",
-            self.action, action,
+            self.action,
+            action,
         );
-        self.continue_execution = false;
         self.action = Some(action);
     }
 
@@ -153,12 +145,32 @@ impl Jumps for ExtBytecode {
 
     #[inline]
     fn pc(&self) -> usize {
-        // SAFETY: `instruction_pointer` should be at an offset from the start of the bytes.
+        self.pc_of(self.instruction_pointer)
+    }
+
+    #[inline]
+    fn ip(&self) -> Ip {
+        self.instruction_pointer
+    }
+
+    #[inline]
+    fn set_ip(&mut self, ip: Ip) {
+        self.instruction_pointer = ip;
+    }
+
+    #[inline]
+    fn jump_target(&self, offset: usize) -> Ip {
+        // SAFETY: the caller validated `offset` against the jump table, so it is in bounds.
+        unsafe { self.base.bytes_ref().as_ptr().add(offset) }
+    }
+
+    // `ip` is the run loop's pointer into this bytecode (see [`Ip`]).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    #[inline]
+    fn pc_of(&self, ip: Ip) -> usize {
+        // SAFETY: `ip` should be at an offset from the start of the bytes.
         // In practice this is always true unless a caller modifies the `instruction_pointer` field manually.
-        unsafe {
-            self.instruction_pointer
-                .offset_from_unsigned(self.base.bytes_ref().as_ptr())
-        }
+        unsafe { ip.offset_from_unsigned(self.base.bytes_ref().as_ptr()) }
     }
 }
 

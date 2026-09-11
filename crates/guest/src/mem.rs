@@ -19,6 +19,34 @@
 //! itself fully addressable. We only ever load/store words that contain at
 //! least one live byte of the source/destination ranges.
 //!
+//! Layout dependency, not a language guarantee: those containing-word loads
+//! and the boundary read-modify-writes touch up to 7 bytes outside the
+//! caller's byte range, which is undefined behaviour in Rust's abstract
+//! machine. They are well-defined on the guest only because of the Jolt
+//! memory model, so `keccak.rs`, the vendored `revm-interpreter`
+//! (`interpreter/words.rs`) and `zeth-mpt` (`mpt/rlp.rs`) — which all cite
+//! this argument — depend on the following staying true:
+//!
+//! * Guest RAM is one flat, contiguous, word-granular array from
+//!   `RAM_START_ADDRESS`; every region `MemoryLayout` and the linker script
+//!   carve out (program, input, advice, stack, heap) starts 8-aligned, so the
+//!   word holding a live byte of any region lies inside the traced range.
+//! * The stack and heap edges inherit the alignment of the ELF's `program_end`
+//!   (`stack_end = RAM_START + program_size`, `heap_end = stack_end + stack +
+//!   heap`); only `heap_end` borders unmapped memory, so a live byte in the
+//!   heap's final partial word is the one way a containing-word access could
+//!   leave the traced range. That takes the 1.5 GiB heap full to within 7
+//!   bytes (peak use on the benchmark set is ~58 MiB); pin it upstream
+//!   (`align_up(program_size, 8)` or a boot assert) before relying on more.
+//! * Every such access is volatile and reaches the optimiser only through the
+//!   `extern "C"` / `#[inline(never)]` boundaries of these overrides, so LLVM
+//!   sees no allocation bound to exploit.
+//!
+//! Re-validate this paragraph whenever the guest linker script, jolt's
+//! `MemoryLayout`, or its region alignment changes. The native tests
+//! (`crates/guest/native-tests`) run the same code inside buffers with a word
+//! of slack on both sides so it stays in bounds there.
+//!
 //! Volatile word ops keep LLVM's loop-idiom recognizer from lowering the loops
 //! back into memcpy/memset calls (infinite recursion); they cost the same one
 //! row per ld/sd here.
@@ -150,11 +178,28 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
         s = sw as *const u8;
     } else {
         // Relatively misaligned: aligned window loads + shift-combine (LE).
-        // The window word containing `s` holds live bytes, and `rem >= 8`
-        // guarantees the `next` word also holds live bytes.
+        // The window word containing `s` holds live bytes; `rem >= 32`
+        // guarantees the next four window words hold live bytes (the live
+        // range reaches past `sw + 32`), `rem >= 8` the next one. Unrolled 4×
+        // with the carried word rotating through registers: ~25 rows per 32 B
+        // instead of ~10 per 8 B.
         let shift = (src_misalign * 8) as u32;
         let mut sw = ((s as usize) & !7) as *const u64;
         let mut cur = read_volatile(sw);
+        while rem >= 32 {
+            let w1 = read_volatile(sw.add(1));
+            let w2 = read_volatile(sw.add(2));
+            let w3 = read_volatile(sw.add(3));
+            let w4 = read_volatile(sw.add(4));
+            write_volatile(dw, gather(cur, w1, shift));
+            write_volatile(dw.add(1), gather(w1, w2, shift));
+            write_volatile(dw.add(2), gather(w2, w3, shift));
+            write_volatile(dw.add(3), gather(w3, w4, shift));
+            cur = w4;
+            sw = sw.add(4);
+            dw = dw.add(4);
+            rem -= 32;
+        }
         while rem >= 8 {
             let next = read_volatile(sw.add(1));
             write_volatile(dw, gather(cur, next, shift));
@@ -214,9 +259,25 @@ pub(crate) unsafe fn memset_impl(dst: *mut u8, val: i32, n: usize) -> *mut u8 {
     dst
 }
 
+/// `memcmp` sign from the first differing words, both loaded little-endian so
+/// the lowest differing byte is the first one in memory order. Bytes below it
+/// are equal, so the words masked up to and including that byte order like
+/// the byte itself (no byte swap: RV64IMAC has no `rev8`).
+#[inline(always)]
+fn first_diff_sign(x: u64, y: u64) -> i32 {
+    let d = x ^ y;
+    let low_bit = d & d.wrapping_neg();
+    let ones = (low_bit | (low_bit - 1)) & 0x0101_0101_0101_0101;
+    let mask = ones * 0xFF;
+    if (x & mask) > (y & mask) {
+        1
+    } else {
+        -1
+    }
+}
+
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
-    // Compare 8 bytes at a time; byte-lexicographic order == big-endian order
-    // of the mismatching word. Sub-word accesses appear nowhere.
+    // Compare 8 bytes at a time. Sub-word accesses appear nowhere.
     let mut i = 0usize;
     // Co-aligned fast path (the common case: 32-byte hash equality between
     // 8-aligned heap objects): one aligned load per side per word after a
@@ -227,8 +288,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
             let x = load_le_partial(a, head);
             let y = load_le_partial(b, head);
             if x != y {
-                let sh = (8 - head) * 8;
-                return if (x << sh).to_be() > (y << sh).to_be() { 1 } else { -1 };
+                return first_diff_sign(x, y);
             }
             i = head;
         }
@@ -236,7 +296,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
             let x = read_volatile(a.add(i) as *const u64);
             let y = read_volatile(b.add(i) as *const u64);
             if x != y {
-                return if x.to_be() > y.to_be() { 1 } else { -1 };
+                return first_diff_sign(x, y);
             }
             i += 8;
         }
@@ -245,7 +305,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
         let x = load_le_partial(a.add(i), 8);
         let y = load_le_partial(b.add(i), 8);
         if x != y {
-            return if x.to_be() > y.to_be() { 1 } else { -1 };
+            return first_diff_sign(x, y);
         }
         i += 8;
     }
@@ -254,12 +314,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
         let x = load_le_partial(a.add(i), rem);
         let y = load_le_partial(b.add(i), rem);
         if x != y {
-            // low bytes are the earlier ones (LE) — compare as BE of the
-            // rem-byte prefix: shift both up so byte 0 is most significant.
-            let sh = (8 - rem) * 8;
-            let xb = (x << sh).to_be();
-            let yb = (y << sh).to_be();
-            return if xb > yb { 1 } else { -1 };
+            return first_diff_sign(x, y);
         }
     }
     0
@@ -283,9 +338,9 @@ mod exports {
     }
 }
 
-/// Native tests (run with `cargo nextest` in this crate WITHOUT the `guest`
-/// feature): the implementations are pure LE 64-bit word logic, identical on
-/// aarch64, so we fuzz them against the std implementations.
+/// Native tests (`cargo test --manifest-path crates/guest/native-tests/Cargo.toml`,
+/// no `guest` feature): the implementations are pure LE 64-bit word logic,
+/// identical on aarch64, so we fuzz them against the std implementations.
 #[cfg(all(test, not(feature = "guest")))]
 mod tests {
     use super::{memcmp_impl as jmemcmp, memcpy_impl as jmemcpy, memset_impl as jmemset};
@@ -335,7 +390,11 @@ mod tests {
             if n > 0 {
                 let flip = (xorshift(&mut rng) as usize) % n;
                 let mut other = expect;
-                other[doff + flip] = other[doff + flip].wrapping_add(1 + (xorshift(&mut rng) % 254) as u8);
+                other[doff + flip] =
+                    other[doff + flip].wrapping_add(1 + (xorshift(&mut rng) % 254) as u8);
+                for b in other[doff + flip + 1..doff + n].iter_mut() {
+                    *b = xorshift(&mut rng) as u8;
+                }
                 let want = expect[doff..doff + n].cmp(&other[doff..doff + n]) as i32;
                 let got = unsafe { jmemcmp(dst.as_ptr().add(doff), other.as_ptr().add(doff), n) };
                 assert_eq!(got.signum(), want.signum(), "memcmp n={n} flip={flip}");

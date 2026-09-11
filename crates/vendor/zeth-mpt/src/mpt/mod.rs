@@ -16,13 +16,16 @@
 
 use alloc::vec::Vec;
 use alloy_primitives::{keccak256, map::B256IndexMap, Bytes, B256};
+#[allow(unused_imports)]
+use alloc::vec;
 use alloy_trie::Nibbles;
-use children::Children;
+use children::{Children, Slot};
 use core::{cmp::PartialEq, fmt::Debug};
 use memoize::{Cache, NoCache};
 use nibbles::NibbleSlice;
 use node::Node;
 
+mod advice;
 mod children;
 
 mod memoize;
@@ -30,6 +33,8 @@ mod nibbles;
 mod node;
 #[cfg(feature = "orphan")]
 pub mod orphan;
+#[cfg(feature = "premeasure")]
+pub mod premeasure;
 #[cfg(feature = "rkyv")]
 mod rkyv;
 mod rlp;
@@ -37,6 +42,7 @@ mod rlp;
 mod serde;
 
 pub use alloy_trie::EMPTY_ROOT_HASH;
+pub use rlp::{decode_header, le_words_32, DigestResolver};
 
 /// A sparse Merkle Patricia trie storing byte values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -52,7 +58,7 @@ impl Trie {
     /// It panics when neither inclusion nor exclusion of the key can be guaranteed.
     #[inline]
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
-        self.0.get(NibbleSlice::from(Nibbles::unpack(key))).map(|b| b.as_ref())
+        self.0.get(key.as_ref()).map(|b| b.as_ref())
     }
 
     /// Inserts a key-value pair into the trie.
@@ -138,10 +144,12 @@ impl Trie {
                 }
                 Node::Branch(children, _) => {
                     let mut cached_children = Children::default();
-                    for (i, child) in children.into_iter().enumerate() {
-                        if let Some(child) = child {
-                            cached_children.insert(i as u8, rec(*child).into());
-                        }
+                    for (i, slot) in children.into_iter().enumerate() {
+                        *cached_children.slot_mut(i as u8) = match slot {
+                            Slot::Empty => Slot::Empty,
+                            Slot::Digest(digest) => Slot::Digest(digest),
+                            Slot::Node(child) => Slot::Node(rec(*child).into()),
+                        };
                     }
                     Node::Branch(cached_children, Cache::default())
                 }
@@ -164,7 +172,7 @@ impl Trie {
     /// Creates a new trie that only contains a digest of the root.
     #[inline]
     pub const fn from_digest(digest: B256) -> Self {
-        Self(Node::Digest(digest))
+        Self(Node::Digest(node::Digest(digest)))
     }
 
     /// Creates a new trie from the given RLP encoded nodes.
@@ -205,15 +213,15 @@ impl Trie {
         Ok(trie)
     }
 
-    /// jeth fork: zero-copy variant of [`Self::from_prehashed_nodes`] — leaf
-    /// values reference the witness node `Bytes` instead of being copied.
+    /// jeth (advice-trie): build from a root digest, resolving nodes through a
+    /// [`DigestResolver`] (zero-copy decode). Replaces the prehashed-map path.
     #[inline]
-    pub fn from_prehashed_nodes_zc(
+    pub fn from_resolver_zc(
         root: B256,
-        rlp_by_digest: &B256IndexMap<Bytes>,
+        resolver: &mut impl DigestResolver,
     ) -> alloy_rlp::Result<Self> {
         let mut trie = Self::from_digest(root);
-        trie.0.resolve_digests_zc(rlp_by_digest)?;
+        trie.0.resolve_with(resolver)?;
         Ok(trie)
     }
 }
@@ -264,7 +272,7 @@ impl CachedTrie {
     /// See [`Trie::get`] for detailed documentation.
     #[inline]
     pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&[u8]> {
-        self.inner.get(NibbleSlice::from(Nibbles::unpack(key))).map(|b| b.as_ref())
+        self.inner.get(key.as_ref()).map(|b| b.as_ref())
     }
 
     /// Inserts a key-value pair into the trie.
@@ -276,12 +284,36 @@ impl CachedTrie {
         self.hash = None;
     }
 
+    /// jeth (advice-trie): [`Self::insert`] with on-demand digest resolution —
+    /// stubs on the insertion path resolve through `r` (miss ⇒ panic, INV-W3).
+    #[inline]
+    pub fn insert_with(
+        &mut self,
+        key: impl AsRef<[u8]>,
+        value: impl Into<Bytes>,
+        r: &mut impl DigestResolver,
+    ) {
+        self.inner.insert_with(NibbleSlice::from(Nibbles::unpack(key)), value.into(), r);
+        self.hash = None;
+    }
+
     /// Removes a key-value pair from the trie.
     ///
     /// See [`Trie::remove`] for detailed documentation.
     #[inline]
     pub fn remove(&mut self, key: impl AsRef<[u8]>) -> bool {
         if !self.inner.remove(NibbleSlice::from(Nibbles::unpack(key))) {
+            return false;
+        }
+        self.hash = None;
+        true
+    }
+
+    /// jeth (advice-trie): [`Self::remove`] with on-demand digest resolution
+    /// (traversal stubs and the branch-collapse sibling; miss ⇒ panic, INV-W3).
+    #[inline]
+    pub fn remove_with(&mut self, key: impl AsRef<[u8]>, r: &mut impl DigestResolver) -> bool {
+        if !self.inner.remove_with(NibbleSlice::from(Nibbles::unpack(key)), r) {
             return false;
         }
         self.hash = None;
@@ -323,7 +355,10 @@ impl CachedTrie {
     #[inline]
     pub fn hash(&mut self) -> B256 {
         *self.hash.get_or_insert_with(|| {
-            self.inner.memoize();
+            // Phase 3a: dirty nodes encode into one reused scratch buffer
+            // (single-pass, sealed length advice) instead of per-node Vecs.
+            let mut scratch = rlp::Scratch::new();
+            self.inner.memoize_arena(&mut scratch);
             self.inner.hash()
         })
     }
@@ -366,7 +401,7 @@ impl CachedTrie {
         if digest == EMPTY_ROOT_HASH {
             Self::default()
         } else {
-            Self { inner: Node::Digest(digest), hash: Some(digest) }
+            Self { inner: Node::Digest(node::Digest(digest)), hash: Some(digest) }
         }
     }
 
@@ -393,15 +428,16 @@ impl CachedTrie {
         Ok(trie)
     }
 
-    /// jeth fork: zero-copy variant of [`Self::from_prehashed_nodes`] — leaf
-    /// values reference the witness node `Bytes` instead of being copied.
+    /// jeth (advice-trie): build from a root digest, resolving nodes through a
+    /// [`DigestResolver`] (zero-copy decode). Replaces the prehashed-map path.
+    /// `EMPTY_ROOT_HASH` short-circuits to the empty trie — no resolver call.
     #[inline]
-    pub fn from_prehashed_nodes_zc(
+    pub fn from_resolver_zc(
         root: B256,
-        rlp_by_digest: &B256IndexMap<Bytes>,
+        resolver: &mut impl DigestResolver,
     ) -> alloy_rlp::Result<Self> {
         let mut trie = Self::from_digest(root);
-        trie.inner.resolve_digests_zc(rlp_by_digest)?;
+        trie.inner.resolve_with(resolver)?;
         Ok(trie)
     }
 }
@@ -589,7 +625,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn get_digest() {
-        let trie = Trie(Node::Digest(B256::ZERO));
+        let trie = Trie::from_digest(B256::ZERO);
         trie.get([]);
     }
 

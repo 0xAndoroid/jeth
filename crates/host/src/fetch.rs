@@ -1,4 +1,4 @@
-//! `jeth fetch`: block RLP + execution witness + recovered pubkeys → postcard input.bin.
+//! `jeth fetch`: block RLP + execution witness + recovered pubkeys → JEF input.bin.
 
 use crate::rpc::{parse_hex_bytes, parse_quantity, RpcClient, DEFAULT_ENDPOINTS};
 use anyhow::{Context, Result};
@@ -12,6 +12,7 @@ pub fn run(
     latest_minus: u64,
     rpc_list: Option<Vec<String>>,
     out_root: &str,
+    library_manifest: &str,
 ) -> Result<std::path::PathBuf> {
     let endpoints =
         rpc_list.unwrap_or_else(|| DEFAULT_ENDPOINTS.iter().map(|s| s.to_string()).collect());
@@ -75,17 +76,27 @@ pub fn run(
     let signers = recover_signers(&block.body.transactions)?;
     println!("recovered {} tx pubkeys", signers.len());
 
-    // 5. Assemble + serialize.
-    let input = BlockInput {
+    // 5. Assemble + encode.
+    let mut input = BlockInput {
         block,
         signers,
         witness,
     };
-    let input_bytes = postcard::to_stdvec(&input)?;
+    let (library_id, coverage) =
+        crate::library::filter_witness(&mut input.witness, library_manifest)?;
+    let input_bytes = jeth_core::container::ContainerWriter::write(
+        &raw,
+        &input.signers,
+        &input.witness,
+        crate::trace::stream_start(crate::trace::Variant::Input),
+        u64::from_le_bytes(library_id[..8].try_into().unwrap()),
+    )
+    .map_err(anyhow::Error::msg)?;
 
     let dir = std::path::Path::new(out_root).join(target.to_string());
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("input.bin"), &input_bytes)?;
+    std::fs::write(dir.join("block.rlp"), &raw)?;
     std::fs::write(dir.join("witness.json"), serde_json::to_vec(&witness_json)?)?;
 
     let meta = meta_json(
@@ -95,6 +106,11 @@ pub fn run(
         &wit_stats,
         &ep_block,
         &ep_wit,
+        LibraryMeta {
+            manifest: library_manifest,
+            id: &library_id,
+            coverage,
+        },
     );
     std::fs::write(dir.join("meta.json"), serde_json::to_string_pretty(&meta)?)?;
 
@@ -106,7 +122,7 @@ pub fn run(
     Ok(dir.join("input.bin"))
 }
 
-fn recover_signers(txs: &[TransactionSigned]) -> Result<Vec<UncompressedPublicKey>> {
+pub(crate) fn recover_signers(txs: &[TransactionSigned]) -> Result<Vec<UncompressedPublicKey>> {
     txs.iter()
         .enumerate()
         .map(|(i, tx)| {
@@ -151,12 +167,14 @@ fn meta_json(
     w: &WitnessStats,
     ep_block: &str,
     ep_witness: &str,
+    library: LibraryMeta<'_>,
 ) -> Value {
     let mut tx_type_counts = std::collections::BTreeMap::<u8, usize>::new();
     for tx in &block.body.transactions {
         *tx_type_counts.entry(tx.tx_type() as u8).or_default() += 1;
     }
     json!({
+        "format": 2,
         "block_number": block.header.number,
         "timestamp": block.header.timestamp,
         "gas_used": block.header.gas_used,
@@ -175,8 +193,19 @@ fn meta_json(
             "keys": w.key_count,
         },
         "endpoints": { "block": ep_block, "witness": ep_witness },
+        "code_library": {
+            "manifest": library.manifest,
+            "library_id": format!("0x{}", alloy_primitives::hex::encode(library.id)),
+            "coverage": library.coverage,
+        },
         "fetched_at": chrono_free_now(),
     })
+}
+
+struct LibraryMeta<'a> {
+    manifest: &'a str,
+    id: &'a [u8; 32],
+    coverage: crate::library::Coverage,
 }
 
 /// ISO-ish UTC timestamp without pulling chrono.

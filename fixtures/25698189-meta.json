@@ -1,14 +1,27 @@
 {
   "block_number": 25698189,
   "block_rlp_bytes": 292676,
+  "code_library": {
+    "coverage": {
+      "code_bytes_covered": 2993736,
+      "code_bytes_total": 4155968,
+      "codes_covered": 332,
+      "codes_total": 462,
+      "keccak_perms_covered": 22188,
+      "keccak_perms_total": 30797
+    },
+    "library_id": "0x9306c4e333d2ee459ee4129edfd78f7f69aa21ced31f1b4457faab946929b12a",
+    "manifest": "library/production/manifest.json"
+  },
   "endpoints": {
     "block": "https://docs-demo.quiknode.pro/",
     "witness": "https://docs-demo.quiknode.pro/"
   },
   "fetched_at": "unix:1786046849",
+  "format": 2,
   "gas_limit": 60000000,
   "gas_used": 41932456,
-  "input_bin_bytes": 10718638,
+  "input_bin_bytes": 7815236,
   "timestamp": 1786046735,
   "tx_count": 415,
   "tx_type_counts": {

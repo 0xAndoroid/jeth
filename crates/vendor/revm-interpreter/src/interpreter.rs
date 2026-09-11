@@ -8,6 +8,7 @@ mod return_data;
 mod runtime_flags;
 mod shared_memory;
 mod stack;
+pub(crate) mod words;
 
 use context_interface::cfg::GasParams;
 // re-exports
@@ -187,7 +188,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     pub fn resize_memory(&mut self, gas_params: &GasParams, offset: usize, len: usize) -> bool {
         if let Err(result) = resize_memory(&mut self.gas, &mut self.memory, gas_params, offset, len)
         {
-            self.halt(result);
+            let _ = self.halt(result);
             return false;
         }
         true
@@ -196,20 +197,23 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     /// Takes the next action from the control and returns it.
     #[inline]
     pub fn take_next_action(&mut self) -> InterpreterAction {
-        self.bytecode.reset_action();
-        // Return next action if it is some.
-        let action = core::mem::take(self.bytecode.action()).expect("Interpreter to set action");
-        action
+        core::mem::take(self.bytecode.action()).expect("Interpreter to set action")
     }
 
     /// Halt the interpreter with the given result.
     ///
     /// This will set the action to [`InterpreterAction::Return`] and set the gas to the current gas.
+    /// Returns the null [`Ip`] that stops the run loop; instructions return it directly.
     #[cold]
     #[inline(never)]
-    pub fn halt(&mut self, result: InstructionResult) {
+    #[must_use]
+    pub fn halt(&mut self, result: InstructionResult) -> Ip {
         self.bytecode
             .set_action(InterpreterAction::new_halt(result, self.gas));
+        // Opaque null: if callers could see the constant they would materialise it after the
+        // call instead of tail-calling, which puts a `ra` spill/reload on every instruction's
+        // hot path.
+        core::hint::black_box(core::ptr::null())
     }
 
     /// Halt the interpreter with the given result.
@@ -217,54 +221,70 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     /// This will set the action to [`InterpreterAction::Return`] and set the gas to the current gas.
     #[cold]
     #[inline(never)]
-    pub fn halt_fatal(&mut self) {
-        self.bytecode.set_action(InterpreterAction::new_halt(
-            InstructionResult::FatalExternalError,
-            self.gas,
-        ));
+    #[must_use]
+    pub fn halt_fatal(&mut self) -> Ip {
+        self.halt(InstructionResult::FatalExternalError)
     }
 
     /// Halt the interpreter with an out-of-gas error.
     #[cold]
     #[inline(never)]
-    pub fn halt_oog(&mut self) {
+    #[must_use]
+    pub fn halt_oog(&mut self) -> Ip {
         self.gas.spend_all();
-        self.halt(InstructionResult::OutOfGas);
+        self.halt(InstructionResult::OutOfGas)
     }
 
     /// Halt the interpreter with an out-of-gas error.
     #[cold]
     #[inline(never)]
-    pub fn halt_memory_oog(&mut self) {
-        self.halt(InstructionResult::MemoryOOG);
+    #[must_use]
+    pub fn halt_memory_oog(&mut self) -> Ip {
+        self.halt(InstructionResult::MemoryOOG)
     }
 
     /// Halt the interpreter with an out-of-gas error.
     #[cold]
     #[inline(never)]
-    pub fn halt_memory_limit_oog(&mut self) {
-        self.halt(InstructionResult::MemoryLimitOOG);
+    #[must_use]
+    pub fn halt_memory_limit_oog(&mut self) -> Ip {
+        self.halt(InstructionResult::MemoryLimitOOG)
     }
 
     /// Halt the interpreter with and overflow error.
     #[cold]
     #[inline(never)]
-    pub fn halt_overflow(&mut self) {
-        self.halt(InstructionResult::StackOverflow);
+    #[must_use]
+    pub fn halt_overflow(&mut self) -> Ip {
+        self.halt(InstructionResult::StackOverflow)
     }
 
     /// Halt the interpreter with and underflow error.
     #[cold]
     #[inline(never)]
-    pub fn halt_underflow(&mut self) {
-        self.halt(InstructionResult::StackUnderflow);
+    #[must_use]
+    pub fn halt_underflow(&mut self) -> Ip {
+        self.halt(InstructionResult::StackUnderflow)
     }
 
     /// Halt the interpreter with and not activated error.
     #[cold]
     #[inline(never)]
-    pub fn halt_not_activated(&mut self) {
-        self.halt(InstructionResult::NotActivated);
+    #[must_use]
+    pub fn halt_not_activated(&mut self) -> Ip {
+        self.halt(InstructionResult::NotActivated)
+    }
+
+    /// Yields the frame at `ip`: persists `ip` so the frame resumes at the next instruction,
+    /// sets `action`, and returns the null [`Ip`] that stops the run loop.
+    ///
+    /// Together with the `halt*` helpers this is the only producer of a null [`Ip`].
+    #[inline]
+    #[must_use]
+    pub fn set_action_at(&mut self, ip: Ip, action: InterpreterAction) -> Ip {
+        self.bytecode.set_ip(ip);
+        self.bytecode.set_action(action);
+        core::ptr::null()
     }
 
     /// Return with the given output.
@@ -278,33 +298,34 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         ));
     }
 
-    /// Executes the instruction at the current instruction pointer.
+    /// Executes the instruction at the persisted instruction pointer and persists the next one.
     ///
-    /// Internally it will increment instruction pointer by one.
+    /// Single-step entry for inspectors (`revm_inspector::inspect_instructions`); the run loop
+    /// ([`run_plain`](Self::run_plain)) keeps the pointer in a register instead.
     #[inline]
     pub fn step<H: Host + ?Sized>(
         &mut self,
         instruction_table: &InstructionTable<IW, H>,
         host: &mut H,
     ) {
-        // Get current opcode.
-        let opcode = self.bytecode.opcode();
-
+        let ip = self.bytecode.ip();
         // SAFETY: In analysis we are doing padding of bytecode so that we are sure that last
         // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
         // it will do noop and just stop execution of this contract
-        self.bytecode.relative_jump(1);
+        let (opcode, ip) = unsafe { (*ip, ip.add(1)) };
+        // Persist the incremented pointer first so `pc()` after a halt is the byte after the opcode.
+        self.bytecode.set_ip(ip);
 
         let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
 
-        if self.gas.record_cost_unsafe(instruction.static_gas()) {
-            return self.halt_oog();
-        }
         let context = InstructionContext {
             interpreter: self,
             host,
         };
-        instruction.execute(context);
+        let next = instruction.execute(ip, context);
+        if !next.is_null() {
+            self.bytecode.set_ip(next);
+        }
     }
 
     /// Executes the instruction at the current instruction pointer.
@@ -318,14 +339,30 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     }
 
     /// Executes the interpreter until it returns or stops.
+    ///
+    /// The instruction pointer lives in a register for the whole run: it is loaded from the
+    /// bytecode once (where the frame starts or resumes) and persisted only when the frame
+    /// yields ([`set_action_at`](Self::set_action_at)).
     #[inline]
     pub fn run_plain<H: Host + ?Sized>(
         &mut self,
         instruction_table: &InstructionTable<IW, H>,
         host: &mut H,
     ) -> InterpreterAction {
-        while self.bytecode.is_not_end() {
-            self.step(instruction_table, host);
+        let mut ip = self.bytecode.ip();
+        loop {
+            // SAFETY: analysed bytecode is padded with STOP, so `ip` stays inside it (see `step`).
+            let (opcode, next) = unsafe { (*ip, ip.add(1)) };
+            let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
+            let context = InstructionContext {
+                interpreter: self,
+                host,
+            };
+            ip = instruction.execute(next, context);
+            // Null: the instruction halted or yielded and set the action.
+            if ip.is_null() {
+                break;
+            }
         }
         self.take_next_action()
     }

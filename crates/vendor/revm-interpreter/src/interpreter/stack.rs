@@ -298,20 +298,28 @@ impl Stack {
         if n_m_index >= len {
             return false;
         }
-        // SAFETY: `n` and `n_m` are checked to be within bounds, and they don't overlap.
+        // SAFETY: `n` and `n_m` are checked to be within bounds, and they don't overlap;
+        // `U256` is `repr(transparent)` over `[u64; LIMBS]`, so the limb pointers are valid.
         unsafe {
             // jeth patch: `ptr::swap_nonoverlapping` performs an UNTYPED
             // byte-granularity swap, which LLVM lowers to per-byte loads/stores
             // on riscv64 without unaligned-scalar-mem — ~128 byte ops per swap,
             // and Jolt expands each sub-word access into a multi-row virtual
             // sequence (measured: SWAP1–16 = 16.9% of all trace rows on a real
-            // Ethereum block). Typed reads/writes keep the U256 alignment
-            // visible to LLVM and compile to 8 ld + 8 sd.
-            let a = self.data.as_mut_ptr().add(len - 1 - n);
-            let b = self.data.as_mut_ptr().add(len - 1 - n_m_index);
-            let tmp = a.read();
-            a.write(b.read());
-            b.write(tmp);
+            // Ethereum block). Swapping limb by limb through registers compiles
+            // to 8 ld + 8 sd; a whole-word `read` temporary left a dead 32-byte
+            // stack frame (2 rows) on every SWAP.
+            let a = self.data.as_mut_ptr().add(len - 1 - n).cast::<u64>();
+            let b = self
+                .data
+                .as_mut_ptr()
+                .add(len - 1 - n_m_index)
+                .cast::<u64>();
+            for i in 0..U256::LIMBS {
+                let (x, y) = (a.add(i).read(), b.add(i).read());
+                a.add(i).write(y);
+                b.add(i).write(x);
+            }
         }
         true
     }

@@ -18,20 +18,25 @@
 //! bench cross-checks this loop bit-for-bit against stateless 6e55612.
 
 use alloc::{collections::btree_map::BTreeMap, format, string::ToString, sync::Arc, vec::Vec};
-use alloy_consensus::{BlockHeader, Header};
-use alloy_primitives::{keccak256, map::B256IndexMap, Address, Bytes, B256, U256};
+use alloy_consensus::{
+    proofs::calculate_receipt_root, BlockHeader, Header, ReceiptWithBloom, TxReceipt,
+};
+use alloy_primitives::{
+    keccak256,
+    map::{B256IndexMap, B256Map},
+    Address, Bloom, Bytes, B256, U256,
+};
 #[cfg(feature = "lazy-analysis")]
 use core::cell::RefCell;
 use reth_consensus::{Consensus, HeaderValidator};
 use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus};
-use reth_ethereum_primitives::Block;
+use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_evm::{
     execute::{BlockExecutionOutput, BlockExecutor},
     revm::database::{states::bundle_state::BundleRetention, State},
     ConfigureEvm,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_trie_common::{HashedPostState, KeccakKeyHasher};
 use revm_bytecode::Bytecode;
 use revm_database_interface::Database;
 use revm_state::AccountInfo;
@@ -61,7 +66,7 @@ fn tx_label(i: usize, buf: &mut [u8; 6]) -> &str {
 pub struct ValidatedBlock {
     pub block_hash: B256,
     pub gas_used: u64,
-    pub receipts: Vec<reth_ethereum_primitives::EthereumReceipt>,
+    pub receipts: Vec<EthereumReceipt>,
 }
 
 /// Stateless validation with the tx loop expanded in-line (see module docs).
@@ -138,11 +143,21 @@ pub fn validate_recovered_pertx(
         state: state.take_bundle(),
         result,
     };
+    // Single-shot process: leak the block state instead of tearing it down.
+    core::mem::forget(state);
 
-    validate_block_post_execution(&current_block, &chain_spec, &output.result, None)
-        .map_err(StatelessValidationError::ConsensusValidationFailed)?;
+    let root_bloom = receipt_root_bloom(&output.result.receipts, |address| {
+        trie.hashed_address(address)
+    });
+    validate_block_post_execution(
+        &current_block,
+        &chain_spec,
+        &output.result,
+        Some(root_bloom),
+    )
+    .map_err(StatelessValidationError::ConsensusValidationFailed)?;
 
-    let hashed_state = HashedPostState::from_bundle_state::<KeccakKeyHasher>(&output.state.state);
+    let hashed_state = trie.hashed_post_state(&output.state.state);
     let state_root = trie.calculate_state_root(hashed_state)?;
     if state_root != current_block.state_root {
         return Err(StatelessValidationError::PostStateRootMismatch {
@@ -151,11 +166,16 @@ pub fn validate_recovered_pertx(
         });
     }
 
-    Ok(ValidatedBlock {
+    let validated = ValidatedBlock {
         block_hash: current_block.hash_slow(),
         gas_used: output.result.gas_used,
         receipts: output.result.receipts,
-    })
+    };
+    core::mem::forget(trie);
+    core::mem::forget(output.state);
+    core::mem::forget(witness);
+    core::mem::forget(current_block);
+    Ok(validated)
 }
 
 fn validate_block_consensus(
@@ -239,6 +259,9 @@ impl CodeMap {
     }
 
     fn get(&self, code_hash: &B256) -> Result<Bytecode, WitnessDbError> {
+        if let Some(code) = crate::code_library::lookup(code_hash) {
+            return Ok(code);
+        }
         match self {
             CodeMap::Eager(map) => map.get(code_hash).cloned().ok_or_else(|| {
                 WitnessDbError::TrieWitness(format!("bytecode for {code_hash} not found"))
@@ -321,5 +344,91 @@ impl<T: StatelessTrie> Database for WitnessDatabase<'_, T> {
             .get(&block_number)
             .copied()
             .ok_or(WitnessDbError::StateNotFound(block_number))
+    }
+}
+
+/// Receipt root + block bloom; `hash_address` supplies `keccak256(address)`
+/// for log emitters (the trie's execution-time memo), topics are memoized here.
+fn receipt_root_bloom(
+    receipts: &[EthereumReceipt],
+    mut hash_address: impl FnMut(Address) -> B256,
+) -> (B256, Bloom) {
+    let mut topics = B256Map::default();
+    let receipts: Vec<_> = receipts
+        .iter()
+        .map(|receipt| {
+            let mut logs_bloom = Bloom::ZERO;
+            for log in receipt.logs() {
+                logs_bloom.m3_2048_hashed(&hash_address(log.address));
+                for &topic in log.topics() {
+                    let hash = topics.entry(topic).or_insert_with(|| keccak256(topic));
+                    logs_bloom.m3_2048_hashed(hash);
+                }
+            }
+            ReceiptWithBloom {
+                receipt,
+                logs_bloom,
+            }
+        })
+        .collect();
+    let root = calculate_receipt_root(&receipts);
+    let bloom = receipts
+        .iter()
+        .fold(Bloom::ZERO, |bloom, r| bloom | r.logs_bloom);
+    (root, bloom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::TxType;
+    use alloy_primitives::Log;
+
+    #[test]
+    fn receipt_root_bloom_matches_direct_hashing() {
+        let mut seed = 0x4e7c_2351_a009_eb62u64;
+        let mut receipts = Vec::new();
+        let mut pool = Vec::new();
+        for _ in 0..128 {
+            let mut bytes = [0u8; 32];
+            for byte in &mut bytes {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                *byte = seed as u8;
+            }
+            pool.push(B256::from(bytes));
+        }
+        for i in 0..96 {
+            receipts.push(EthereumReceipt {
+                tx_type: if i % 2 == 0 {
+                    TxType::Legacy
+                } else {
+                    TxType::Eip1559
+                },
+                success: i % 3 != 0,
+                cumulative_gas_used: 21_000 * (i as u64 + 1),
+                logs: (0..i % 5)
+                    .map(|j| {
+                        Log::new_unchecked(
+                            Address::from_slice(&pool[(i + j) % pool.len()][..20]),
+                            (0..j).map(|k| pool[(i + k) % pool.len()]).collect(),
+                            Bytes::copy_from_slice(&pool[j][..i % 32]),
+                        )
+                    })
+                    .collect(),
+            });
+        }
+        for len in [0, 1, 32, 96] {
+            let receipts = &receipts[..len];
+            let direct: Vec<_> = receipts.iter().map(TxReceipt::with_bloom_ref).collect();
+            let expected = (
+                calculate_receipt_root(&direct),
+                direct
+                    .iter()
+                    .fold(Bloom::ZERO, |bloom, r| bloom | r.logs_bloom),
+            );
+            assert_eq!(receipt_root_bloom(receipts, keccak256), expected);
+        }
     }
 }

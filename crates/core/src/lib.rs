@@ -9,21 +9,33 @@
 
 extern crate alloc;
 
+pub mod advice;
+#[cfg(feature = "secp-inline")]
+mod bn254;
 mod chainspec;
+pub mod code_library;
+pub mod container;
 #[cfg(feature = "secp-inline")]
 mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
+#[cfg(feature = "premeasure")]
+pub mod premeasure;
 mod recover;
+#[cfg(feature = "secp-inline")]
+pub mod recovery_batch;
+mod resolver;
 pub mod validation;
+mod walk;
 mod zeth_trie;
 
 pub use zeth_trie::set_trusted_digests;
 
 #[cfg(feature = "secp-inline")]
-pub use crypto::{install_jolt_crypto, inline_ecrecover};
+pub use crypto::{inline_ecrecover, install_jolt_crypto};
 
 use alloc::{sync::Arc, vec::Vec};
+use alloy_primitives::Bytes;
 use reth_ethereum_primitives::Block;
 use reth_evm::EthEvmFactory;
 use serde::{Deserialize, Serialize};
@@ -32,6 +44,46 @@ pub use chainspec::{mainnet_spec, ChainSpec};
 pub use stateless::{
     validation::StatelessValidationError, ExecutionWitness, UncompressedPublicKey,
 };
+
+/// Turn a validated JEF view into the existing stateless-validation inputs.
+///
+/// The view must point into memory that remains live for the validation run.
+pub fn from_container(
+    view: container::ContainerView<'static>,
+) -> Result<(Block, Vec<UncompressedPublicKey>, ExecutionWitness), container::ContainerError> {
+    let block = alloy_rlp::decode_exact(view.block_rlp)
+        .map_err(|_| container::ContainerError::InvalidBlockRlp)?;
+    let signers = view
+        .signers
+        .iter()
+        .map(|record| {
+            let mut key = [0; 65];
+            key.copy_from_slice(&record[..65]);
+            UncompressedPublicKey(key)
+        })
+        .collect();
+    let witness = ExecutionWitness {
+        state: view.state.into_iter().map(Bytes::from_static).collect(),
+        codes: view.codes.into_iter().map(Bytes::from_static).collect(),
+        keys: Vec::new(),
+        headers: view.headers.into_iter().map(Bytes::from_static).collect(),
+    };
+    Ok((block, signers, witness))
+}
+
+/// Decode JEF bytes whose backing allocation outlives validation.
+pub fn decode_container(bytes: &'static [u8]) -> Result<BlockInput, container::ContainerError> {
+    let view = container::ContainerReader::read(bytes)?;
+    if view.library_id_lo != code_library::LIBRARY_ID_LO {
+        return Err(container::ContainerError::InvalidLibrary);
+    }
+    let (block, signers, witness) = from_container(view)?;
+    Ok(BlockInput {
+        block,
+        signers,
+        witness,
+    })
+}
 
 /// Trie implementation used for witness reveal + state-root computation.
 ///
@@ -51,13 +103,12 @@ pub type Trie = instrument::InstrumentedTrie;
 /// EVM config type used for both native and guest validation.
 pub type EthEvmConfig = reth_evm_ethereum::EthEvmConfig<ChainSpec, EthEvmFactory>;
 
-/// Everything the guest needs to statelessly validate one block.
+/// Host-side form of everything needed to statelessly validate one block.
 ///
-/// Serialized with postcard. The block is RLP bytes under binary serializers
-/// (`Block`'s derived serde is binary-codec-hostile — zeth learned this on risc0).
+/// JEF encodes the block as canonical RLP and the witness as borrowed byte records.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockInput {
-    /// The block to validate (RLP-encoded in binary formats).
+    /// The block to validate.
     #[serde(with = "rlp_block")]
     pub block: Block,
     /// Host-recovered uncompressed secp256k1 public key per transaction (tx order).
@@ -85,6 +136,8 @@ pub struct ValidationResult {
 /// or post-state root mismatch. The guest wrapper panics on error, which the
 /// tracer surfaces as a failed run.
 pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, StatelessValidationError> {
+    let mut input = input;
+    code_library::append_raw_codes(&mut input.witness.codes);
     let chain_spec = Arc::new(mainnet_spec());
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
@@ -95,6 +148,9 @@ pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, Stateless
         chain_spec,
         evm_config,
     )?;
+
+    #[cfg(feature = "secp-inline")]
+    recovery_batch::verify();
 
     Ok(ValidationResult {
         block_hash: output.block_hash.0,
@@ -121,6 +177,9 @@ pub fn validate_recovered(
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
     let output = validation::validate_recovered_pertx(recovered, witness, chain_spec, evm_config)?;
+
+    #[cfg(feature = "secp-inline")]
+    recovery_batch::verify();
 
     Ok(ValidationResult {
         block_hash: output.block_hash.0,

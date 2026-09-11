@@ -6,7 +6,10 @@
 //! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
 
 mod fetch;
+mod library;
+mod opcodes;
 mod profile;
+mod repack;
 mod rpc;
 mod trace;
 mod txprofile;
@@ -40,11 +43,28 @@ enum Command {
         /// Output root directory.
         #[arg(long, default_value = "data")]
         out: String,
+        /// Embedded code-library manifest used to omit covered witness codes.
+        #[arg(long, default_value = library::DEFAULT_MANIFEST)]
+        library: String,
     },
     /// Natively validate an input.bin (geth-witness compatibility gate).
     RunNative {
         #[arg(long)]
         input: String,
+    },
+    /// Rebuild JEF input.bin from a cached block and witness.
+    Repack {
+        /// Cached block directory containing witness.json and block.rlp.
+        #[arg(long)]
+        dir: String,
+        /// Embedded code-library manifest used to omit covered witness codes.
+        #[arg(long, default_value = library::DEFAULT_MANIFEST)]
+        library: String,
+    },
+    /// Build program-image-committed contract code artifacts.
+    Library {
+        #[command(subcommand)]
+        command: LibraryCommand,
     },
     /// Trace the guest over an input.bin on the Jolt RV64IMAC emulator (streaming count).
     Trace {
@@ -64,6 +84,18 @@ enum Command {
         /// deferred bytecode analysis. Each set builds into its own target dir.
         #[arg(long, value_delimiter = ',', default_value = "")]
         guest_features: Vec<String>,
+    },
+    /// Exact dynamic RV-opcode histogram (execs × trace rows).
+    Opcodes {
+        #[arg(long)]
+        input: String,
+        /// Skip rebuilding the guest ELF if it already exists.
+        #[arg(long)]
+        skip_build: bool,
+        /// Comma-separated kind prefixes (e.g. "LBU,SB") to attribute to ELF
+        /// symbols (uses the symbols guest build).
+        #[arg(long)]
+        symbols_for: Option<String>,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -115,6 +147,19 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum LibraryCommand {
+    /// Build a deterministic library from cached block witness directories.
+    Build {
+        #[arg(long, required = true, value_delimiter = ',', num_args = 1..)]
+        blocks: Vec<String>,
+        #[arg(long)]
+        top_n: Option<usize>,
+        #[arg(long)]
+        out: String,
+    },
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -130,8 +175,13 @@ fn main() -> Result<()> {
             latest_minus,
             rpc_list,
             out,
-        } => fetch::run(block, latest_minus, rpc_list, &out).map(|_| ()),
+            library,
+        } => fetch::run(block, latest_minus, rpc_list, &out, &library).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
+        Command::Repack { dir, library } => repack::run(&dir, &library),
+        Command::Library { command } => match command {
+            LibraryCommand::Build { blocks, top_n, out } => library::build(&blocks, top_n, &out),
+        },
         Command::Trace {
             input,
             skip_build,
@@ -151,6 +201,11 @@ fn main() -> Result<()> {
                 .collect();
             trace::run(&input, skip_build, variant, &features)
         }
+        Command::Opcodes {
+            input,
+            skip_build,
+            symbols_for,
+        } => opcodes::run(&input, skip_build, symbols_for),
         Command::Profile {
             input,
             every,
@@ -186,7 +241,13 @@ fn main() -> Result<()> {
             latest_minus,
             rpc_list,
         } => {
-            let input = fetch::run(None, latest_minus, rpc_list, "data")?;
+            let input = fetch::run(
+                None,
+                latest_minus,
+                rpc_list,
+                "data",
+                library::DEFAULT_MANIFEST,
+            )?;
             let input = input.to_string_lossy();
             run_native(&input)?;
             trace::run(&input, false, trace::Variant::Input, &[])
@@ -201,17 +262,26 @@ fn run_native(input_path: &str) -> Result<()> {
     println!("input: {} ({:.1} MB)", input_path, bytes.len() as f64 / 1e6);
 
     let start = Instant::now();
-    let input: jeth_core::BlockInput = postcard::from_bytes(&bytes)?;
-    println!("deserialized in {:.2?}", start.elapsed());
+    let input = trace::decode_input(&bytes)?;
+    println!("read JEF in {:.2?}", start.elapsed());
 
     let number = input.block.header.number;
     let header_gas = input.block.header.gas_used;
     let txs = input.block.body.transactions.len();
+    #[cfg(feature = "premeasure")]
+    let witness_nodes = input.witness.state.len();
     println!("block {number}: {txs} txs, {header_gas} gas (header)");
 
     let start = Instant::now();
-    let result = jeth_core::validate_mainnet(input)
-        .map_err(|e| anyhow::anyhow!("stateless validation FAILED: {e}"))?;
+    #[cfg(feature = "secp-inline")]
+    let validation = {
+        jeth_core::install_jolt_crypto();
+        jeth_core::recover_block(input.block, input.signers)
+            .and_then(|block| jeth_core::validate_recovered(block, input.witness))
+    };
+    #[cfg(not(feature = "secp-inline"))]
+    let validation = jeth_core::validate_mainnet(input);
+    let result = validation.map_err(|e| anyhow::anyhow!("stateless validation FAILED: {e}"))?;
     let elapsed = start.elapsed();
 
     println!(
@@ -219,5 +289,39 @@ fn run_native(input_path: &str) -> Result<()> {
         alloy_primitives::hex::encode(result.block_hash),
         result.gas_used,
     );
+    #[cfg(feature = "premeasure")]
+    {
+        use jeth_core::premeasure as pm;
+        let [sb, ee, ph, pr] = [
+            pm::STATE_BUILD.get(),
+            pm::EXEC_END.get(),
+            pm::PRE_STATE_HASH.get(),
+            pm::POST_ROOT.get(),
+        ];
+        let d = |a: [u64; 4], b: [u64; 4]| [b[0] - a[0], b[1] - a[1], b[2] - a[2], b[3] - a[3]];
+        let (exec, post_storage, state_hash) = (d(sb, ee), d(ee, ph), d(ph, pr));
+        println!("premeasure: witness_state_nodes={witness_nodes}");
+        println!(
+            "  state_build:         probes={} hits={} decodes={} memo={}",
+            sb[0], sb[1], sb[2], sb[3]
+        );
+        println!(
+            "  exec storage builds: probes={} hits={} decodes={} memo={}",
+            exec[0], exec[1], exec[2], exec[3]
+        );
+        println!(
+            "  post_root storage:   probes={} hits={} decodes={} dirty_storage_nodes={}",
+            post_storage[0], post_storage[1], post_storage[2], post_storage[3]
+        );
+        println!("  post_root state:     dirty_state_nodes={}", state_hash[3]);
+        println!(
+            "  TOTALS: probes={} hits={} decodes={} dirty_nodes={} dirty/witness={:.1}%",
+            pr[0],
+            pr[1],
+            pr[2],
+            pr[3],
+            100.0 * pr[3] as f64 / witness_nodes as f64
+        );
+    }
     Ok(())
 }

@@ -9,34 +9,46 @@
 
 extern crate alloc;
 
-#[cfg(any(feature = "guest", test))]
+// Guest-only shims. Their native differential tests live in the standalone
+// `native-tests` crate (`cargo test --manifest-path
+// crates/guest/native-tests/Cargo.toml`), which includes these files by path.
+#[cfg(feature = "guest")]
+mod keccak;
+#[cfg(feature = "guest")]
 mod mem;
 
 use jeth_core::{BlockInput, ValidationResult};
 
-/// Print keccak counters (guest builds) with a phase label.
-#[cfg(feature = "guest")]
+/// Print keccak counters with a phase label (census builds only).
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 fn keccak_stats(label: &str) {
     unsafe {
         jolt::println!(
-            "keccak[{}]: calls={} bytes={} perms={}",
+            "keccak[{}]: calls={} bytes={} perms={} unaligned={}",
             label,
             KECCAK_CALLS,
             KECCAK_BYTES,
-            KECCAK_PERMS
+            KECCAK_PERMS,
+            KECCAK_UNALIGNED
         );
     }
 }
-#[cfg(not(feature = "guest"))]
+#[cfg(not(all(feature = "guest", feature = "keccak-census")))]
 fn keccak_stats(_label: &str) {}
 
-/// Shared body: deserialize (measured), verify signatures, validate statelessly.
+/// Shared body: read JEF (measured), verify signatures, validate statelessly.
 fn run_validation(bytes: &[u8]) -> ValidationResult {
+    // Advice-tape alignment sentinel: panics immediately on a missing tape or
+    // mismatched compute/proven ELF pair (~6 rows).
+    jeth_core::advice::advice_smoke();
+
     // Route the EVM ecrecover precompile through the secp256k1 inline.
     jeth_core::install_jolt_crypto();
 
     jolt::start_cycle_tracking("deserialize");
-    let input: BlockInput = jolt::postcard::from_bytes(bytes).expect("input deserialization");
+    // The input region is immutable and remains mapped for the whole program.
+    let bytes: &'static [u8] = unsafe { core::mem::transmute(bytes) };
+    let input: BlockInput = jeth_core::decode_container(bytes).expect("JEF input");
     jolt::end_cycle_tracking("deserialize");
 
     let BlockInput {
@@ -62,12 +74,11 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
     result
 }
 
-/// Standard path: the postcard-encoded [`BlockInput`] arrives as committed input
-/// (borrowed zero-copy from the input region; deserialize measured in-guest).
+/// Standard path: JEF arrives as committed input, borrowed from the input region.
 #[jolt::provable(
     max_input_size = 33554432,   // 32 MiB
     max_output_size = 4096,      // 4 KiB
-    heap_size = 1610612736,      // 1.5 GiB (pow2-class allocator needs headroom; keeps addr space < 4 GiB)
+    heap_size = 1610612736,      // 1.5 GiB (bump allocator never frees: peak = total allocated; keeps addr space < 4 GiB)
     stack_size = 33554432        // 32 MiB
 )]
 fn validate_block(input: &[u8]) -> ValidationResult {
@@ -109,16 +120,20 @@ fn validate_block_advice(input: jolt::TrustedAdvice<&[u8]>) -> ValidationResult 
 )]
 fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> ValidationResult {
     let blob: &[u8] = *digests;
+    let pad_len = *blob.first().expect("digest alignment prefix") as usize;
+    assert!(pad_len <= 7, "digest alignment prefix");
+    let content = &blob[1 + pad_len..];
     assert!(
-        blob.len() >= 4 && (blob.len() - 4) % 32 == 0,
+        content.len() >= 4 && (content.len() - 4) % 32 == 0,
         "digest blob shape"
     );
-    let state_count = u32::from_le_bytes(blob[..4].try_into().unwrap()) as usize;
-    let entries = (blob.len() - 4) / 32;
+    assert_eq!(content.as_ptr() as usize % 4, 0, "digest count alignment");
+    assert_eq!(content[4..].as_ptr() as usize % 8, 0, "digest alignment");
+    let state_count = u32::from_le_bytes(content[..4].try_into().unwrap()) as usize;
+    let entries = (content.len() - 4) / 32;
     assert!(state_count <= entries, "digest blob count");
-    // [[u8; 32]] has align 1 — this cast is always valid.
     let all: &[[u8; 32]] =
-        unsafe { core::slice::from_raw_parts(blob[4..].as_ptr().cast(), entries) };
+        unsafe { core::slice::from_raw_parts(content[4..].as_ptr().cast(), entries) };
     let (state_digests, code_hashes) = all.split_at(state_count);
     // The advice region lives for the whole program run.
     let (state_digests, code_hashes): (&'static [[u8; 32]], &'static [[u8; 32]]) = unsafe {
@@ -132,25 +147,39 @@ fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> 
     run_validation(input)
 }
 
-/// Keccak accounting: calls, input bytes, and Keccak-f permutations (rate 136).
-#[cfg(feature = "guest")]
+/// Keccak accounting (census builds only): calls, input bytes, Keccak-f
+/// permutations (rate 136), and calls whose input pointer is not 8-aligned
+/// (they take the shift/or gather path in `keccak.rs`).
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_CALLS: u64 = 0;
-#[cfg(feature = "guest")]
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_BYTES: u64 = 0;
-#[cfg(feature = "guest")]
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_PERMS: u64 = 0;
+#[cfg(all(feature = "guest", feature = "keccak-census"))]
+pub static mut KECCAK_UNALIGNED: u64 = 0;
 
-/// alloy-primitives (feature "native-keccak") declares this extern and calls it for
-/// every keccak256. Routes to the Jolt Keccak-f[1600] inline (opcode 0x0B).
+/// alloy-primitives (feature "native-keccak") declares this extern and calls it
+/// for every keccak256. Routes to the Jolt Keccak-f[1600] inlines (opcode 0x0B);
+/// the word-wise sponge driver lives in `keccak.rs`.
+///
+/// `#[inline(never)]`: keeps the shim one out-of-line body. Its misaligned
+/// digest store is a five-word read-modify-write of the caller's `[u8; 32]`
+/// neighbourhood; inlined into a caller whose surrounding stores LTO can see,
+/// that RMW would become a fusion candidate instead of the volatile sequence
+/// the containing-word argument in `keccak.rs` is made for.
 #[cfg(feature = "guest")]
 #[no_mangle]
+#[inline(never)]
 pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
-    KECCAK_CALLS += 1;
-    KECCAK_BYTES += len as u64;
-    KECCAK_PERMS += (len as u64) / 136 + 1;
-    let data = core::slice::from_raw_parts(bytes, len);
-    let digest = jolt_inlines_keccak256::Keccak256::digest(data);
-    core::ptr::copy_nonoverlapping(digest.as_ptr(), output, 32);
+    #[cfg(feature = "keccak-census")]
+    {
+        KECCAK_CALLS += 1;
+        KECCAK_BYTES += len as u64;
+        KECCAK_PERMS += (len / 136) as u64 + 1;
+        KECCAK_UNALIGNED += (bytes as usize & 7 != 0) as u64;
+    }
+    keccak::keccak256_into(bytes, len, output);
 }
 
 /// Phase hooks for jeth-core's instrumented trie: forward to jolt cycle markers

@@ -2,10 +2,11 @@
 # Copyright 2025 RISC Zero, Inc.). Applied via [patch] of the git dependency.
 #
 # Changes vs upstream (profile-driven, block 25698189):
-# - Node::Branch boxes its Children: sizeof(Node) 176 -> ~112 bytes. Every
-#   decode moves each node ~3x (decode return, Box::new, *self = node); the
-#   riscv64 byte/word copy storm for those moves measured as a large share of
-#   the 129M decode-driven memcpy rows.
+# - Branch children are 16 inline 40-byte slots (Empty / inline Digest /
+#   boxed Node): unresolved children cost no heap node, and nodes are decoded
+#   in place into their final slot (decode_node_zc_into) — moving a node by
+#   value (decode return, Box::new, *self = node) was a large share of the
+#   129M decode-driven memcpy rows.
 # - Zero-copy decode: leaf/branch values become Bytes::slice_ref views into the
 #   witness node bytes instead of allocated copies (resolve_digests path, the
 #   only decode path jeth exercises).
@@ -24,11 +25,19 @@ license = "Apache-2.0"
 alloy-trie = { version = "0.9", default-features = false, features = ["ethereum"] }
 alloy-rlp = { version = "0.3.8", default-features = false }
 alloy-primitives = { version = "1.5", default-features = false, features = ["map-foldhash", "map-indexmap"] }
-arrayvec = { version = "0.7", default-features = false }
 
 # Inert feature names (upstream cfg_attr gates reference them; never enabled).
 [features]
+# Advice two-pass, pass-1 build (arena-encoder length advice — Phase 3a).
+# The cfg resolves in the defining crate; jeth-core forwards it.
+compute_advice = []
+# §8.1 pre-measurement counters (native runs only; never in guest builds).
+premeasure = []
 serde = []
 rkyv = []
 orphan = []
 rlp_serialize = []
+
+# Advice tape IO intrinsics; riscv64-only (native builds never touch jolt-sdk).
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", default-features = false }

@@ -4,10 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# Verify tx signatures with the Jolt secp256k1 inline (guest builds only; native
-# builds keep alloy/k256). The inline SDK panics if called on a non-RISC-V target.
-# Also installs the alloy-consensus pluggable crypto backend so EIP-7702
-# authority recovery (via alloy-evm's TxEnv conversion) hits the inline too.
+std = []
+code-library = []
+# Deferred tx, precompile, and authorization recovery using the secp256k1 inlines.
 secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
@@ -17,6 +16,12 @@ pertx-markers = ["guest-instrument"]
 # Defer bytecode analysis to first execution instead of analyzing every witness
 # code up front (upstream stateless HEAD behavior).
 lazy-analysis = []
+# §8.1 pre-measurement counters + phase snapshots (native runs only).
+premeasure = ["zeth-mpt/premeasure"]
+# Advice two-pass, pass-1 build: #[cfg] resolves in the DEFINING crate, so the
+# feature lives here and the guest forwards it. Pass-1 ELF runs advice bodies
+# and writes the tape; the proven ELF reads it (crates/core/src/advice.rs).
+compute_advice = ["zeth-mpt/compute_advice"]
 
 [dependencies]
 stateless.workspace = true
@@ -41,6 +46,12 @@ reth-primitives-traits.workspace = true
 revm-database-interface.workspace = true
 revm-state.workspace = true
 
+# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs):
+# the registry 0.5 crates revm-precompile's arkworks backend already compiles.
+ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-ff = { version = "0.5.0", default-features = false }
+
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-genesis.workspace = true
@@ -48,3 +59,14 @@ alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 
 serde.workspace = true
+
+# Advice tape IO intrinsics (AdviceReader/Writer, check_advice!). riscv64-only:
+# native builds never touch jolt-sdk — the native gate calls advice bodies
+# directly (see src/advice.rs build matrix).
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", default-features = false }
+
+[dev-dependencies]
+jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+k256 = { workspace = true, features = ["ecdsa"] }
+postcard = { workspace = true, features = ["use-std"] }

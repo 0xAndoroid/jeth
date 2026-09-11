@@ -1,5 +1,6 @@
 /target
 /data/
+/data-lib/
 *.bin.tmp
 /crates/guest/target
 scripts/__pycache__/
