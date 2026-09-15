@@ -114,6 +114,17 @@ enum Command {
         /// Exact trace-row attribution (real + virtual/inline rows) per symbol.
         #[arg(long)]
         rows: bool,
+        /// With --rows: per-PC row histogram inside the first symbol matching
+        /// this substring (splits a function into its phases).
+        #[arg(long)]
+        pcs_of: Option<String>,
+        /// With --rows: count entries (PC == symbol start) of every symbol
+        /// containing one of these substrings (comma-separated) — call counts.
+        #[arg(long, value_delimiter = ',')]
+        entries: Vec<String>,
+        /// Skip rebuilding the (symbolized) guest ELF pair if it already exists.
+        #[arg(long)]
+        skip_build: bool,
         /// With --rows: attribute rows per (marker, symbol) — phase AND per-tx
         /// spans (builds the guest with the pertx feature).
         #[arg(long)]
@@ -212,6 +223,9 @@ fn main() -> Result<()> {
             top,
             callers_of,
             rows,
+            pcs_of,
+            entries,
+            skip_build,
             split_markers,
             json,
             guest_features,
@@ -221,12 +235,16 @@ fn main() -> Result<()> {
                 .filter(|f| !f.is_empty())
                 .map(|f| f.as_str())
                 .collect();
+            let entries: Vec<&str> = entries.iter().map(String::as_str).collect();
             profile::run(
                 &input,
                 every,
                 top,
                 callers_of,
                 rows,
+                pcs_of,
+                &entries,
+                skip_build,
                 split_markers,
                 json,
                 &features,

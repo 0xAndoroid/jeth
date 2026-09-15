@@ -17,6 +17,9 @@ pub fn run(
     top: usize,
     callers_of: Option<String>,
     rows: bool,
+    pcs_of: Option<String>,
+    entries: &[&str],
+    skip_build: bool,
     split_markers: bool,
     json_out: Option<String>,
     guest_features: &[&str],
@@ -27,8 +30,10 @@ pub fn run(
     if split_markers && !features.contains(&"pertx") {
         features.push("pertx");
     }
-    crate::trace::build_guest_symbols_features(variant, &features)?;
     let elf_file = crate::trace::elf_path_with(variant, &features);
+    if !skip_build || !elf_file.exists() {
+        crate::trace::build_guest_symbols_features(variant, &features)?;
+    }
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
 
     // Symbol table → sorted (addr, size, name).
@@ -56,7 +61,7 @@ pub fn run(
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
-    let tape = crate::trace::advice_pass1(variant, &features, false, &input_bytes, &[])?;
+    let tape = crate::trace::advice_pass1(variant, &features, skip_build, &input_bytes, &[])?;
 
     let mut emulator = tracer::create_emulator(
         &elf,
@@ -87,6 +92,24 @@ pub fn run(
         println!("caller profile of {name} @ {addr:#x}+{size:#x}");
         (*addr, *addr + *size)
     });
+
+    // --pcs-of: per-PC row histogram inside one symbol (phase split of a function).
+    let pc_range: Option<(u64, u64)> = pcs_of.as_deref().map(|needle| {
+        let (addr, size, name) = symbols
+            .iter()
+            .find(|(_, _, n)| n.contains(needle))
+            .unwrap_or_else(|| panic!("no symbol matching {needle:?}"));
+        println!("per-PC rows of {name} @ {addr:#x}+{size:#x}");
+        (*addr, *addr + *size)
+    });
+    let mut pc_rows: HashMap<u64, u64> = HashMap::new();
+    // --entries: entry counts (PC == symbol start) of every matching symbol.
+    let entry_syms: Vec<(u64, String)> = symbols
+        .iter()
+        .filter(|(_, _, n)| entries.iter().any(|e| n.contains(e)))
+        .map(|(a, _, n)| (*a, n.clone()))
+        .collect();
+    let mut entry_hits: HashMap<u64, u64> = HashMap::new();
 
     // --split-markers: track the guest's active cycle-marker (phase / per-tx)
     // by watching the entry PC of the jeth_phase_start/end hooks and reading the
@@ -163,6 +186,14 @@ pub fn run(
             emulator.tick(None);
             let now_rows = emulator.get_cpu().trace_len as u64;
             let delta = now_rows - prev_rows;
+            if let Some((lo, hi)) = pc_range {
+                if pc >= lo && pc < hi {
+                    *pc_rows.entry(pc).or_default() += delta;
+                }
+            }
+            if !entry_syms.is_empty() && entry_syms.iter().any(|(a, _)| *a == pc) {
+                *entry_hits.entry(pc).or_default() += 1;
+            }
             match target_range {
                 None => *samples.entry(lookup(pc, &symbols)).or_default() += delta,
                 Some((lo, hi)) if pc >= lo && pc < hi => {
@@ -259,6 +290,26 @@ pub fn run(
         return Ok(());
     }
 
+    if !entry_syms.is_empty() {
+        println!("\n=== symbol entries (call counts) ===");
+        for (addr, name) in &entry_syms {
+            println!("{:>12}  {name}", entry_hits.get(addr).copied().unwrap_or(0));
+        }
+    }
+    if pc_range.is_some() {
+        let mut pcs: Vec<(u64, u64)> = pc_rows.into_iter().collect();
+        pcs.sort_by_key(|(pc, _)| *pc);
+        let total: u64 = pcs.iter().map(|(_, n)| n).sum();
+        println!("\n=== per-PC rows ({total} total) ===");
+        let mut cum = 0u64;
+        for (pc, n) in &pcs {
+            cum += n;
+            println!(
+                "{pc:#x}  {n:>12}  cum {:6.2}%",
+                100.0 * cum as f64 / total as f64
+            );
+        }
+    }
     let total: u64 = samples.values().sum();
     let mut ranked: Vec<(usize, u64)> = samples.into_iter().collect();
     ranked.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
