@@ -1,0 +1,3 @@
+[default]
+# Git commit hashes quoted in RESULTS.md (e.g. `5abd70abf`) split into false-positive "words".
+extend-ignore-re = ["\\b5abd70abf[0-9a-f]*\\b"]
