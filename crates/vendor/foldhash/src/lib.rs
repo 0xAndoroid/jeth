@@ -328,30 +328,6 @@ mod gather {
     }
 }
 
-#[cfg(test)]
-mod gather_tests {
-    /// The gather must reproduce the unaligned read for every source alignment:
-    /// 8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window.
-    #[test]
-    fn gather_matches_unaligned_read() {
-        #[repr(align(8))]
-        struct Aligned([u8; 32]);
-        let mut buf = Aligned([0; 32]);
-        for (i, b) in buf.0.iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(0x9d) ^ 0x5a;
-        }
-        for base in [0usize, 8, 16] {
-            for off in 0..8 {
-                let p = unsafe { buf.0.as_ptr().add(base + off) };
-                let want8 = unsafe { p.cast::<u64>().read_unaligned() };
-                let want4 = unsafe { p.cast::<u32>().read_unaligned() };
-                assert_eq!(unsafe { super::gather::load_le(p, 8) }, want8, "u64 at {}", base + off);
-                assert_eq!(unsafe { super::gather::load_le(p, 4) } as u32, want4, "u32 at {}", base + off);
-            }
-        }
-    }
-}
-
 /// Hashes strings > 16 bytes.
 ///
 /// # Safety
@@ -429,4 +405,28 @@ unsafe fn hash_bytes_long(mut v: &[u8], accumulator: u64, seeds: &[u64; 6]) -> u
         }
     }
     s0 ^ s1
+}
+
+#[cfg(test)]
+mod gather_tests {
+    /// The gather must reproduce the unaligned read for every source alignment:
+    /// 8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window.
+    #[test]
+    fn gather_matches_unaligned_read() {
+        #[repr(align(8))]
+        struct Aligned([u8; 32]);
+        let mut buf = Aligned([0; 32]);
+        for (i, b) in buf.0.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(0x9d) ^ 0x5a;
+        }
+        for base in [0usize, 8, 16] {
+            for off in 0..8 {
+                let p = unsafe { buf.0.as_ptr().add(base + off) };
+                let want8 = unsafe { p.cast::<u64>().read_unaligned() };
+                let want4 = unsafe { p.cast::<u32>().read_unaligned() };
+                assert_eq!(unsafe { super::gather::load_le(p, 8) }, want8, "u64 at {}", base + off);
+                assert_eq!(unsafe { super::gather::load_le(p, 4) } as u32, want4, "u32 at {}", base + off);
+            }
+        }
+    }
 }

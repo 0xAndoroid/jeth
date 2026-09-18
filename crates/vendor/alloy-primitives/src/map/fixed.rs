@@ -181,6 +181,8 @@ fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
 }
 
 /// `usize::from_ne_bytes(*chunk)`, read through the containing-word gather on the guest.
+// Not `const`: the riscv64 branch is a volatile load (crate lint `missing_const_for_fn`).
+#[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
 fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
     #[cfg(target_arch = "riscv64")]
@@ -195,6 +197,8 @@ fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
 }
 
 /// `u32::from_ne_bytes(*chunk)`, read through the containing-word gather on the guest.
+// Not `const`: the riscv64 branch is a volatile load (crate lint `missing_const_for_fn`).
+#[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
 fn read_ne_u32(chunk: &[u8; 4]) -> u32 {
     #[cfg(target_arch = "riscv64")]
