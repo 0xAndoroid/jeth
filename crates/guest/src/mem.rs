@@ -20,8 +20,11 @@
 //! caller's byte range, which is undefined behaviour in Rust's abstract
 //! machine. They are well-defined on the guest only because of the Jolt
 //! memory model, so `keccak.rs`, the vendored `revm-interpreter`
-//! (`interpreter/words.rs`) and `zeth-mpt` (`mpt/rlp.rs`) — which all cite
-//! this argument — depend on the following staying true:
+//! (`interpreter/words.rs`), `zeth-mpt` (`mpt/rlp.rs`) and the key-hashing /
+//! ctrl-group gathers in the vendored `foldhash` (`lib.rs` `gather`),
+//! `alloy-primitives` (`map/fixed.rs` `gather`) and `hashbrown`
+//! (`control/group/mod.rs` `load_gathered`) — which all cite this argument —
+//! depend on the following staying true:
 //!
 //! * Guest RAM is one flat, contiguous, word-granular array from
 //!   `RAM_START_ADDRESS`; every region `MemoryLayout` and the linker script
@@ -34,9 +37,12 @@
 //!   leave the traced range. That takes the 1.5 GiB heap full to within 7
 //!   bytes (peak use on the benchmark set is ~58 MiB); pin it upstream
 //!   (`align_up(program_size, 8)` or a boot assert) before relying on more.
-//! * Every such access is volatile and reaches the optimiser only through the
-//!   `extern "C"` / `#[inline(never)]` boundaries of these overrides, so LLVM
-//!   sees no allocation bound to exploit.
+//! * Every such access is volatile, through a pointer rebuilt from the integer
+//!   address (`addr & !7`), so LLVM neither elides nor reorders it nor derives
+//!   facts from the bytes outside the caller's range. The overrides here add
+//!   an `extern "C"` / `#[inline(never)]` boundary on top; the hashing gathers
+//!   are `#[inline(always)]` into callers that know the allocation (stack
+//!   keys, ctrl arrays) and rely on the volatile integer-address load alone.
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests
