@@ -827,17 +827,8 @@ fn execute(
     drop(state);
 
     let hashed = trie.hashed_post_state(&bundle.state);
-    let state_root = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        trie.calculate_state_root(hashed)
-    }))
-    .map_err(|payload| {
-        anyhow!(
-            "post-state root needs nodes outside the witness union ({}); \
-             the responsible tx cannot be attributed — narrow the block set",
-            panic_message(payload.as_ref())
-        )
-    })?
-    .map_err(|e| anyhow!("state root: {e:?}"))?;
+    let state_root = catch_unresolved("post-state root", || trie.calculate_state_root(hashed))?
+        .map_err(|e| anyhow!("state root: {e:?}"))?;
     Ok(Executed {
         failures,
         receipts: result.receipts,
@@ -875,9 +866,10 @@ fn run_segment(
         .executor_for_block(state, recovered.sealed_block())
         .map_err(|e| anyhow!("executor: {e}"))?;
     if start == 0 {
-        executor
-            .apply_pre_execution_changes()
-            .map_err(|e| anyhow!("pre-execution changes: {e}"))?;
+        catch_unresolved("pre-execution changes", || {
+            executor.apply_pre_execution_changes()
+        })?
+        .map_err(|e| anyhow!("pre-execution changes: {e}"))?;
     }
     let senders = recovered.senders();
     let txs = &recovered.body().transactions;
@@ -925,10 +917,28 @@ fn run_segment(
             }
         }
     }
-    let result = executor
-        .apply_post_execution_changes()
-        .map_err(|e| anyhow!("post-execution changes: {e}"))?;
+    let result = catch_unresolved("post-execution changes", || {
+        executor.apply_post_execution_changes()
+    })?
+    .map_err(|e| anyhow!("post-execution changes: {e}"))?;
     Ok(Segment::Finished(result))
+}
+
+/// Run `f` outside any single tx (system calls, withdrawals, post-state root):
+/// an unresolved-node panic there cannot be attributed to a tx and aborts the
+/// merge with a message instead of dying silently under the panic hook.
+fn catch_unresolved<T>(what: &str, f: impl FnOnce() -> T) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        let message = panic_message(payload.as_ref());
+        if missing_witness_panic(message) {
+            anyhow!(
+                "{what} needs nodes outside the witness union; \
+                 the responsible tx cannot be attributed — narrow the block set"
+            )
+        } else {
+            anyhow!("{what} panicked: {message}")
+        }
+    })
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {

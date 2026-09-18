@@ -187,3 +187,63 @@ fn rlp_cap_uses_completed_header() {
     assert!(block.body.transactions.is_empty());
     assert!(block.length() <= MAX_RLP_BLOCK_SIZE);
 }
+
+/// A tx reading a trie node no witness carries is dropped on its own: the
+/// lenient pass records it, resumes on a fresh executor and finishes the
+/// block; the strict pass aborts. Storage leaves (the short nodes) are tried
+/// in witness order until one is read during execution rather than only by
+/// the post-state root.
+#[test]
+fn unresolved_node_drops_only_the_reading_tx() {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/25698189-input.bin"
+    ))
+    .unwrap();
+    let input = trace::decode_input(&bytes).unwrap();
+    let tx_count = input.block.body.transactions.len();
+    let leaves: Vec<usize> = input
+        .witness
+        .state
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.len() < 80)
+        .map(|(i, _)| i)
+        .take(8)
+        .collect();
+    for index in leaves {
+        let mut witness = input.witness.clone();
+        witness.state.remove(index);
+        let lenient = execute(input.block.clone(), input.signers.clone(), &witness, true);
+        let Ok(executed) = lenient else {
+            // Only the post-state root needed this node.
+            continue;
+        };
+        if executed.failures.is_empty() {
+            continue;
+        }
+        let first = executed.failures[0].0;
+        assert!(
+            executed.failures[0]
+                .1
+                .contains("state outside the witness union"),
+            "{}",
+            executed.failures[0].1
+        );
+        assert!(
+            executed.failures.len() < tx_count - first,
+            "execution did not resume after tx #{first}"
+        );
+        let strict = execute(input.block.clone(), input.signers.clone(), &witness, false)
+            .err()
+            .expect("strict execution must abort");
+        assert!(
+            strict
+                .to_string()
+                .starts_with(&format!("tx #{first} panicked")),
+            "{strict}"
+        );
+        return;
+    }
+    panic!("no tried node was read during execution");
+}
