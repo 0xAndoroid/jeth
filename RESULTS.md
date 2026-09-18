@@ -1946,3 +1946,125 @@ cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-
 Repeat `run-native` / `trace --skip-build` for 25905782–25905790; the ten
 `data/<block>/input.bin` files are the wave-4 repacks (JEF, production code
 library).
+
+## Glamsterdam-sized synthetic blocks — multi-block concatenation (2026-09-18)
+
+**Verdict.** A Glamsterdam-sized block — `jeth merge` of 6 consecutive mainnet blocks (N=6:
+203,547,697 gas, 1819 txs) — traces at **2,389,246,432 rows = 11.7380 c/g** self-verifying:
+**−13.0% c/g** vs the gas-weighted sum of its six constituents (13.4903), −14.8% vs the
+ten-block ledger (13.7835). The saving is shared state, not cheaper execution — witness dedup and one
+post-state root instead of six cut keccak permutations −22% (reveal −25%, post-root −25%, execution
+first-touch storage tries −21%); no category grows — and it compounds: N=13 (388,590,542 gas)
+11.16 c/g, N=19 (549,039,933) 10.47 c/g. Fit over N=2..19: **rows = 9.873·gas + 423.4M** (R² 0.9977):
+9.87 marginal c/g plus a 0.42B-row block-level base. Exactly 200M gas = 2.40B rows, 11.7% above 2^31,
+so one proof pads to 2^32 (44% waste); at the a16z-quoted >10M cycles/s (MacBook GPU) that is ~429 s
+padded / ~240 s unpadded = 20 slots; real-time needs ≥200M rows/s.
+
+Setup: `jolt-cli-amber-nolane` @ a0d7b74baa (the 2026-09-09 ledger's CLI), branch `feat/merge-blocks-measure` (PR #6 `8442319` +
+widen + scripts), `validate_block` (committed input, no trusted digests), two-pass advice trace, M4 mini. Guest change: input region
+32 → 128 MiB (memory layout only, c8bfecd) — 25905781 traces **601,659,690 rows (13.6039 c/g)** before and after; N=19 (89.9 MB
+input) fits the 1.5 GiB heap, no panics. That reference is −1,528,173 vs the banked no-lane 603,187,863 @ 966b204: main's review
+refactor 4e5b055 shaved 0.20–0.25% on every block (all ten hashes = records); the 596,202,686 / 13.48 in the lane brief is the
+jolt-amber WITH-lane-tables ladder (596,333,114), not reproducible with this CLI. Inputs = PR #6's
+(`/Volumes/Dev/jeth-inputs/merged/25905781-N<N>/`, byte-identical at 2848739). Profiles carry per-tx markers (+0.2% rows vs trace).
+
+### Single blocks — widened tree (25905781–90 hashes = 2026-09-09 records; 91–99 = `run-native`)
+| block | gas | txs | rows | c/g | Δ rows vs 09-09 | block | gas | txs | rows | c/g |
+|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 434 | 601,659,690 | 13.6039 | -1,528,173 | 25905791 | 27,129,738 | 273 | 403,830,576 | 14.8852 |
+| 25905782 | 47,065,991 | 342 | 720,625,963 | 15.3110 | -1,296,382 | 25905792 | 26,134,337 | 277 | 334,938,404 | 12.8160 |
+| 25905783 | 25,320,107 | 271 | 332,318,755 | 13.1247 | -893,962 | 25905793 | 30,527,380 | 243 | 425,990,381 | 13.9544 |
+| 25905784 | 19,039,352 | 219 | 250,459,244 | 13.1548 | -696,530 | 25905794 | 34,833,992 | 350 | 462,075,864 | 13.2651 |
+| 25905785 | 47,351,982 | 320 | 628,266,829 | 13.2680 | -1,283,282 | 25905795 | 28,831,813 | 209 | 369,781,706 | 12.8255 |
+| 25905786 | 26,354,048 | 245 | 290,987,479 | 11.0415 | -945,533 | 25905796 | 30,337,509 | 301 | 347,493,924 | 11.4543 |
+| 25905787 | 27,961,947 | 277 | 400,791,053 | 14.3334 | -931,216 | 25905797 | 8,194,043 | 158 | 118,251,158 | 14.4314 |
+| 25905788 | 6,217,605 | 120 | 92,234,380 | 14.8344 | -230,662 | 25905798 | 59,177,995 | 403 | 1,047,980,181 | 17.7090 |
+| 25905789 | 44,608,380 | 325 | 675,886,741 | 15.1516 | -1,203,533 | 25905799 | 19,684,774 | 247 | 270,478,319 | 13.7405 |
+| 25905790 | 32,881,199 | 352 | 431,640,094 | 13.1273 | -1,012,812 | | | | | |
+| **gas-weighted 10** | 321,027,690 | | 4,424,870,228 | **13.7835** | | **gas-weighted 19** | 585,879,271 | | 8,205,690,741 | **14.0058** |
+
+### Merged N=2..19 (block 25905781 context; Σ = the N constituents above)
+| N | txs | gas | rows | c/g | Σ rows | Σ c/g | Δ rows | Δ c/g | perms Σ→merged | state nodes Σ→union | input MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 774 | 90,381,226 | 1,246,998,390 | 13.7971 | 1,322,285,653 | 14.4840 | -75,287,263 | -4.7% | 239,490→218,974 (-9%) | 39,095→37,528 | 15.6 |
+| 3 | 1043 | 114,790,130 | 1,507,007,592 | 13.1284 | 1,654,604,408 | 14.1888 | -147,596,816 | -7.5% | 301,376→260,394 (-14%) | 49,581→46,165 | 19.2 |
+| 4 | 1259 | 133,295,378 | 1,695,942,140 | 12.7232 | 1,905,063,652 | 14.0437 | -209,121,512 | -9.4% | 352,800→295,077 (-16%) | 57,930→53,355 | 22.3 |
+| 5 | 1577 | 178,303,854 | 2,188,842,876 | 12.2759 | 2,533,330,481 | 13.8430 | -344,487,605 | -11.3% | 474,423→381,551 (-20%) | 77,097→70,151 | 29.4 |
+| 6 | 1819 | 203,547,697 | 2,389,246,432 | 11.7380 | 2,824,317,960 | 13.4903 | -435,071,528 | -13.0% | 533,447→416,237 (-22%) | 86,584→78,048 | 32.9 |
+| 7 | 2091 | 229,957,413 | 2,678,640,064 | 11.6484 | 3,225,109,013 | 13.5897 | -546,468,949 | -14.3% | 603,532→455,881 (-24%) | 97,967→87,356 | 36.9 |
+| 8 | 2210 | 235,953,839 | 2,733,551,300 | 11.5851 | 3,317,343,393 | 13.6215 | -583,792,093 | -14.9% | 622,770→464,627 (-25%) | 101,197→89,959 | 38.0 |
+| 9 | 2533 | 280,267,840 | 3,289,539,277 | 11.7371 | 3,993,230,134 | 13.8583 | -703,690,857 | -15.3% | 756,412→560,847 (-26%) | 121,577→107,892 | 45.6 |
+| 10 | 2878 | 311,259,213 | 3,576,834,233 | 11.4915 | 4,424,870,228 | 13.7835 | -848,035,995 | -16.6% | 846,463→611,332 (-28%) | 137,147→120,905 | 51.0 |
+| 11 | 3145 | 335,309,021 | 3,844,452,758 | 11.4654 | 4,828,700,804 | 13.8693 | -984,248,046 | -17.3% | 921,851→651,671 (-29%) | 149,538→130,829 | 55.6 |
+| 12 | 3417 | 359,795,638 | 4,052,491,326 | 11.2633 | 5,163,639,208 | 13.7958 | -1,111,147,882 | -18.4% | 989,676→685,418 (-31%) | 161,325→139,777 | 59.5 |
+| 13 | 3652 | 388,590,542 | 4,335,221,631 | 11.1563 | 5,589,629,589 | 13.8077 | -1,254,407,958 | -19.2% | 1,075,364→731,025 (-32%) | 175,352→151,084 | 64.1 |
+| 14 | 3996 | 422,115,608 | 4,662,108,587 | 11.0446 | 6,051,705,453 | 13.7647 | -1,389,596,866 | -19.8% | 1,161,820→780,003 (-33%) | 189,488→162,308 | 69.1 |
+| 15 | 4203 | 445,164,200 | 4,830,981,006 | 10.8521 | 6,421,487,159 | 13.7069 | -1,590,506,153 | -20.8% | 1,225,492→810,042 (-34%) | 199,696→170,530 | 72.6 |
+| 16 | 4494 | 471,345,010 | 5,015,133,941 | 10.6400 | 6,768,981,083 | 13.5699 | -1,753,847,142 | -21.6% | 1,297,878→840,738 (-35%) | 211,851→179,445 | 76.3 |
+| 17 | 4649 | 479,345,862 | 5,081,950,705 | 10.6018 | 6,887,232,241 | 13.5838 | -1,805,281,536 | -22.0% | 1,323,032→851,502 (-36%) | 216,088→182,757 | 77.7 |
+| 18 | 5041 | 530,882,689 | 5,604,910,698 | 10.5577 | 7,935,212,422 | 14.0150 | -2,330,301,724 | -24.7% | 1,478,052→930,587 (-37%) | 242,910→204,640 | 86.9 |
+| 19 | 5277 | 549,039,933 | 5,748,610,252 | 10.4703 | 8,205,690,741 | 14.0058 | -2,457,080,489 | -25.2% | 1,534,052→952,976 (-38%) | 251,904→211,560 | 89.9 |
+
+Fit over the 18 merged points: **rows = 9.8728·gas + 423,420,646** (R² 0.99774); 19 single blocks alone fit a = 16.37, R² 0.940.
+
+### N=6 vs its six constituents — shared-state amortization (`jeth profile --rows --split-markers --json`, `scripts/aggregate_markers.py`)
+| category | Σ singles rows | share | N=6 rows | share | Δ rows | Δ % |
+|---|---:|---:|---:|---:|---:|---:|
+| keccak | 1,380,413,904 | 48.79% | 1,077,170,041 | 44.99% | -303,243,863 | -21.97% |
+| mpt | 232,326,753 | 8.21% | 178,835,676 | 7.47% | -53,491,077 | -23.02% |
+| memcpy | 143,902,079 | 5.09% | 133,996,621 | 5.60% | -9,905,458 | -6.88% |
+| interpreter | 320,521,512 | 11.33% | 303,339,727 | 12.67% | -17,181,785 | -5.36% |
+| revm_handler_state | 249,532,116 | 8.82% | 235,540,200 | 9.84% | -13,991,916 | -5.61% |
+| bytecode_analysis | 18,250,038 | 0.65% | 17,121,280 | 0.72% | -1,128,758 | -6.18% |
+| sig_verify | 132,617,177 | 4.69% | 112,111,746 | 4.68% | -20,505,431 | -15.46% |
+| precompiles | 156,485,848 | 5.53% | 155,984,751 | 6.51% | -501,097 | -0.32% |
+| allocator | 2,500,082 | 0.09% | 2,052,932 | 0.09% | -447,150 | -17.89% |
+| deserialize | 6,140,117 | 0.22% | 5,215,494 | 0.22% | -924,623 | -15.06% |
+| u256_ruint | 65,895,356 | 2.33% | 63,763,254 | 2.66% | -2,132,102 | -3.24% |
+| other | 110,696,798 | 3.91% | 99,327,947 | 4.15% | -11,368,851 | -10.27% |
+| **total** | 2,829,335,305 | 100% | 2,394,457,147 | 100% | -434,878,158 | -15.37% |
+keccak permutations, proven-pass census (Σ constituents → merged):
+
+| segment | N=6 | N=13 | N=19 |
+|---|---|---|---|
+| reveal | 157,039 → 117,664 (-25.1%) | 322,710 → 207,323 (-35.8%) | 460,436 → 269,043 (-41.6%) |
+| execution | 176,396 → 140,135 (-20.6%) | 352,770 → 248,156 (-29.7%) | 511,736 → 329,789 (-35.6%) |
+| post_root | 165,922 → 124,810 (-24.8%) | 334,678 → 212,039 (-36.6%) | 469,980 → 265,475 (-43.5%) |
+| total | 533,447 → 416,237 (-22.0%) | 1,075,364 → 731,025 (-32.0%) | 1,534,052 → 952,976 (-37.9%) |
+
+Reading: phase rows Σ→N=6: reveal −24.4%, execution −10.5%, post-root −23.8%, outside −9.3% (keccak rows −25.1% / −21.9% / −24.8% /
+−4.4%). The −435M rows are 70% keccak (nodes hashed once, one post-root pass, storage tries materialized once), 12% MPT decode/walk,
+5% signature batch (one Pippenger MSM over 1,819 pubkeys instead of six); interpreter/handler −5% ≈ the 2.8% dropped gas plus warm
+journal state; precompiles −0.3% (nothing to share). Shares at N=13 / N=19: keccak 43.5% / 42.8%, interpreter 14.1% / 14.6%, MPT 7.1% / 7.0%.
+
+### Extrapolation (fit) and proving memo — no prove performed
+| gas | rows (fit) | c/g | nearest measured | single-proof pad | waste | chunks @2^24 / 2^29 / 2^30 | prove @10M/s | @20M/s | slots @10M/s |
+|---|---:|---:|---|---|---:|---|---:|---:|---:|
+| 200,000,000 | 2,397,981,665 | 11.99 | N6: 2,389,246,432 (11.74) | 2^32 = 4,294,967,296 | 44.2% | 143 / 5 / 3 | 429 s | 215 s | 35.8 |
+| 400,000,000 | 4,372,542,684 | 10.93 | N13: 4,335,221,631 (11.16) | 2^33 = 8,589,934,592 | 49.1% | 261 / 9 / 5 | 859 s | 429 s | 71.6 |
+| 600,000,000 | 6,347,103,703 | 10.58 | N19: 5,748,610,252 (10.47) | 2^33 = 8,589,934,592 | 26.1% | 379 / 12 / 6 | 859 s | 429 s | 71.6 |
+Assumptions: a16z Lattice/Jolt post (2026-09-09) "over 10M cycles/s on a MacBook GPU" (20M/s = 2× headroom); one row = one cycle;
+single proof padded to the next power of two; `max_trace_length` default 2^24, practical single-shot ceiling 2^29–2^30 (memo above) → a
+200M-gas block is 143 default segments or 3–5 at the ceiling (continuations + aggregation); 600M gas extrapolates beyond N=19 (549M).
+Unpadded @10M/s: 240 / 437 / 635 s. A further −10.5% at 200M gas (≤10.7 c/g) drops the pad to 2^31 and halves the single proof.
+
+### Fidelity of the synthetic blocks (`merge-meta.json`; PR #6 body has the post-2848739 counts)
+| N | source txs | kept | dropped | status_changed | gas_changed (status unchanged) | gas retained | witness codes Σ→union | header rewrites |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| 6 | 1831 | 1819 | 12 | 28 | 24 (52 counted independently) | 97.22% | 260→240 | gas_limit, gas_used, base_fee, excess_blob_gas |
+| 13 | 3698 | 3652 | 46 | 81 | 100 | 95.99% | 550→481 | same four parent-header fields |
+| 19 | 5366 | 5277 | 89 | 137 | 168 | 93.71% | 871→719 | same four parent-header fields |
+
+Later-block txs run in block 1's context (timestamp, base fee, BLOCKHASH of merged-away blocks = 0); drops = blob cap / nonce cascade / state outside the witness union (`dropped_txs`). Merged gas is 94–99% of the constituents', so Σ-vs-merged row deltas carry a −0.8% (N=2) … −6.3% (N=19) gas effect.
+
+### Reproduce
+```sh
+cd ~/dev/jeth.feat-merge-blocks-measure && export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam \
+  JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam-guest     # isolated guest ELF dirs (other lanes rebuild the shared ones)
+cargo build -q --release -p jeth-host --features secp-inline; J=$CARGO_TARGET_DIR/release/jeth; IN=/Volumes/Dev/jeth-inputs
+$J trace --input $IN/25905781/input.bin        # 601,659,690 rows; builds the ELF pair (trace-summary.json lands next to the input)
+for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done   # merged: $IN/merged/25905781-N$n
+$J profile --input $IN/merged/25905781-N6/input.bin --rows --split-markers --json N6.json           # + 25905781..86 likewise
+uv run python scripts/aggregate_markers.py agg N6.json --trace-log <its trace log> --out N6.agg.json   # then: compare N6.agg.json 25905781.agg.json ...
+uv run python scripts/merged_summary.py --results DIR --native DIR --merged-dir $IN/merged --baseline-json <unchanged-tree summary> --trace-logs DIR --profiles DIR --out summary.json
+```
