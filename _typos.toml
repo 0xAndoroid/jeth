@@ -3,4 +3,4 @@
 extend-ignore-re = ["\\b5abd70abf[0-9a-f]*\\b"]
 [files]
 # Vendored upstream crate (byte-for-byte except src/map/fixed.rs); hex test vectors trip the checker.
-extend-exclude = ["crates/vendor/alloy-primitives/"]
+extend-exclude = ["crates/vendor/alloy-primitives/", "crates/vendor/hashbrown/"]
