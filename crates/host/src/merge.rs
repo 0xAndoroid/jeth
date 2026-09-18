@@ -1,39 +1,21 @@
-//! `jeth merge`: concatenate the transactions of N consecutive mainnet blocks
-//! into one synthetic block, validate it natively, write it as a JEF input.bin
-//! the UNCHANGED guest accepts (so cycle counts stay comparable).
+//! Merge consecutive mainnet blocks for gas-limit measurements with the unchanged guest.
 //!
-//! The synthetic block is block 1's header context (number, timestamp,
-//! coinbase, prevrandao, parent beacon root, extra data) over the concatenated
-//! txs and withdrawals of blocks 1..N, executed from block 1's pre-state.
-//! Parent-dependent header rules are satisfied by rewriting the PARENT header
-//! in the ancestor list ([`rewrite_parent`]); its hash changes, so the
-//! synthetic `parent_hash` is the rewritten hash while the grandparent link and
-//! the pre-state root (parent's `state_root`) stay untouched.
+//! Block 1 supplies the execution context and pre-state; transactions and
+//! withdrawals retain source order. [`rewrite_parent`] changes the parent hash
+//! and header economics but preserves its state root and grandparent link.
 //!
-//! # Why the witness union suffices
+//! Witness nodes resolve by digest against that pre-state. Extra later-state
+//! nodes are harmless; their presence does not replace nodes anchored by the
+//! root. Coverage is not guaranteed after execution diverges: per-tx unresolved
+//! accesses cause recorded drops, while post-root misses abort the merge.
+//! Both native validation paths must accept the completed input.
 //!
-//! The merged block runs against block 1's pre-state: every resolver miss is a
-//! block-1-pre node (account trie, or a storage trie anchored at a block-1-pre
-//! storage root); nodes created by earlier merged txs are in memory. Take a
-//! block-1-pre node at trie prefix `P` that the merged execution resolves — a
-//! node on the path of a key some block `k` accessed, or a branch-collapse
-//! sibling of a deletion in block `k`. Let `j ≤ k` be the first block whose
-//! execution touched a key under `P` (block `k` qualifies). Blocks `1..j-1`
-//! left the subtree under `P` intact, so the block-1-pre node at `P` IS the
-//! block-`j`-pre node at `P`, which block `j`'s own witness carries (its
-//! pre-state walk visits `P`; geth records collapse siblings too). Hence the
-//! node is in the union. The vendored trie reveals lazily from the pre-state
-//! root and resolves stubs by digest, so the later-block versions of modified
-//! nodes are simply never touched (they cost input bytes, not hashing — the
-//! resolver keccaks an entry only on first resolve). The argument assumes the
-//! merged execution replays the chain's write sequence; where a dropped or
-//! outcome-changed tx breaks that, a missing node surfaces as a hard native
-//! failure ("MPT: unresolved node access"), never as a silent divergence.
+//! Ancestors form a contiguous chain below block 1. BLOCKHASH(parent) returns
+//! the rewritten hash; merged-away block numbers are current/future and return 0.
 //!
-//! Ancestor headers are the union of the sources' headers below block 1 (a
-//! later block's BLOCKHASH window reaching below block 1 is contiguous with
-//! block 1's parent); BLOCKHASH of a merged-away block returns 0 (number ≥
-//! current), which is an accepted fidelity loss.
+//! Nonce cascades track transaction senders, not EIP-7702 authorities. Changed
+//! authorization nonces are handled by re-execution; valid authorizations may
+//! be skipped by the EVM, so a valid merge does not imply authorization fidelity.
 
 use crate::trace;
 use alloy_consensus::{
@@ -48,11 +30,13 @@ use alloy_eips::{
     eip7840::BlobParams,
 };
 use alloy_primitives::{keccak256, Address, Bloom, Bytes, B256, B64, U256};
+use alloy_rlp::Encodable;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use jeth_core::{validation::WitnessDatabase, BlockInput, ExecutionWitness, UncompressedPublicKey};
 use reth_chainspec::EthChainSpec;
 use reth_ethereum_primitives::{Block, EthereumReceipt, TransactionSigned};
 use reth_evm::{
+    block::{BlockExecutionError, BlockValidationError},
     execute::BlockExecutor,
     revm::database::{states::bundle_state::BundleRetention, State},
     ConfigureEvm,
@@ -113,8 +97,6 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
     install_panic_hook();
     let chain_spec = jeth_core::mainnet_spec();
 
-    // 1. Decode. `decode_input` rejects any container whose library id differs
-    //    from the embedded library, so all sources share one id by construction.
     let mut sources = Vec::with_capacity(inputs.len());
     for path in inputs {
         let bytes = std::fs::read(path).with_context(|| format!("reading {path}"))?;
@@ -156,7 +138,6 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         .blob_params_at_timestamp(first.timestamp)
         .context("blob params at block 1 timestamp")?;
 
-    // 2. Source fidelity baseline: per-tx (status, gas) from each block's own run.
     let mut baseline: BTreeMap<B256, (bool, u64)> = BTreeMap::new();
     for source in &sources {
         let executed = execute(
@@ -183,7 +164,6 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         }
     }
 
-    // 3. Concatenate txs + withdrawals + signers; union the witness.
     let mut cands = Vec::new();
     let mut withdrawals = Vec::new();
     for source in &sources {
@@ -215,8 +195,7 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         "library manifest {library} does not match the embedded code library"
     );
 
-    // 4. Header economics: min base fee / min excess blob gas over the sources,
-    //    so no source tx becomes fee-invalid; the parent is rewritten to derive them.
+    // Lower fees preserve affordability; the executor still checks both fee caps.
     let base_fee = sources
         .iter()
         .map(|s| s.block.header.base_fee_per_gas.unwrap_or(0))
@@ -229,7 +208,7 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         .unwrap();
     let (ancestors, original_parent) = union_ancestors(&sources)?;
 
-    // 5. Static drops: blob gas cap (in order), then EIP-7934 RLP cap (trailing).
+    // Blob gas is bounded by block 1's schedule, including across a BPO boundary.
     let mut dropped = Vec::new();
     let mut poisoned = HashSet::new();
     let max_blob_gas = blob_params.max_blob_gas_per_block();
@@ -254,33 +233,11 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         }
     }
     let mut cands = kept;
-    loop {
-        let (txs, _) = split_cands(&cands);
-        let block = Block {
-            header: first.clone(),
-            body: alloy_consensus::BlockBody {
-                transactions: txs,
-                ommers: Vec::new(),
-                withdrawals: Some(Withdrawals::new(withdrawals.clone())),
-            },
-        };
-        if alloy_rlp::encode(&block).len() <= MAX_RLP_BLOCK_SIZE {
-            break;
-        }
-        let cand = cands.pop().context("RLP cap leaves no transactions")?;
-        poisoned.insert(cand.sender);
-        dropped.push(Dropped {
-            cand,
-            reason: format!("EIP-7934 block RLP cap: {MAX_RLP_BLOCK_SIZE} bytes"),
-        });
-    }
 
-    // 6. Execute → drop offenders (nonce cascade) → re-execute until clean and
-    //    the gas limit is stable; the clean pass yields the header fields.
     let user_gas_limit = gas_limit_arg;
     let mut gas_limit = user_gas_limit.unwrap_or_else(|| provisional_gas_limit(&cands));
     let mut passes = 0usize;
-    let (parent, rewrites, final_block, executed) = loop {
+    let (parent, rewrites, block, executed) = loop {
         passes += 1;
         ensure!(
             passes <= MAX_PASSES,
@@ -308,7 +265,7 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
             &txs,
             &withdrawals,
         );
-        let block = Block {
+        let mut block = Block {
             header,
             body: alloy_consensus::BlockBody {
                 transactions: txs,
@@ -330,7 +287,6 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
             for (i, cand) in cands.into_iter().enumerate() {
                 match failed.get(&i) {
                     Some(reason) => {
-                        poisoned.insert(cand.sender);
                         dropped.push(Dropped {
                             cand,
                             reason: reason.clone(),
@@ -354,19 +310,20 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
                 continue;
             }
         }
+        let (receipts_root, logs_bloom) = receipts_root_bloom(&executed.receipts);
+        block.header.gas_used = executed.gas_used;
+        block.header.receipts_root = receipts_root;
+        block.header.logs_bloom = logs_bloom;
+        block.header.requests_hash = Some(executed.requests_hash);
+        block.header.blob_gas_used = Some(executed.blob_gas_used);
+        block.header.state_root = executed.state_root;
+        if trim_rlp(&mut block, &mut cands, &mut dropped)? {
+            continue;
+        }
         witness.headers = pass_witness.headers;
         break (parent, rewrites, block, executed);
     };
 
-    // 7. Complete the header from the clean pass and write the container.
-    let (receipts_root, logs_bloom) = receipts_root_bloom(&executed.receipts);
-    let mut block = final_block;
-    block.header.gas_used = executed.gas_used;
-    block.header.receipts_root = receipts_root;
-    block.header.logs_bloom = logs_bloom;
-    block.header.requests_hash = Some(executed.requests_hash);
-    block.header.blob_gas_used = Some(executed.blob_gas_used);
-    block.header.state_root = executed.state_root;
     let block_rlp = alloy_rlp::encode(&block);
     let (_, signers) = split_cands(&cands);
     let input_bytes = jeth_core::container::ContainerWriter::write(
@@ -387,8 +344,12 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         input_bytes.len() as f64 / 1e6
     );
     crate::run_native(&input_path.to_string_lossy()).context("merged input failed run-native")?;
+    // Default run-native uses upstream stateless; exercise the guest's vendored loop too.
+    let input = trace::decode_input(&input_bytes)?;
+    jeth_core::recover_block(input.block, input.signers)
+        .and_then(|block| jeth_core::validate_recovered(block, input.witness))
+        .map_err(|e| anyhow!("merged input failed guest validation: {e}"))?;
 
-    // 8. Fidelity + meta.
     let mut fidelity: BTreeMap<u64, Fidelity> = sources
         .iter()
         .map(|s| {
@@ -407,13 +368,7 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
     for (cand, (status, gas)) in cands.iter().zip(per_tx_outcomes(&executed.receipts)) {
         let (base_status, base_gas) = baseline[&cand.hash];
         let f = fidelity.get_mut(&cand.source).unwrap();
-        if status != base_status {
-            f.status_changed += 1;
-        } else if gas != base_gas {
-            f.gas_changed += 1;
-        } else {
-            f.unchanged += 1;
-        }
+        f.record((status, gas), (base_status, base_gas));
     }
     println!("fidelity (per source block):");
     println!("  block      txs  kept  dropped  status_changed  gas_changed");
@@ -510,6 +465,29 @@ struct Fidelity {
     status_changed: usize,
     gas_changed: usize,
     unchanged: usize,
+}
+
+impl Fidelity {
+    fn record(&mut self, outcome: (bool, u64), baseline: (bool, u64)) {
+        self.status_changed += usize::from(outcome.0 != baseline.0);
+        self.gas_changed += usize::from(outcome.1 != baseline.1);
+        self.unchanged += usize::from(outcome == baseline);
+    }
+}
+
+/// Completed numeric header fields can be wider than block 1's fields.
+/// A trimmed body must execute again before its header can be written.
+fn trim_rlp(block: &mut Block, cands: &mut Vec<Cand>, dropped: &mut Vec<Dropped>) -> Result<bool> {
+    let before = cands.len();
+    while block.length() > MAX_RLP_BLOCK_SIZE {
+        let cand = cands.pop().context("RLP cap leaves no transactions")?;
+        block.body.transactions.pop();
+        dropped.push(Dropped {
+            cand,
+            reason: format!("EIP-7934 block RLP cap: {MAX_RLP_BLOCK_SIZE} bytes"),
+        });
+    }
+    Ok(cands.len() != before)
 }
 
 fn split_cands(cands: &[Cand]) -> (Vec<TransactionSigned>, Vec<UncompressedPublicKey>) {
@@ -765,19 +743,22 @@ fn required_gas_limit(txs: impl IntoIterator<Item = (u64, u64)>) -> u64 {
         need = need.max(cumulative + gas_limit);
         cumulative = cumulative_after;
     }
-    need.max(cumulative).div_ceil(GAS_LIMIT_STEP) * GAS_LIMIT_STEP
+    need.max(cumulative)
+        .max(GAS_LIMIT_STEP)
+        .div_ceil(GAS_LIMIT_STEP)
+        * GAS_LIMIT_STEP
 }
 
 /// Host-side stateless execution without header-vs-outcome checks: same trie,
 /// witness DB and block executor as the guest's validation loop, returning
 /// what the header must be completed with.
 ///
-/// `lenient` records per-tx executor errors (an erroring tx commits nothing),
+/// `lenient` records invalid transactions (an erroring tx commits nothing),
 /// skips later txs of the same sender (nonce cascade) and also survives a tx
 /// that reads state outside the witness union: the resolver panics inside
 /// core (guest contract), so the unwind is caught here, the tx is recorded as
 /// dropped and a fresh EVM continues over the same `State` — the aborted tx
-/// never reached `commit`, so the cache and transitions are untouched.
+/// never reached `commit`. Read caches may grow; committed transitions are unchanged.
 fn execute(
     block: Block,
     signers: Vec<UncompressedPublicKey>,
@@ -853,7 +834,7 @@ fn execute(
         anyhow!(
             "post-state root needs nodes outside the witness union ({}); \
              the responsible tx cannot be attributed — narrow the block set",
-            panic_message(&payload)
+            panic_message(payload.as_ref())
         )
     })?
     .map_err(|e| anyhow!("state root: {e:?}"))?;
@@ -915,14 +896,26 @@ fn run_segment(
         }));
         match outcome {
             Ok(Ok(_)) => {}
-            Ok(Err(e)) if lenient => {
+            Ok(Err(e))
+                if lenient
+                    && matches!(
+                        e,
+                        BlockExecutionError::Validation(
+                            BlockValidationError::InvalidTx { .. }
+                                | BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas { .. }
+                        )
+                    ) =>
+            {
                 poisoned.insert(sender);
                 failures.push((i, e.to_string()));
             }
             Ok(Err(e)) => bail!("tx #{i} failed: {e}"),
             Err(payload) => {
-                let message = panic_message(&payload);
-                ensure!(lenient, "tx #{i} panicked: {message}");
+                let message = panic_message(payload.as_ref());
+                ensure!(
+                    lenient && missing_witness_panic(message),
+                    "tx #{i} panicked: {message}"
+                );
                 poisoned.insert(sender);
                 failures.push((
                     i,
@@ -938,12 +931,19 @@ fn run_segment(
     Ok(Segment::Finished(result))
 }
 
-fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     payload
         .downcast_ref::<&str>()
-        .map(|s| s.to_string())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "non-string panic".into())
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic")
+}
+
+fn missing_witness_panic(message: &str) -> bool {
+    matches!(
+        message,
+        "MPT: unresolved node access" | "MPT: Unresolved node access"
+    )
 }
 
 /// Expected resolver panics ("MPT: unresolved node access") are caught per tx;
@@ -951,13 +951,7 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let message = info
-            .payload()
-            .downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().cloned())
-            .unwrap_or_default();
-        if !message.starts_with("MPT:") {
+        if !missing_witness_panic(panic_message(info.payload())) {
             default_hook(info);
         }
     }));
@@ -1007,106 +1001,4 @@ fn witness_stats_json(witness: &ExecutionWitness, stats: &UnionStats) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use reth_consensus::HeaderValidator;
-    use reth_ethereum_consensus::EthBeaconConsensus;
-    use reth_primitives_traits::SealedHeader;
-
-    /// Fusaka-era (BPO2) timestamps; the child is one slot after the parent.
-    const PARENT_TIMESTAMP: u64 = 1_789_000_000;
-
-    fn parent() -> Header {
-        Header {
-            number: 25_905_780,
-            timestamp: PARENT_TIMESTAMP,
-            gas_limit: 45_000_000,
-            gas_used: 31_337_000,
-            base_fee_per_gas: Some(1_234_567_890),
-            excess_blob_gas: Some(5_000_000),
-            blob_gas_used: Some(6 * DATA_GAS_PER_BLOB),
-            withdrawals_root: Some(B256::ZERO),
-            parent_beacon_block_root: Some(B256::repeat_byte(0xbb)),
-            requests_hash: Some(B256::ZERO),
-            state_root: B256::repeat_byte(0x55),
-            parent_hash: B256::repeat_byte(0x11),
-            ..Default::default()
-        }
-    }
-
-    fn first() -> Header {
-        Header {
-            number: 25_905_781,
-            timestamp: PARENT_TIMESTAMP + 12,
-            beneficiary: Address::repeat_byte(0xc0),
-            mix_hash: B256::repeat_byte(0x77),
-            extra_data: Bytes::from_static(b"jeth"),
-            parent_beacon_block_root: Some(B256::repeat_byte(0xbe)),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn rewritten_parent_makes_synthetic_header_valid() {
-        let chain_spec = Arc::new(jeth_core::mainnet_spec());
-        let blob_params = chain_spec
-            .blob_params_at_timestamp(first().timestamp)
-            .unwrap();
-        let original = parent();
-        for (gas_limit, base_fee, excess_target) in [
-            (321_000_000, 700_000_000, 2_000_000),
-            (60_000_000, 1, 0),
-            (1_000_000, 1_234_567_890, 5_000_000),
-        ] {
-            let (rewritten, rewrites) =
-                rewrite_parent(&original, gas_limit, base_fee, excess_target, blob_params);
-            // Pre-state root and grandparent link survive the rewrite.
-            assert_eq!(rewritten.state_root, original.state_root);
-            assert_eq!(rewritten.parent_hash, original.parent_hash);
-            assert_eq!(rewritten.number, original.number);
-            assert!(!rewrites.is_empty());
-            // EIP-1559: the parent sat exactly at its gas target, so the fee carries over.
-            assert_eq!(
-                calc_next_block_base_fee(
-                    rewritten.gas_used,
-                    rewritten.gas_limit,
-                    rewritten.base_fee_per_gas.unwrap(),
-                    BaseFeeParams::ethereum()
-                ),
-                base_fee
-            );
-            let excess = blob_params.next_block_excess_blob_gas_osaka(
-                rewritten.excess_blob_gas.unwrap(),
-                rewritten.blob_gas_used.unwrap(),
-                rewritten.base_fee_per_gas.unwrap(),
-            );
-            assert_eq!(excess, excess_target, "blob solver missed {excess_target}");
-
-            let header =
-                synthetic_header(&first(), &rewritten, gas_limit, base_fee, excess, &[], &[]);
-            let consensus = EthBeaconConsensus::new(chain_spec.clone());
-            let sealed = SealedHeader::seal_slow(header);
-            consensus.validate_header(&sealed).unwrap();
-            consensus
-                .validate_header_against_parent(&sealed, &SealedHeader::seal_slow(rewritten))
-                .unwrap();
-        }
-    }
-
-    #[test]
-    fn required_gas_limit_covers_every_tx_gas_limit() {
-        // Second tx: 5M gas limit with 800k already used → 5.8M of room needed,
-        // far above the 900k actually burned; rounds up to the next 1M.
-        assert_eq!(
-            required_gas_limit([(900_000, 800_000), (5_000_000, 900_000)]),
-            6_000_000
-        );
-        assert_eq!(required_gas_limit([(21_000, 21_000)]), GAS_LIMIT_STEP);
-        assert_eq!(required_gas_limit([]), 0);
-    }
-
-    // Integration test (merge two fixture blocks + run-native): skipped —
-    // fixtures/ ships a single block (25698189); a consecutive pair with
-    // matching library id is needed. Covered by the N=2..10 inputs under
-    // /Volumes/Dev/jeth-inputs/merged instead.
-}
+mod tests;
