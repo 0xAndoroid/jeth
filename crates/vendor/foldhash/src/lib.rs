@@ -243,8 +243,11 @@ fn hash_bytes_short(bytes: &[u8], accumulator: u64, seeds: &[u64; 6]) -> u64 {
     let mut s1 = seeds[1];
     // XOR the input into s0, s1, then multiply and fold.
     if len >= 8 {
-        s0 ^= u64::from_ne_bytes(bytes[0..8].try_into().unwrap());
-        s1 ^= u64::from_ne_bytes(bytes[len - 8..].try_into().unwrap());
+        // SAFETY: len >= 8, so both 8-byte windows lie inside `bytes`.
+        unsafe {
+            s0 ^= load(bytes, 0);
+            s1 ^= load(bytes, len - 8);
+        }
     } else if len >= 4 {
         s0 ^= u32::from_ne_bytes(bytes[0..4].try_into().unwrap()) as u64;
         s1 ^= u32::from_ne_bytes(bytes[len - 4..].try_into().unwrap()) as u64;
@@ -267,7 +270,62 @@ unsafe fn load(bytes: &[u8], offset: usize) -> u64 {
     // In most (but not all) cases this unsafe code is not necessary to avoid
     // the bounds checks in the below code, but the register allocation became
     // worse if I replaced those calls which could be replaced with safe code.
-    unsafe { bytes.as_ptr().add(offset).cast::<u64>().read_unaligned() }
+    #[cfg(target_arch = "riscv64")]
+    {
+        // SAFETY: the caller guarantees bytes[offset..offset + 8] is in bounds.
+        unsafe { gather::load_le(bytes.as_ptr().add(offset), 8) }
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    {
+        unsafe { bytes.as_ptr().add(offset).cast::<u64>().read_unaligned() }
+    }
+}
+
+/// jeth patch: containing-word loads for the riscv64 Jolt guest.
+///
+/// `read_unaligned::<u64>` / `u64::from_ne_bytes` on an align-1 byte slice lower
+/// to 8 `lbu` + 14 shift/or on riscv64imac (no unaligned loads), and Jolt expands
+/// every `lbu` into a multi-row virtual sequence: about 46 trace rows per 8-byte
+/// word of key material. Gathering the bytes from the one or two aligned words
+/// that contain them costs 1-2 `ld` + 3 ALU ops instead, and yields exactly the
+/// bytes the unaligned read would (native = little endian on the guest).
+///
+/// Soundness of the over-read: see the module comment of the guest's
+/// `crates/guest/src/mem.rs`. Jolt guest RAM is one flat, word-granular address
+/// space whose regions all start 8-aligned, so the aligned word holding a live
+/// byte is always inside mapped memory, and only words containing at least one
+/// live byte of the caller's range are loaded. The loads are volatile so LLVM
+/// never reasons about the bytes outside the caller's slice. Compiled for the
+/// guest target and for the host unit test only; native builds keep the
+/// upstream reads.
+#[cfg(any(target_arch = "riscv64", test))]
+mod gather {
+    /// Read the `n` (4 or 8) bytes at `p` into the low bytes of a `u64`,
+    /// little-endian, using only aligned word loads of words that contain
+    /// live bytes of `p..p + n`. Bits above `8 * n` are unspecified.
+    ///
+    /// # Safety
+    /// `p..p + n` must be readable, and the aligned words containing that
+    /// range must be mapped (true on the Jolt guest, see the module comment;
+    /// the host test provides an aligned buffer around the range).
+    #[inline(always)]
+    pub(crate) unsafe fn load_le(p: *const u8, n: usize) -> u64 {
+        debug_assert!(n == 4 || n == 8);
+        let addr = p as usize;
+        let k = addr & 7;
+        let a = (addr & !7) as *const u64;
+        // SAFETY: `a` is the aligned word containing byte `p`, a live byte of
+        // the caller's range (precondition), hence mapped.
+        let w0 = unsafe { core::ptr::read_volatile(a) };
+        let s = (k * 8) as u32;
+        if k + n <= 8 {
+            return w0 >> s;
+        }
+        // SAFETY: k + n > 8, so `p..p + n` spills into the next aligned word,
+        // which therefore holds live bytes of the range and is mapped.
+        let w1 = unsafe { core::ptr::read_volatile(a.add(1)) };
+        (w0 >> s) | (w1 << (64 - s))
+    }
 }
 
 /// Hashes strings > 16 bytes.
@@ -347,4 +405,28 @@ unsafe fn hash_bytes_long(mut v: &[u8], accumulator: u64, seeds: &[u64; 6]) -> u
         }
     }
     s0 ^ s1
+}
+
+#[cfg(test)]
+mod gather_tests {
+    /// The gather must reproduce the unaligned read for every source alignment:
+    /// 8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window.
+    #[test]
+    fn gather_matches_unaligned_read() {
+        #[repr(align(8))]
+        struct Aligned([u8; 32]);
+        let mut buf = Aligned([0; 32]);
+        for (i, b) in buf.0.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(0x9d) ^ 0x5a;
+        }
+        for base in [0usize, 8, 16] {
+            for off in 0..8 {
+                let p = unsafe { buf.0.as_ptr().add(base + off) };
+                let want8 = unsafe { p.cast::<u64>().read_unaligned() };
+                let want4 = unsafe { p.cast::<u32>().read_unaligned() };
+                assert_eq!(unsafe { super::gather::load_le(p, 8) }, want8, "u64 at {}", base + off);
+                assert_eq!(unsafe { super::gather::load_le(p, 4) } as u32, want4, "u32 at {}", base + off);
+            }
+        }
+    }
 }

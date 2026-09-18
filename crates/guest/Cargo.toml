@@ -56,6 +56,15 @@ alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 # identical across the compute_advice/proven ELF pair — upstream seeds from
 # stack/fn/static addresses, which differ between two ELFs. Guest-only patch.
 foldhash = { path = "../vendor/foldhash" }
+# alloy-primitives: `FbHasher::write` (every Address/B256/U256 map key in revm and
+# jeth) reads its key chunks byte-wise on riscv64 (8 `lbu` + shifts per 8-byte word,
+# about 46 rows); the vendored copy gathers them from the containing aligned words.
+# Guest-only patch; hashes are bit-identical so native parity holds by construction.
+alloy-primitives = { path = "../vendor/alloy-primitives" }
+# hashbrown 0.17 (alloy-primitives + indexmap maps): `Group::load` reads the 8 ctrl
+# bytes of every probe unaligned (8 `lbu` + shifts on riscv64); the vendored copy
+# gathers them from the containing aligned words. Guest-only, no semantic change.
+hashbrown = { path = "../vendor/hashbrown" }
 
 # zeth-mpt fork: inline slot children (digest stubs unboxed), in-place node
 # decode + zero-copy values (Bytes::slice_ref views into witness node bytes) —

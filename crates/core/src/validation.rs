@@ -22,7 +22,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{
     keccak256,
-    map::{B256IndexMap, B256Map},
+    map::{AddressMap, B256IndexMap, B256Map},
     Address, Bloom, Bytes, B256, U256,
 };
 #[cfg(feature = "lazy-analysis")]
@@ -32,7 +32,7 @@ use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus}
 use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_evm::{
     execute::{BlockExecutionOutput, BlockExecutor},
-    revm::database::{states::bundle_state::BundleRetention, State},
+    revm::database::{states::bundle_state::BundleRetention, CacheState, State},
     ConfigureEvm,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -43,7 +43,7 @@ use stateless::{validation::StatelessValidationError, ExecutionWitness, Stateles
 use tries::WitnessDbError;
 
 /// BLOCKHASH ancestor lookup window limit per EVM.
-const BLOCKHASH_ANCESTOR_LIMIT: usize = 256;
+pub(crate) const BLOCKHASH_ANCESTOR_LIMIT: usize = 256;
 
 /// Per-transaction cycle marker labels: "tx0000".."tx9999". The tracer keys
 /// active markers by the label pointer, so one reused buffer is fine for
@@ -108,9 +108,20 @@ pub fn validate_recovered_pertx(
     let (mut trie, bytecode) = crate::Trie::new_with_codes(&witness, parent.state_root)?;
 
     let db = WitnessDatabase::new(&trie, bytecode, ancestor_hashes);
+    // Presize revm's block cache from the witness node count: every existing
+    // account it can hold is a leaf of the revealed state trie (13x over on
+    // 25905781, where the table's growth path cost ~220k rows of rehash and a
+    // presized 32k-bucket table ~4k rows of ctrl memset). Non-existing accounts
+    // (exclusion proofs, coinbase, precompiles) also get entries but are few;
+    // exceeding the bound only costs the ordinary rehash, never correctness.
+    let cache = CacheState {
+        accounts: AddressMap::with_capacity_and_hasher(witness.state.len(), Default::default()),
+        contracts: B256Map::default(),
+    };
     let mut state = State::builder()
         .with_database(db)
         .with_bundle_update()
+        .with_cached_prestate(cache)
         .build();
 
     let mut executor = evm_config
@@ -177,7 +188,7 @@ pub fn validate_recovered_pertx(
     Ok(validated)
 }
 
-fn validate_block_consensus(
+pub(crate) fn validate_block_consensus(
     chain_spec: Arc<crate::ChainSpec>,
     block: &RecoveredBlock<Block>,
     parent: &SealedHeader<Header>,
@@ -189,7 +200,7 @@ fn validate_block_consensus(
     Ok(())
 }
 
-fn compute_ancestor_hashes(
+pub(crate) fn compute_ancestor_hashes(
     current_block: &RecoveredBlock<Block>,
     ancestor_headers: &[SealedHeader],
 ) -> Result<BTreeMap<u64, B256>, StatelessValidationError> {
@@ -348,11 +359,17 @@ impl<T: StatelessTrie> Database for WitnessDatabase<'_, T> {
 
 /// Receipt root + block bloom; `hash_address` supplies `keccak256(address)`
 /// for log emitters (the trie's execution-time memo), topics are memoized here.
-fn receipt_root_bloom(
+pub(crate) fn receipt_root_bloom(
     receipts: &[EthereumReceipt],
     mut hash_address: impl FnMut(Address) -> B256,
 ) -> (B256, Bloom) {
-    let mut topics = B256Map::default();
+    // Distinct topics <= sum of topics over all logs: presize the memo.
+    let topic_count: usize = receipts
+        .iter()
+        .flat_map(|receipt| receipt.logs())
+        .map(|log| log.topics().len())
+        .sum();
+    let mut topics = B256Map::with_capacity_and_hasher(topic_count, Default::default());
     let receipts: Vec<_> = receipts
         .iter()
         .map(|receipt| {

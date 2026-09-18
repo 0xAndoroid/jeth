@@ -208,7 +208,11 @@ impl SparseState {
             Self {
                 state,
                 storages: B256IndexMap::default(),
-                storage_roots: RefCell::new(B256IndexMap::default()),
+                // one entry per loaded account <= state-trie leaves <= witness nodes
+                storage_roots: RefCell::new(B256IndexMap::with_capacity_and_hasher(
+                    witness.state.len(),
+                    Default::default(),
+                )),
                 resolver: RefCell::new(resolver),
                 address_hashes: RefCell::new(AddressMemo::with_capacity(witness.state.len() / 8)),
                 slot_hashes: RefCell::new(SlotMemo::with_capacity(witness.state.len() / 8)),
@@ -275,7 +279,11 @@ impl StatelessTrie for SparseState {
             Self {
                 state,
                 storages: B256IndexMap::default(),
-                storage_roots: RefCell::new(B256IndexMap::default()),
+                // one entry per loaded account <= state-trie leaves <= witness nodes
+                storage_roots: RefCell::new(B256IndexMap::with_capacity_and_hasher(
+                    witness.state.len(),
+                    Default::default(),
+                )),
                 resolver: RefCell::new(resolver),
                 address_hashes: RefCell::new(AddressMemo::with_capacity(witness.state.len() / 8)),
                 slot_hashes: RefCell::new(SlotMemo::with_capacity(witness.state.len() / 8)),

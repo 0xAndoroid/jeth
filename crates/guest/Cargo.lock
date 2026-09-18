@@ -238,8 +238,6 @@ dependencies = [
 [[package]]
 name = "alloy-primitives"
 version = "1.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f007e257069855bdf21d27762fd3f3705a613f805c9a08309bf353503f081d71"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -1429,8 +1427,6 @@ dependencies = [
 [[package]]
 name = "hashbrown"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash",
  "serde",
