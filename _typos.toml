@@ -1,3 +1,6 @@
 [default]
 # Git commit hashes quoted in RESULTS.md (e.g. `5abd70abf`) split into false-positive "words".
 extend-ignore-re = ["\\b5abd70abf[0-9a-f]*\\b"]
+[files]
+# Vendored upstream crate (byte-for-byte except src/map/fixed.rs); hex test vectors trip the checker.
+extend-exclude = ["crates/vendor/alloy-primitives/"]
