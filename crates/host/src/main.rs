@@ -4,9 +4,11 @@
 //! - `fetch`      block + execution witness + recovered pubkeys → `data/<N>/input.bin`
 //! - `run-native` native `stateless_validation` over an input (witness-compatibility gate)
 //! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
+//! - `merge`      concatenate N consecutive block inputs into one synthetic block input
 
 mod fetch;
 mod library;
+mod merge;
 mod opcodes;
 mod profile;
 mod repack;
@@ -51,6 +53,22 @@ enum Command {
     RunNative {
         #[arg(long)]
         input: String,
+    },
+    /// Merge N consecutive block inputs into one synthetic block input
+    /// (block 1's header context, all txs + withdrawals concatenated).
+    Merge {
+        /// Comma-separated input.bin paths of consecutive blocks, ascending.
+        #[arg(long, required = true, value_delimiter = ',', num_args = 1..)]
+        inputs: Vec<String>,
+        /// Output directory (input.bin + merge-meta.json).
+        #[arg(long)]
+        out: String,
+        /// Synthetic block gas limit (default: next 1M above what the kept txs need).
+        #[arg(long)]
+        gas_limit: Option<u64>,
+        /// Embedded code-library manifest (id cross-check; re-filters the union codes).
+        #[arg(long, default_value = library::DEFAULT_MANIFEST)]
+        library: String,
     },
     /// Rebuild JEF input.bin from a cached block and witness.
     Repack {
@@ -178,6 +196,12 @@ fn main() -> Result<()> {
             library,
         } => fetch::run(block, latest_minus, rpc_list, &out, &library).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
+        Command::Merge {
+            inputs,
+            out,
+            gas_limit,
+            library,
+        } => merge::run(&inputs, &out, gas_limit, &library),
         Command::Repack { dir, library } => repack::run(&dir, &library),
         Command::Library { command } => match command {
             LibraryCommand::Build { blocks, top_n, out } => library::build(&blocks, top_n, &out),
@@ -255,7 +279,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_native(input_path: &str) -> Result<()> {
+pub(crate) fn run_native(input_path: &str) -> Result<()> {
     use std::time::Instant;
 
     let bytes = std::fs::read(input_path)?;

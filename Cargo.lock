@@ -2369,6 +2369,7 @@ name = "jeth-host"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "anyhow",
@@ -2381,7 +2382,11 @@ dependencies = [
  "object 0.36.7",
  "postcard",
  "regex-lite",
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-ethereum-consensus",
  "reth-ethereum-primitives",
+ "reth-evm",
  "reth-primitives-traits",
  "revm-bytecode",
  "rustc-demangle",
@@ -2390,6 +2395,7 @@ dependencies = [
  "tracer",
  "tracing",
  "tracing-subscriber",
+ "tries",
  "ureq",
 ]
 
