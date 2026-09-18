@@ -19,6 +19,12 @@ jeth-core = { workspace = true, features = ["std"] }
 
 reth-ethereum-primitives = { workspace = true, features = ["std", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
+# `merge`: host-side execution (same trie/witness DB/executor as the guest loop)
+# + header derivation rules; all already built for jeth-core.
+reth-chainspec.workspace = true
+reth-evm.workspace = true
+tries.workspace = true
+alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde", "k256"] }
 alloy-rlp.workspace = true
@@ -47,3 +53,8 @@ object = "0.36"
 rustc-demangle = "0.1"
 # txprofile: cycle-marker report parsing
 regex-lite = "0.1"
+
+[dev-dependencies]
+# merge tests: validate the synthetic header with the consensus rules the guest applies.
+reth-consensus.workspace = true
+reth-ethereum-consensus.workspace = true
