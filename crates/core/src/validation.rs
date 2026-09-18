@@ -22,7 +22,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{
     keccak256,
-    map::{B256IndexMap, B256Map},
+    map::{AddressMap, B256IndexMap, B256Map},
     Address, Bloom, Bytes, B256, U256,
 };
 #[cfg(feature = "lazy-analysis")]
@@ -32,7 +32,7 @@ use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus}
 use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_evm::{
     execute::{BlockExecutionOutput, BlockExecutor},
-    revm::database::{states::bundle_state::BundleRetention, State},
+    revm::database::{states::bundle_state::BundleRetention, CacheState, State},
     ConfigureEvm,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -108,9 +108,18 @@ pub fn validate_recovered_pertx(
     let (mut trie, bytecode) = crate::Trie::new_with_codes(&witness, parent.state_root)?;
 
     let db = WitnessDatabase::new(&trie, bytecode, ancestor_hashes);
+    // Presize revm's block cache: every account it can hold is a leaf of the
+    // revealed state trie, so the witness node count bounds it (13x over on
+    // 25905781, where the table's growth path cost ~220k rows of rehash and a
+    // presized 32k-bucket table ~4k rows of ctrl memset).
+    let cache = CacheState {
+        accounts: AddressMap::with_capacity_and_hasher(witness.state.len(), Default::default()),
+        contracts: B256Map::default(),
+    };
     let mut state = State::builder()
         .with_database(db)
         .with_bundle_update()
+        .with_cached_prestate(cache)
         .build();
 
     let mut executor = evm_config
@@ -352,7 +361,13 @@ pub(crate) fn receipt_root_bloom(
     receipts: &[EthereumReceipt],
     mut hash_address: impl FnMut(Address) -> B256,
 ) -> (B256, Bloom) {
-    let mut topics = B256Map::default();
+    // Distinct topics <= sum of topics over all logs: presize the memo.
+    let topic_count: usize = receipts
+        .iter()
+        .flat_map(|receipt| receipt.logs())
+        .map(|log| log.topics().len())
+        .sum();
+    let mut topics = B256Map::with_capacity_and_hasher(topic_count, Default::default());
     let receipts: Vec<_> = receipts
         .iter()
         .map(|receipt| {
