@@ -43,7 +43,7 @@ use stateless::{validation::StatelessValidationError, ExecutionWitness, Stateles
 use tries::WitnessDbError;
 
 /// BLOCKHASH ancestor lookup window limit per EVM.
-const BLOCKHASH_ANCESTOR_LIMIT: usize = 256;
+pub(crate) const BLOCKHASH_ANCESTOR_LIMIT: usize = 256;
 
 /// Per-transaction cycle marker labels: "tx0000".."tx9999". The tracer keys
 /// active markers by the label pointer, so one reused buffer is fine for
@@ -177,7 +177,7 @@ pub fn validate_recovered_pertx(
     Ok(validated)
 }
 
-fn validate_block_consensus(
+pub(crate) fn validate_block_consensus(
     chain_spec: Arc<crate::ChainSpec>,
     block: &RecoveredBlock<Block>,
     parent: &SealedHeader<Header>,
@@ -189,7 +189,7 @@ fn validate_block_consensus(
     Ok(())
 }
 
-fn compute_ancestor_hashes(
+pub(crate) fn compute_ancestor_hashes(
     current_block: &RecoveredBlock<Block>,
     ancestor_headers: &[SealedHeader],
 ) -> Result<BTreeMap<u64, B256>, StatelessValidationError> {
@@ -348,7 +348,7 @@ impl<T: StatelessTrie> Database for WitnessDatabase<'_, T> {
 
 /// Receipt root + block bloom; `hash_address` supplies `keccak256(address)`
 /// for log emitters (the trie's execution-time memo), topics are memoized here.
-fn receipt_root_bloom(
+pub(crate) fn receipt_root_bloom(
     receipts: &[EthereumReceipt],
     mut hash_address: impl FnMut(Address) -> B256,
 ) -> (B256, Bloom) {
