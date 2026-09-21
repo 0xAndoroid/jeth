@@ -51,6 +51,8 @@ pub(crate) fn verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
+    use alloy_primitives::hex;
     use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
     use reth_evm::revm::precompile::secp256r1::verify_impl;
 
@@ -290,7 +292,7 @@ mod tests {
             ("858b991cfd78f16537fe6d1f4afd10273384db08bdfc843562a22b0626766686f6aec8247599f40bfe01bec0e0ecf17b4319559022d4d9bf007fe929943004eb4866760dedf31b7c691f5ce665f8aae0bda895c23595c834fecc2390a5bcc203b04afcacbb4280713287a2d0c37e23f7513fab898f2c1fefa00ec09a924c335d9b629f1d4fb71901c3e59611afbfea354d101324e894c788d1c01f00b3c251b2", true),
             ("3cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e", false),
         ] {
-            let input: [u8; 160] = alloy_primitives::hex::decode(hex).unwrap().try_into().unwrap();
+            let input: [u8; 160] = hex::decode(hex).unwrap().try_into().unwrap();
             let (msg, sig, pk) = (
                 input[..32].try_into().unwrap(),
                 input[32..96].try_into().unwrap(),
@@ -300,5 +302,37 @@ mod tests {
             let (_, s) = split(sig);
             assert_eq!(compare(msg, with(sig, None, Some(N - s)), pk), expected);
         }
+    }
+
+    /// Wycheproof `ecdsa_secp256r1_sha256_p1363_test.json`, every vector with a 64-byte r||s
+    /// signature (`p256_wycheproof.txt`): pseudorandom keys, u1/u2 = ±1, R = O, R1 == R2, keys
+    /// sharing x(G), x(R) ≥ n, r/s ∉ [1, n−1], small/huge r and s, special-case hashes. Both
+    /// implementations must return the vector's verdict.
+    #[test]
+    fn wycheproof_vectors_match_verdicts() {
+        use sha2::Digest;
+        let mut pk = [0; 64];
+        let (mut seen, mut valid) = (0, 0);
+        for line in include_str!("p256_wycheproof.txt").lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            match fields[..] {
+                ["key", key] => pk = hex::decode(key).unwrap().try_into().unwrap(),
+                [tc, verdict, msg, sig, ..] if !tc.starts_with('#') => {
+                    let expected = verdict == "valid";
+                    let msg = if msg == "-" {
+                        Vec::new()
+                    } else {
+                        hex::decode(msg).unwrap()
+                    };
+                    let sig: [u8; 64] = hex::decode(sig).unwrap().try_into().unwrap();
+                    let hash: [u8; 32] = sha2::Sha256::digest(&msg).into();
+                    assert_eq!(compare(hash, sig, pk), expected, "tcId {tc}: {line}");
+                    seen += 1;
+                    valid += expected as usize;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((seen, valid), (241, 173));
     }
 }
