@@ -328,6 +328,24 @@ mod tests {
         }
     }
 
+    /// A ladder product that is a nonzero multiple of n (every prime factor of n divides the
+    /// base) leaves REDC at exactly n, so its final subtraction must take `u == n`:
+    /// n = 3^41 (9 bytes) and 3^161 (32 bytes) with base 3, and n = 9k with base 3k.
+    #[test]
+    fn modexp_redc_boundary_matches_aurora() {
+        let three = U256::from(3);
+        for (k, exps) in [(41u64, [40u64, 41, 42, 1000]), (161, [160, 161, 162, 1000])] {
+            let m = three.pow(U256::from(k));
+            for e in exps {
+                assert!(check_modexp(&be(three), &e.to_be_bytes(), &be(m)));
+            }
+        }
+        let k = (U256::from(1) << 100) + U256::from(1);
+        for e in [1, 2, 3] {
+            assert!(check_modexp(&be(three * k), &[e], &be(U256::from(9) * k)));
+        }
+    }
+
     #[test]
     fn modexp_declines_unsupported_shapes() {
         let one = U256::from(1);
