@@ -2424,6 +2424,7 @@ dependencies = [
 name = "jeth-inlines-blake2f"
 version = "0.1.0"
 dependencies = [
+ "jeth-inlines-blake2f",
  "jolt-inlines-sdk",
  "rand 0.8.7",
  "tracer",

@@ -5,7 +5,7 @@
 //! followed by the `r`-round op (`r > 0`), each picking up where the previous one left off.
 //! Encoding (opcode 0x2B): `k = 10` and `k = 1..=7` use funct7 [`FUNCT7_LOW`] with funct3
 //! `k % 10`; `k = 8, 9` use funct7 [`FUNCT7_HIGH`] with funct3 `k − 8`.
-//! Tests live behind the `host` feature (`cargo test --features host`).
+//! Tests live behind the `host` feature, which the crate's self dev-dependency enables.
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x2B;
