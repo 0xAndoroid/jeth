@@ -50,7 +50,14 @@ fn add_fillers(trie: &mut zeth_mpt::Trie, key: B256, depth: usize, value: &[u8])
             if n == nib(&key, level) {
                 continue;
             }
-            let mut fk = keccak256((key, level as u64, n as u64).abi_encode_packed_hack());
+            let mut fk = keccak256(
+                [
+                    key.as_slice(),
+                    &(level as u64).to_le_bytes(),
+                    &(n as u64).to_le_bytes(),
+                ]
+                .concat(),
+            );
             // copy the shared prefix (level nibbles) then force nibble `level` = n
             for i in 0..level {
                 let v = nib(&key, i);
@@ -67,18 +74,6 @@ fn add_fillers(trie: &mut zeth_mpt::Trie, key: B256, depth: usize, value: &[u8])
             }
             trie.insert(fk, value.to_vec());
         }
-    }
-}
-
-trait PackedHack {
-    fn abi_encode_packed_hack(&self) -> Vec<u8>;
-}
-impl PackedHack for (B256, u64, u64) {
-    fn abi_encode_packed_hack(&self) -> Vec<u8> {
-        let mut v = self.0.to_vec();
-        v.extend_from_slice(&self.1.to_le_bytes());
-        v.extend_from_slice(&self.2.to_le_bytes());
-        v
     }
 }
 
