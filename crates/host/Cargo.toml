@@ -41,9 +41,16 @@ tracer.workspace = true
 jolt-common.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-inlines-blake2 = { workspace = true, features = ["host"] }
+jolt-inlines-p256 = { workspace = true, features = ["host"] }
+jolt-inlines-bigint = { workspace = true, features = ["host"] }
 
 # profiler: guest ELF symbolization
 object = "0.36"
 rustc-demangle = "0.1"
 # txprofile: cycle-marker report parsing
 regex-lite = "0.1"
+
+# synth (dev tool): synthetic-block harness for the per-opcode max c/g study (src/bin/synth.rs)
+zeth-mpt.workspace = true

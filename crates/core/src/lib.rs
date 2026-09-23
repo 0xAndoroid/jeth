@@ -10,6 +10,8 @@
 extern crate alloc;
 
 pub mod advice;
+#[cfg(any(feature = "bigint-inline", test))]
+pub mod bigint;
 #[cfg(feature = "secp-inline")]
 mod bn254;
 mod chainspec;
@@ -20,6 +22,8 @@ mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
 mod keccak_memo;
+#[cfg(any(all(feature = "p256-inline", target_arch = "riscv64"), test))]
+mod p256;
 #[cfg(feature = "premeasure")]
 pub mod premeasure;
 mod recover;
