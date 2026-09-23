@@ -54,6 +54,13 @@ mod tests {
     use alloc::vec::Vec;
     use alloy_primitives::hex;
     use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
+    use p256::elliptic_curve::{
+        ops::Reduce,
+        point::{AffineCoordinates, DecompressPoint},
+        sec1::ToEncodedPoint,
+        subtle::Choice,
+    };
+    use p256::{AffinePoint, ProjectivePoint, Scalar};
     use reth_evm::revm::precompile::secp256r1::verify_impl;
 
     /// P-256 base field modulus p (big-endian).
@@ -175,12 +182,51 @@ mod tests {
             point(x + U256::from(1), y),
             point(U256::ZERO, U256::ZERO),
             point(U256::MAX, U256::MAX),
+            // −Q is on the curve but not the signer's key.
             point(x, P - y),
         ] {
-            assert!(!compare(msg, bad, pk));
+            assert!(!compare(msg, sig, bad));
         }
-        // −Q is on the curve but not the signer's key.
-        assert!(!compare(msg, sig, point(x, P - y)));
+    }
+
+    /// A valid `(msg, sig)` for `q` without its private key: R = u1·G + u2·Q, r = x(R) mod n,
+    /// s = r/u2, z = u1·s (verification recomputes u1, u2 and so R).
+    fn forge(q: &AffinePoint, u1: u64, u2: u64) -> ([u8; 32], [u8; 64]) {
+        let (u1, u2) = (Scalar::from(u1), Scalar::from(u2));
+        let big_r = (ProjectivePoint::GENERATOR * u1 + ProjectivePoint::from(*q) * u2).to_affine();
+        let r = <Scalar as Reduce<p256::U256>>::reduce_bytes(&big_r.x());
+        let s = r * u2.invert().unwrap();
+        let mut sig = [0; 64];
+        sig[..32].copy_from_slice(&r.to_bytes());
+        sig[32..].copy_from_slice(&s.to_bytes());
+        ((u1 * s).to_bytes().into(), sig)
+    }
+
+    /// Edges that need a real signature to mean anything: the on-curve key (0, y0) (x = 0, yet
+    /// not the (0, 0) infinity encoding), its non-canonical alias (p, y0) and (0, 0), each with
+    /// z ≠ 0 and z = 0 (the rewrite); and an accepted s = n − 1 (r = n − 1 is never valid: n − 1
+    /// is not an x-coordinate and 2n − 1 ≥ p).
+    #[test]
+    fn key_encoding_and_high_s_boundaries_match_software() {
+        let q0 = AffinePoint::decompress(&Default::default(), Choice::from(0)).unwrap();
+        let mut pk = [0; 64];
+        pk.copy_from_slice(&q0.to_encoded_point(false).as_bytes()[1..]);
+        let mut alias = pk;
+        alias[..32].copy_from_slice(&P.to_be_bytes::<32>());
+        for (u1, u2) in [(1, 2), (0, 2)] {
+            let (msg, sig) = forge(&q0, u1, u2);
+            assert!(compare(msg, sig, pk));
+            assert!(!compare(msg, sig, alias));
+            assert!(!compare(msg, sig, [0; 64]));
+        }
+        // Nonce k: r = x(k·G) mod n, and d = (−k − z)/r makes s = k⁻¹(z + r·d) = −1.
+        let k = U256::from(0x1234_5678u64);
+        let r = U256::from_be_slice(&keypair(k).1[..32]) % N;
+        for z in [U256::ZERO, U256::from(0x5eed)] {
+            let d = (N - k - z).mul_mod(r.inv_mod(N).unwrap(), N);
+            let sig = with([0; 64], Some(r), Some(N - U256::from(1)));
+            assert!(compare(z.to_be_bytes(), sig, keypair(d).1));
+        }
     }
 
     #[test]
