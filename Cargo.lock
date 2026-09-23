@@ -568,7 +568,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3df4dcc01ff89867cd86b0da835f23c3f02738353aaee7dde7495af71363b8d5"
 dependencies = [
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
  "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
 ]
@@ -580,7 +580,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
 dependencies = [
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
  "ark-std 0.5.0",
 ]
 
@@ -591,7 +591,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43d68f2d516162846c1238e755a7c4d131b892b70cc70c471a8e3ca3ed818fce"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
@@ -666,8 +666,6 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a177aba0ed1e0fbb62aa9f6d0502e9b46dad8c2eab04c14258a1212d2557ea70"
 dependencies = [
  "ark-ff-asm 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff-macros 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -677,6 +675,8 @@ dependencies = [
  "digest 0.10.7",
  "educe",
  "itertools 0.13.0",
+ "jeth-inlines-bls12-381",
+ "jeth-inlines-bn254",
  "num-bigint",
  "num-traits",
  "paste",
@@ -838,7 +838,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "579305839da207f02b89cd1679e50e67b4331e2f9294a57693e5051b7703fe27"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
  "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-std 0.5.0",
  "educe",
@@ -862,6 +862,16 @@ dependencies = [
 
 [[package]]
 name = "ark-secp256k1"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
+dependencies = [
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-std 0.5.0",
+]
+
+[[package]]
+name = "ark-secp256r1"
 version = "0.5.0"
 source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
@@ -2339,10 +2349,18 @@ dependencies = [
  "alloy-trie",
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
+ "aurora-engine-modexp",
+ "jeth-inlines-blake2f",
+ "jeth-inlines-bn254",
+ "jolt-inlines-bigint",
+ "jolt-inlines-blake2",
+ "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "jolt-sdk",
  "k256",
+ "p256",
  "postcard",
  "reth-chainspec",
  "reth-consensus",
@@ -2358,6 +2376,7 @@ dependencies = [
  "revm-database-interface",
  "revm-state",
  "serde",
+ "sha2",
  "sha3",
  "stateless",
  "tries",
@@ -2376,8 +2395,15 @@ dependencies = [
  "clap",
  "common",
  "jeth-core",
+ "jeth-inlines-blake2f",
+ "jeth-inlines-bls12-381",
+ "jeth-inlines-bn254",
+ "jolt-inlines-bigint",
+ "jolt-inlines-blake2",
  "jolt-inlines-keccak256",
+ "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
+ "jolt-inlines-sha2",
  "k256",
  "object 0.36.7",
  "postcard",
@@ -2397,6 +2423,42 @@ dependencies = [
  "tracing-subscriber",
  "tries",
  "ureq",
+ "zeth-mpt",
+]
+
+[[package]]
+name = "jeth-inlines-blake2f"
+version = "0.1.0"
+dependencies = [
+ "jeth-inlines-blake2f",
+ "jolt-inlines-sdk",
+ "rand 0.8.7",
+ "tracer",
+]
+
+[[package]]
+name = "jeth-inlines-bls12-381"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ff 0.5.0",
+ "jeth-inlines-bls12-381",
+ "jolt-inlines-sdk",
+ "rand 0.8.7",
+ "tracer",
+]
+
+[[package]]
+name = "jeth-inlines-bn254"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "jeth-inlines-bn254",
+ "jolt-inlines-sdk",
+ "num-bigint",
+ "rand 0.8.7",
+ "tracer",
 ]
 
 [[package]]
@@ -2410,10 +2472,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-inlines-bigint"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+]
+
+[[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
 dependencies = [
  "jolt-inlines-sdk",
+]
+
+[[package]]
+name = "jolt-inlines-p256"
+version = "0.1.0"
+dependencies = [
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-secp256r1",
+ "jolt-inlines-sdk",
+ "num-bigint",
+ "serde",
 ]
 
 [[package]]
@@ -2425,6 +2513,7 @@ dependencies = [
  "jolt-program",
  "jolt-riscv",
  "num-bigint",
+ "rand 0.8.7",
  "tracer",
 ]
 
@@ -2438,6 +2527,13 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "serde",
+]
+
+[[package]]
+name = "jolt-inlines-sha2"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
 ]
 
 [[package]]
@@ -3819,7 +3915,7 @@ dependencies = [
  "ark-bls12-381",
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
  "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "arrayref",
  "aurora-engine-modexp",
@@ -3937,7 +4033,7 @@ dependencies = [
  "alloy-rlp",
  "ark-ff 0.3.0",
  "ark-ff 0.4.2",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-ff 0.5.0",
  "ark-ff 0.6.0",
  "bytes",
  "fastrlp 0.3.1",
@@ -4651,6 +4747,7 @@ dependencies = [
  "object 0.40.0",
  "paste",
  "postcard",
+ "rand 0.8.7",
  "rayon",
  "serde",
  "serde_json",

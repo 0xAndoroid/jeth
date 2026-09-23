@@ -2,10 +2,16 @@
 
 use crate::advice::{advice_assert_eq, advice_u64};
 use crate::recovery_batch::{self, Equation};
-#[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
+#[cfg(any(
+    feature = "compute_advice",
+    feature = "bigint-inline",
+    not(target_arch = "riscv64")
+))]
 use alloc::vec::Vec;
 use alloy_primitives::{B256, U256};
 use jolt_inlines_secp256k1::{Secp256k1Fq, Secp256k1Fr, Secp256k1Point, Secp256k1PointExt};
+#[cfg(all(feature = "sha2-inline", target_arch = "riscv64"))]
+use jolt_inlines_sha2::Sha256;
 use reth_evm::revm::precompile::{Crypto, PrecompileHalt};
 
 /// secp256k1 curve order n (little-endian limbs).
@@ -102,6 +108,72 @@ impl Crypto for JoltCrypto {
     #[inline]
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
         crate::bn254::g1_mul(point, scalar)
+    }
+
+    /// SHA-256 on the Jolt inline; the native build keeps revm's default so `run-native` stays
+    /// the independent reference.
+    #[cfg(all(feature = "sha2-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn sha256(&self, input: &[u8]) -> [u8; 32] {
+        Sha256::digest(input)
+    }
+
+    /// The stock Jolt BLAKE2b inline is the fixed 12-round compression with a 64-bit counter, so
+    /// only `rounds == 12 && t[1] == 0` calls take it; every other (rounds, t) runs the round
+    /// inlines (software init/fold around `rounds / 10` ten-round ops and one `rounds % 10`-round
+    /// op), or revm's software compress without the `blake2f-inline` feature.
+    #[cfg(all(feature = "blake2-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn blake2_compress(&self, rounds: u32, h: &mut [u64; 8], m: &[u64; 16], t: &[u64; 2], f: bool) {
+        if rounds == 12 && t[1] == 0 {
+            blake2b_compress_inline(h, m, t[0], f);
+        } else {
+            #[cfg(feature = "blake2f-inline")]
+            jeth_inlines_blake2f::compress(rounds, h, m, t, f);
+            #[cfg(not(feature = "blake2f-inline"))]
+            reth_evm::revm::precompile::blake2::algo::compress(rounds as usize, h, m, t, f);
+        }
+    }
+
+    #[cfg(all(feature = "p256-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn secp256r1_verify_signature(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
+        crate::p256::verify(msg, sig, pk)
+    }
+
+    /// Odd moduli of 9..=32 significant bytes run the inline Montgomery ladder;
+    /// everything else keeps revm's aurora-engine-modexp path.
+    #[cfg(all(feature = "bigint-inline", target_arch = "riscv64"))]
+    #[inline]
+    fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, PrecompileHalt> {
+        match crate::bigint::modexp(base, exp, modulus) {
+            Some(out) => Ok(out),
+            None => reth_evm::revm::precompile::DefaultCrypto.modexp(base, exp, modulus),
+        }
+    }
+}
+
+/// One BLAKE2b compression on the Jolt inline: `h` is updated in place; the inline reads the 16
+/// message words, the 64-bit counter and the final flag (0/1) as 18 consecutive words at `rs2`
+/// (`Blake2SequenceBuilder` memory contract: 8 words at rs1 read and written, 18 at rs2 read).
+#[cfg(all(feature = "blake2-inline", target_arch = "riscv64"))]
+fn blake2b_compress_inline(h: &mut [u64; 8], m: &[u64; 16], t0: u64, f: bool) {
+    use jolt_inlines_blake2::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
+    let block: [u64; 18] = [
+        m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13],
+        m[14], m[15], t0, f as u64,
+    ];
+    // SAFETY: both arrays are 8-aligned and exactly the sizes the inline reads/writes.
+    unsafe {
+        core::arch::asm!(
+            ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
+            opcode = const INLINE_OPCODE,
+            funct3 = const BLAKE2_FUNCT3,
+            funct7 = const BLAKE2_FUNCT7,
+            rs1 = in(reg) h.as_mut_ptr(),
+            rs2 = in(reg) block.as_ptr(),
+            options(nostack)
+        );
     }
 }
 
@@ -275,4 +347,208 @@ fn mul_4x128(scalars: [u128; 4], points: [Secp256k1Point; 2]) -> Secp256k1Point 
         }
     }
     res
+}
+
+// Native models of the two inlines (the inline crates' `host` fallbacks; the tracer runs the
+// inlines' virtual sequences, which Jolt's own tests pin to these models) against the software
+// implementations they replace in the guest.
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+    use reth_evm::revm::precompile::blake2::algo::compress;
+
+    fn xorshift(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    fn random_bytes(rng: &mut u64, len: usize) -> Vec<u8> {
+        (0..len).map(|_| xorshift(rng) as u8).collect()
+    }
+
+    /// Every length through 600 (padding boundaries 55/56/63/64/119/120 included), the harness
+    /// sizes, and all-0xff inputs, against the sha2 crate revm's default `sha256` uses.
+    #[test]
+    fn sha256_inline_model_matches_sha2() {
+        use sha2::Digest;
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        let lens = (0..=600usize).chain([1024, 8192, 20_000]);
+        for len in lens {
+            let msg = random_bytes(&mut rng, len);
+            let want: [u8; 32] = sha2::Sha256::digest(&msg).into();
+            assert_eq!(jolt_inlines_sha2::Sha256::digest(&msg), want, "len {len}");
+            let ones: Vec<u8> = core::iter::repeat_n(0xff, len).collect();
+            let want: [u8; 32] = sha2::Sha256::digest(&ones).into();
+            assert_eq!(
+                jolt_inlines_sha2::Sha256::digest(&ones),
+                want,
+                "0xff len {len}"
+            );
+        }
+    }
+
+    fn inline_model(h: &mut [u64; 8], m: &[u64; 16], t0: u64, f: bool) {
+        let mut block = [0u64; 18];
+        block[..16].copy_from_slice(m);
+        block[16] = t0;
+        block[17] = f as u64;
+        jolt_inlines_blake2::exec::execute_blake2b_compression(h, &block);
+    }
+
+    /// Random (h, m, t0, f) with counter edge values, 12 rounds, t[1] == 0: the routed case.
+    #[test]
+    fn blake2_inline_model_matches_revm_compress_for_12_rounds() {
+        let mut rng = 0xb1a2_e2f0_0d15_ea5eu64;
+        for i in 0..4000u64 {
+            let mut h = [0u64; 8];
+            h.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+            let mut m = [0u64; 16];
+            m.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+            let t0 = match i % 4 {
+                0 => 0,
+                1 => u64::MAX,
+                2 => xorshift(&mut rng),
+                _ => 128 * i,
+            };
+            let f = i % 2 == 1;
+            let mut want = h;
+            compress(12, &mut want, &m, &[t0, 0], f);
+            let mut got = h;
+            inline_model(&mut got, &m, t0, f);
+            assert_eq!(got, want, "case {i}");
+        }
+    }
+
+    /// EIP-152 vectors 5 (f = 1) and 6 (f = 0): rounds 12, h = BLAKE2b-512 IV with the
+    /// parameter block, m = "abc" zero-padded, t = 3.
+    #[test]
+    fn blake2_inline_model_matches_eip152_vectors() {
+        let mut h = jolt_inlines_blake2::IV;
+        h[0] ^= 0x0101_0000 ^ 64;
+        let mut m = [0u64; 16];
+        m[0] = 0x0063_6261;
+        let expected: [(bool, [u64; 8]); 2] = [
+            (
+                true,
+                [
+                    0x0d4d_1c98_3fa5_80ba,
+                    0xe9f6_129f_b697_276a,
+                    0xb7c4_5a68_142f_214c,
+                    0xd1a2_ffdb_6fbb_124b,
+                    0x2d79_ab2a_39c5_877d,
+                    0x95cc_3345_ded5_52c2,
+                    0x5a92_f1db_a88a_d318,
+                    0x2399_00d4_ed86_23b9,
+                ],
+            ),
+            (
+                false,
+                [
+                    0x2c56_0a19_d369_ab75,
+                    0x7527_1c8f_d8f8_ae51,
+                    0x2cc4_7072_4044_6987,
+                    0x5287_d226_2c25_4498,
+                    0xf2a2_5e6d_7f3e_7498,
+                    0x1bd3_9c03_26d2_e8d3,
+                    0x66d6_d3f2_c46a_424e,
+                    0x3547_de6f_11c2_10a6,
+                ],
+            ),
+        ];
+        for (f, want) in expected {
+            let mut got = h;
+            inline_model(&mut got, &m, 3, f);
+            assert_eq!(got, want, "f = {f}");
+            let mut sw = h;
+            compress(12, &mut sw, &m, &[3, 0], f);
+            assert_eq!(sw, want, "revm f = {f}");
+            let mut rounds = h;
+            jeth_inlines_blake2f::compress(12, &mut rounds, &m, &[3, 0], f);
+            assert_eq!(rounds, want, "round inlines f = {f}");
+        }
+    }
+
+    /// The round-inline decomposition (software init, `rounds / 10` ten-round ops, one
+    /// `rounds % 10`-round op, software fold) against revm's compress for every round count the
+    /// routing can see, both counter words at their edges, both flags, random and saturated
+    /// (h, m). Off the RISC-V target the ops are the crate's software reference — the function
+    /// the tracer-harness tests pin the inline rows to.
+    #[test]
+    fn blake2f_round_inlines_match_revm_compress() {
+        let mut rng = 0x5eed_b1a2_e2f0_0d15u64;
+        let round_counts = (0..=13u32).chain([19, 20, 21, 100, 1000]);
+        for rounds in round_counts {
+            for case in 0..24u64 {
+                let (mut h, mut m) = ([0u64; 8], [0u64; 16]);
+                match case % 3 {
+                    0 => {
+                        h.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+                        m.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+                    }
+                    1 => {
+                        h = [u64::MAX; 8];
+                        m = [u64::MAX; 16];
+                    }
+                    _ => {
+                        h = jolt_inlines_blake2::IV;
+                        m[0] = xorshift(&mut rng);
+                    }
+                }
+                let edge = |k: u64, rng: &mut u64| match k % 4 {
+                    0 => 0,
+                    1 => 1,
+                    2 => u64::MAX,
+                    _ => xorshift(rng),
+                };
+                let t = [edge(case, &mut rng), edge(case / 4, &mut rng)];
+                let f = (case / 2) % 2 == 1;
+                let mut want = h;
+                compress(rounds as usize, &mut want, &m, &t, f);
+                let mut got = h;
+                jeth_inlines_blake2f::compress(rounds, &mut got, &m, &t, f);
+                assert_eq!(got, want, "rounds {rounds} case {case} t {t:?} f {f}");
+            }
+        }
+    }
+
+    /// The round inlines' tables are revm's.
+    #[test]
+    fn blake2f_round_inline_tables_match_revm() {
+        use reth_evm::revm::precompile::blake2::algo;
+        assert_eq!(jeth_inlines_blake2f::IV, algo::IV);
+        assert_eq!(jeth_inlines_blake2f::SIGMA, algo::SIGMA);
+    }
+
+    /// EIP-152 test vectors 4–7 (rounds 0, 12, 12, 1) through the round-inline compress (vector 8
+    /// is 2^32 − 1 rounds — infeasible here and out of gas in any block).
+    #[test]
+    fn blake2f_round_inlines_match_eip152_vectors() {
+        fn le_words<const N: usize>(hex: &str) -> [u64; N] {
+            let bytes = hex_bytes(hex);
+            core::array::from_fn(|i| {
+                u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap())
+            })
+        }
+        let h = "48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b";
+        let m = "6162630000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        let vectors: [(u32, bool, &str); 4] = [
+            (0, true, "08c9bcf367e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d282e6ad7f520e511f6c3e2b8c68059b9442be0454267ce079217e1319cde05b"),
+            (12, true, "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"),
+            (12, false, "75ab69d3190a562c51aef8d88f1c2775876944407270c42c9844252c26d2875298743e7f6d5ea2f2d3e8d226039cd31b4e426ac4f2d3d666a610c2116fde4735"),
+            (1, true, "b63a380cb2897d521994a85234ee2c181b5f844d2c624c002677e9703449d2fba551b3a8333bcdf5f2f7e08993d53923de3d64fcc68c034e717b9293fed7a421"),
+        ];
+        for (rounds, f, want) in vectors {
+            let mut got: [u64; 8] = le_words(h);
+            jeth_inlines_blake2f::compress(rounds, &mut got, &le_words(m), &[3, 0], f);
+            assert_eq!(got, le_words::<8>(want), "rounds {rounds} f {f}");
+        }
+    }
+
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
+    }
 }
