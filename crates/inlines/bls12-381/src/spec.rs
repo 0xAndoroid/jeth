@@ -19,11 +19,16 @@ fn sub_small(x: &Element, k: u64) -> Element {
     core::array::from_fn(|i| u64::from_le_bytes(out[8 * i..8 * i + 8].try_into().unwrap()))
 }
 
-/// Canonical (`< p`) corner values: 0, 1, R mod p, p − 1, p − 2, (p − 1)/2, limb extremes.
+/// Canonical (`< p`) corner values: 0, 1, R mod p, p − 1, p − 2, (p − 1)/2, limb extremes, and
+/// p − (2³²⁰ − 1), whose middle limbs equal p's under an incoming borrow (the second borrow of
+/// `p − b₁`).
 pub fn canonical_edges() -> Vec<Element> {
     let half: Element = core::array::from_fn(|i| {
         (MODULUS[i] >> 1) | if i + 1 < N { MODULUS[i + 1] << 63 } else { 0 }
     });
+    let mut borrow_chain = MODULUS;
+    borrow_chain[0] += 1;
+    borrow_chain[N - 1] -= 1;
     vec![
         [0; N],
         [1, 0, 0, 0, 0, 0],
@@ -38,6 +43,7 @@ pub fn canonical_edges() -> Vec<Element> {
         [MAX, MAX, MAX, MAX, MAX, 0],
         [1, 1, 1, 1, 1, 1],
         [0x4800_0000_0000_0000, 0, 0, 0, 0, 0x0800_0000_0000_0000],
+        borrow_chain,
     ]
 }
 

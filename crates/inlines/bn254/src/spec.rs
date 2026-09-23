@@ -68,7 +68,8 @@ pub fn canonical(t: &Limbs) -> Limbs {
 }
 
 /// Field elements at the corners of the domain: 0, integer 1 (= R⁻¹), R (= Fq::ONE), R², q − 1,
-/// (q − 1)² in Montgomery form, all-ones low limbs, single saturated limbs.
+/// (q − 1)² in Montgomery form, all-ones low limbs, single saturated limbs, and q − (2^192 − 1),
+/// whose middle limbs equal q's under an incoming borrow (the second borrow of `q − b₁`).
 pub fn edge_elements() -> Vec<Limbs> {
     let q = BN254_MODULUS;
     let q_minus_1 = [q[0] - 1, q[1], q[2], q[3]];
@@ -85,6 +86,7 @@ pub fn edge_elements() -> Vec<Limbs> {
         [0, 0, 0, q[3]],
         [q[0] - 1, q[1], q[2] - 1, q[3]],
         [1 << 63, 1 << 63, 1 << 63, 1 << 61],
+        [q[0] + 1, q[1], q[2], q[3] - 1],
     ]
 }
 
