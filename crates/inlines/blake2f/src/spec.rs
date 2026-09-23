@@ -4,7 +4,10 @@ use jolt_inlines_sdk::{
 };
 use rand::RngCore;
 use tracer::emulator::mmu::DRAM_BASE;
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness, RegisterMapping};
+use tracer::instruction::Instruction;
+use tracer::utils::inline_test_harness::{
+    InlineMemoryLayout, InlineTestHarness, RegisterMapping, INLINE_RS1, INLINE_RS2,
+};
 use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 use crate::sequence_builder::Blake2bRounds;
@@ -132,6 +135,65 @@ fn check_op<const R: usize>() {
             "rows, R = {R}"
         );
     }
+    assert_structure::<R>();
+}
+
+/// Every row writes a virtual register or stores `v` back through rs1; loads use rs1/rs2 as base
+/// and all precede the stores; no advice or assert rows; the trailing resets cover exactly the
+/// registers the body wrote.
+fn assert_structure<const R: usize>() {
+    let sequence = InlineTestHarness::create_default_instruction(
+        <Blake2bRounds<R>>::OPCODE,
+        <Blake2bRounds<R>>::FUNCT3,
+        <Blake2bRounds<R>>::FUNCT7,
+    )
+    .inline_sequence(&VirtualRegisterAllocator::default());
+    let (mut last_load, mut first_store) = (None, None);
+    let (mut written, mut resets) = (Vec::new(), Vec::new());
+    for (index, instruction) in sequence.iter().enumerate() {
+        let debug = format!("R = {R}: {instruction:?}");
+        assert!(
+            !debug.contains("VirtualAdvice") && !debug.contains("VirtualAssert"),
+            "{debug}"
+        );
+        match instruction {
+            Instruction::LD(load) => {
+                assert!(
+                    [INLINE_RS1, INLINE_RS2].contains(&load.operands.rs1),
+                    "{debug}"
+                );
+                last_load = Some(index);
+            }
+            Instruction::SD(store) => {
+                assert_eq!(store.operands.rs1, INLINE_RS1, "{debug}");
+                assert!(store.operands.rs2 >= 32, "{debug}");
+                first_store.get_or_insert(index);
+                continue;
+            }
+            _ => {}
+        }
+        let rd = instruction
+            .try_jolt_instruction_row()
+            .unwrap()
+            .operands
+            .rd
+            .unwrap();
+        assert!(rd >= 32, "writes x{rd}: {debug}");
+        match instruction {
+            Instruction::ADDI(addi) if addi.operands.rs1 == 0 && addi.operands.imm == 0 => {
+                resets.push(rd)
+            }
+            _ => written.push(rd),
+        }
+    }
+    assert!(
+        last_load.unwrap() < first_store.unwrap(),
+        "R = {R}: load after store"
+    );
+    written.sort_unstable();
+    written.dedup();
+    resets.sort_unstable();
+    assert_eq!(written, resets, "R = {R}: reset set != written set");
 }
 
 macro_rules! for_each_op {

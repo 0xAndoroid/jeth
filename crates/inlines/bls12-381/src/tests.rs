@@ -3,8 +3,9 @@ use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
 };
 use rand::SeedableRng;
-use tracer::instruction::RISCVTrace;
+use tracer::instruction::{Instruction, RISCVTrace};
 use tracer::utils::inline_test_harness::{InlineTestHarness, INLINE_RS1, INLINE_RS2, INLINE_RS3};
+use tracer::utils::virtual_registers::VirtualRegisterAllocator;
 
 use crate::exec::{self, Element};
 use crate::sequence_builder::{Fp2Mul, Mulp, Sopp2};
@@ -168,5 +169,62 @@ fn aliasing() {
             assert_eq!(out[..N], expected[0]);
             assert_eq!(out[N..], expected[1]);
         }
+    }
+}
+
+/// Every row writes a virtual register or stores through rd; loads use rs1/rs2 as base and all
+/// precede the stores; no advice or assert rows; the trailing resets cover exactly the registers
+/// the body wrote.
+#[test]
+fn sequence_structure() {
+    for funct3 in [MULP_FUNCT3, SOPP2_FUNCT3, FP2MUL_FUNCT3] {
+        let sequence = InlineTestHarness::create_default_instruction(INLINE_OPCODE, funct3, FUNCT7)
+            .inline_sequence(&VirtualRegisterAllocator::default());
+        let (mut last_load, mut first_store) = (None, None);
+        let (mut written, mut resets) = (Vec::new(), Vec::new());
+        for (index, instruction) in sequence.iter().enumerate() {
+            let debug = format!("{funct3}: {instruction:?}");
+            assert!(
+                !debug.contains("VirtualAdvice") && !debug.contains("VirtualAssert"),
+                "{debug}"
+            );
+            match instruction {
+                Instruction::LD(load) => {
+                    assert!(
+                        [INLINE_RS1, INLINE_RS2].contains(&load.operands.rs1),
+                        "{debug}"
+                    );
+                    last_load = Some(index);
+                }
+                Instruction::SD(store) => {
+                    assert_eq!(store.operands.rs1, INLINE_RS3, "{debug}");
+                    assert!(store.operands.rs2 >= 32, "{debug}");
+                    first_store.get_or_insert(index);
+                    continue;
+                }
+                _ => {}
+            }
+            let rd = instruction
+                .try_jolt_instruction_row()
+                .unwrap()
+                .operands
+                .rd
+                .unwrap();
+            assert!(rd >= 32, "writes x{rd}: {debug}");
+            match instruction {
+                Instruction::ADDI(addi) if addi.operands.rs1 == 0 && addi.operands.imm == 0 => {
+                    resets.push(rd)
+                }
+                _ => written.push(rd),
+            }
+        }
+        assert!(
+            last_load.unwrap() < first_store.unwrap(),
+            "{funct3}: load after store"
+        );
+        written.sort_unstable();
+        written.dedup();
+        resets.sort_unstable();
+        assert_eq!(written, resets, "{funct3}: reset set != written set");
     }
 }
