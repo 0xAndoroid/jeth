@@ -49,6 +49,9 @@ fn rewritten_parent_makes_synthetic_header_valid() {
         (321_000_000, 700_000_000, 2_000_000),
         (60_000_000, 1, 0),
         (1_000_000, 1_234_567_890, 5_000_000),
+        // Mainnet N2 merge (25905781..2): blob fee above the reserve price, so the
+        // solver needs the non-reserve branch (parent blob_gas_used = target).
+        (91_000_000, 63_046_102, 177_862_678),
     ] {
         let (rewritten, rewrites) =
             rewrite_parent(&original, gas_limit, base_fee, excess_target, blob_params);
