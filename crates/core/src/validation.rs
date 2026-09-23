@@ -7,9 +7,8 @@
 //! 1. emit a cycle marker around every transaction (`pertx-markers` feature) —
 //!    the host `jeth txprofile` command parses the tracer's marker output into a
 //!    per-transaction cycle table;
-//! 2. defer bytecode analysis to first execution (`lazy-analysis` feature) —
-//!    `analyze_legacy` over every witness code measured 39.7M rows (2.7%) on
-//!    block 25698189 while only a subset of codes ever runs.
+//! 2. defer bytecode analysis to first execution (`lazy-analysis` feature):
+//!    only a subset of the witness codes ever runs.
 //!
 //! Behavior is otherwise identical to upstream: same consensus checks, same
 //! `WitnessDatabase` semantics (vendored below because upstream's is

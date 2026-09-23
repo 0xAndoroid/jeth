@@ -41,9 +41,7 @@ const SQRT_EXP: [u64; 4] = [
 /// revm's `Crypto` (ecrecover precompile) AND alloy-consensus's pluggable
 /// `CryptoProvider` backend — the latter covers EIP-7702 authority recovery
 /// (alloy-evm's `TxEnv` conversion calls
-/// `alloy_consensus::crypto::secp256k1::recover_signer` per authorization;
-/// software k256 measured ~1.5M rows/authorization vs ~230k inline — 16% of
-/// block 25698070).
+/// `alloy_consensus::crypto::secp256k1::recover_signer` per authorization).
 pub fn install_jolt_crypto() -> bool {
     let consensus_ok = alloy_consensus::crypto::backend::install_default_provider(
         alloc::sync::Arc::new(JoltCryptoProvider),
@@ -143,9 +141,9 @@ impl Crypto for JoltCrypto {
         crate::p256::verify(msg, sig, pk)
     }
 
-    /// Odd moduli up to 32 bytes run the inline Montgomery ladder; everything
-    /// else keeps revm's aurora-engine-modexp path.
-    #[cfg(feature = "bigint-inline")]
+    /// Odd moduli of 9..=32 significant bytes run the inline Montgomery ladder;
+    /// everything else keeps revm's aurora-engine-modexp path.
+    #[cfg(all(feature = "bigint-inline", target_arch = "riscv64"))]
     #[inline]
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, PrecompileHalt> {
         match crate::bigint::modexp(base, exp, modulus) {
@@ -351,8 +349,9 @@ fn mul_4x128(scalars: [u128; 4], points: [Secp256k1Point; 2]) -> Secp256k1Point 
     res
 }
 
-// Native models of the two inlines (the `host` fallbacks of the inline crates, which is what the
-// tracer executes too) against the software implementations they replace in the guest.
+// Native models of the two inlines (the inline crates' `host` fallbacks; the tracer runs the
+// inlines' virtual sequences, which Jolt's own tests pin to these models) against the software
+// implementations they replace in the guest.
 #[cfg(test)]
 mod tests {
     use alloc::vec::Vec;

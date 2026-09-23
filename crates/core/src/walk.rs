@@ -1,13 +1,13 @@
-//! §4.2 execution-phase byte-walks: authenticated reads straight off raw
+//! Execution-phase byte-walks: authenticated reads straight off raw
 //! witness RLP — no node materialization, no allocation, no mutation.
 //!
 //! A walk consumes one advice hint per trie level, authenticates the located
 //! witness entry (`keccak == digest`, memoized in [`WitnessResolver`]), and
 //! parses just enough of the entry to pick the next child. The guest extracts
-//! every branch nibble from its own key — advice only locates bytes (INV-W1);
-//! `None` derives only from authenticated content (INV-W2).
+//! every branch nibble from its own key — advice only locates bytes; `None`
+//! derives only from authenticated content.
 //!
-//! Parity (L6 / INV-W6): on FIRST authentication of an entry the whole node is
+//! Parity: on FIRST authentication of an entry the whole node is
 //! validated against `Node::decode`'s exact grammar (canonical RLP via
 //! `alloy_rlp::Header`, 17/2 item shapes, empty branch value, ≥2 children,
 //! recursive inline-child validation, HP flag ≤ 3 with the even-path pad
@@ -18,7 +18,7 @@
 //! stub — refusal-only divergence, unreachable from digest-anchored mainnet
 //! state; the native gate runs this same code so guest/native always agree.
 //!
-//! Inline children (any list first byte, incl. long-form `0xf8+` — INV-W5) are
+//! Inline children (any list first byte, incl. long-form `0xf8+`) are
 //! walked in place on the parent's bytes: no advice call, no digest check
 //! (bytes already authenticated).
 
@@ -102,7 +102,7 @@ fn skip_item(p: &mut &[u8]) -> alloy_rlp::Result<()> {
 }
 
 /// Branch child slot rule (items 0..16): empty, a digest, or an inline node
-/// (INV-W5: full recursive validation of exactly that item). Returns the
+/// (full recursive validation of exactly that item). Returns the
 /// number of children the item contributes.
 #[inline(always)]
 fn validate_branch_child(item: &[u8], list: bool, plen: usize) -> alloy_rlp::Result<usize> {
@@ -311,7 +311,7 @@ pub(crate) fn walk_entry(entry: &[u8], top_kind: NodeKind, key: &B256, depth: &m
                 }
                 let (list, hlen, plen) = item_header(p).expect("validated");
                 if list {
-                    // INV-W5: inline child — continue on the parent's bytes.
+                    // inline child — continue on the parent's bytes
                     span = &p[..hlen + plen];
                     kind = classify(span);
                     continue;

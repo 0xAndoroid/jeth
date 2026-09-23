@@ -2,14 +2,10 @@
 //!
 //! Jolt expands every sub-word (byte/half) memory access into a multi-row
 //! virtual sequence: `sb` ≈ 12 rows, `lbu` ≈ 7 rows (see jolt-program's
-//! `expand_narrow_store`/`expand_byte_load`). The previous override copied the
-//! bulk word-wise but did ≤7-byte heads/tails (and every <8-byte call) as byte
-//! loops — ~20 rows per byte, ~140 rows of pure alignment overhead on a
-//! typical call. Measured traffic on block 25698189: 1.41M memcpy calls,
-//! 121 MB, avg ~86 B — the per-call byte-loop overhead dominated at ~196
-//! rows/call average.
+//! `expand_narrow_store`/`expand_byte_load`), so byte-loop heads and tails
+//! dominate the typical short call (memcpy traffic averages under 100 bytes).
 //!
-//! This version never issues a sub-word memory access. Boundary bytes are
+//! These overrides never issue a sub-word memory access. Boundary bytes are
 //! handled by read-modify-write of the containing aligned word (`ld` + mask
 //! merge + `sd` ≈ 8 rows for the whole boundary, not per byte). Source bytes
 //! are gathered from the aligned word(s) that contain them with shift/or.

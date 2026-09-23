@@ -1,3 +1,4 @@
+use sha3::{Digest, Keccak256};
 use std::{env, fs, path::PathBuf};
 
 fn main() {
@@ -47,6 +48,18 @@ fn main() {
         *byte =
             u8::from_str_radix(&library_id[2 * i..2 * i + 2], 16).expect("manifest library_id hex");
     }
+    // The id is keccak(index ‖ codes ‖ jump tables), as `jeth library build`
+    // writes it; a stale manifest must not bake edited artifacts under its id.
+    let mut artifact = Vec::new();
+    for path in [&index_path, &codes_path, &jump_tables_path] {
+        artifact.extend(fs::read(path).expect("reading code-library artifact"));
+    }
+    let mut computed = [0u8; 32];
+    computed.copy_from_slice(&Keccak256::digest(&artifact));
+    assert_eq!(
+        computed, id,
+        "manifest library_id does not match index.bin/codes.bin/jt.bin; run `jeth library build`"
+    );
 
     let generated = format!(
         "#[repr(align(8))]\n\

@@ -1,21 +1,16 @@
-//! §8.1 pre-measurement snapshots (feature `premeasure`, native runs only).
+//! Resolver-counter snapshots (feature `premeasure`, native runs only).
 //!
-//! zeth-mpt counts digest-map probes/hits/decodes and memoize re-encodes;
+//! zeth-mpt counts digest probes, resolver hits and decodes;
 //! [`crate::zeth_trie`] records a snapshot at each validation phase boundary
 //! so the host can print per-phase deltas after `run-native`.
 
 use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
-pub struct SnapCell([AtomicU64; 4]);
+pub struct SnapCell([AtomicU64; 3]);
 
 impl SnapCell {
     const fn new() -> Self {
-        Self([
-            AtomicU64::new(0),
-            AtomicU64::new(0),
-            AtomicU64::new(0),
-            AtomicU64::new(0),
-        ])
+        Self([AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)])
     }
 
     pub(crate) fn record(&self) {
@@ -23,16 +18,14 @@ impl SnapCell {
         self.0[0].store(s.probes, Relaxed);
         self.0[1].store(s.hits, Relaxed);
         self.0[2].store(s.decodes, Relaxed);
-        self.0[3].store(s.memo_encodes, Relaxed);
     }
 
-    /// `[probes, hits, decodes, memo_encodes]` at this snapshot point.
-    pub fn get(&self) -> [u64; 4] {
+    /// `[probes, hits, decodes]` at this snapshot point.
+    pub fn get(&self) -> [u64; 3] {
         [
             self.0[0].load(Relaxed),
             self.0[1].load(Relaxed),
             self.0[2].load(Relaxed),
-            self.0[3].load(Relaxed),
         ]
     }
 }

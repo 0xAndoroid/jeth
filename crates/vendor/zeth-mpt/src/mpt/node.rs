@@ -14,9 +14,10 @@
 
 use super::{
     children::{Children, Slot},
+    decode::le_words_32,
     memoize::Memoization,
     nibbles::NibbleSlice,
-    rlp::{le_words_32, DigestResolver},
+    rlp::DigestResolver,
 };
 use alloc::boxed::Box;
 use alloy_primitives::{Bytes, B256, U256};
@@ -86,8 +87,8 @@ impl Deref for Digest {
     }
 }
 
-/// jeth (advice-trie): resolver that never resolves — plain `insert`/`remove`
-/// keep today's panic-on-stub contract by threading this.
+/// Resolver that never resolves — plain `insert`/`remove` keep the
+/// panic-on-stub contract by threading this.
 pub(super) struct Unresolvable;
 
 impl DigestResolver for Unresolvable {
@@ -101,12 +102,12 @@ impl DigestResolver for Unresolvable {
 /// [`Slot`]s inline (640 B; rustc currently folds the node discriminant into
 /// the first slot's tag word — an observed layout nothing here relies on),
 /// with unresolved children held as bare digests instead of one heap `Node`
-/// per stub (145k stub boxes of 176 B on a mainnet block, 33 B live each). Moving a node by value (decode return →
+/// per stub (most branch children of a witness are stubs). Moving a node by value (decode return →
 /// `?` → `Box::new`, or a split's `*self = branch`) lowers to word copy loops
 /// that Jolt expands into trace rows, so nodes are constructed directly in
 /// their final slot instead ([`super::rlp`]'s `decode_node_zc_into`,
 /// [`Self::replace_with_branch`]). Boxing the children array (and the arena
-/// layout) measured WORSE: +155M rows — hence the variant size spread.
+/// layout) measured worse — hence the variant size spread.
 #[derive(Debug, Clone, Default)]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum Node<M> {
@@ -185,10 +186,10 @@ impl<M: Memoization> Node<M> {
         self.insert_with(key, value, &mut Unresolvable)
     }
 
-    /// jeth (advice-trie): like [`Self::insert`], but a [`Node::Digest`] on the
-    /// insertion path is resolved on demand through `r` (post-root lazy
-    /// materialization). A resolver miss panics — same witness-incompleteness
-    /// contract as the eager build (INV-W3).
+    /// Like [`Self::insert`], but a [`Node::Digest`] on the insertion path is
+    /// resolved on demand through `r` (post-root lazy materialization). A
+    /// resolver miss panics — same witness-incompleteness contract as the
+    /// eager build.
     pub(super) fn insert_with<R: DigestResolver>(
         &mut self,
         key: NibbleSlice,
@@ -293,10 +294,10 @@ impl<M: Memoization> Node<M> {
         self.remove_with(key, &mut Unresolvable)
     }
 
-    /// jeth (advice-trie): like [`Self::remove`], but digest stubs on the
-    /// removal path — including the branch-collapse sibling — are resolved on
-    /// demand through `r`. A resolver miss panics (INV-W3); orphan-rule
-    /// semantics are otherwise byte-identical to [`Self::remove`].
+    /// Like [`Self::remove`], but digest stubs on the removal path — including
+    /// the branch-collapse sibling — are resolved on demand through `r`. A
+    /// resolver miss panics; orphan-rule semantics are otherwise byte-identical
+    /// to [`Self::remove`].
     pub(super) fn remove_with<R: DigestResolver>(&mut self, key: NibbleSlice, r: &mut R) -> bool {
         match self {
             Node::Null => false,
@@ -347,10 +348,9 @@ impl<M: Memoization> Node<M> {
                 cache.clear();
 
                 if let Some((nib, mut only_child)) = children.take_single_child() {
-                    // jeth (advice-trie): the collapse sibling may be an
-                    // unresolved stub — resolve it on demand (today this is the
-                    // panic below; the witness contains collapse siblings by
-                    // construction, so honest proving succeeds).
+                    // the collapse sibling may be an unresolved stub — resolve it
+                    // on demand (the witness contains collapse siblings by
+                    // construction, so honest proving succeeds)
                     only_child.resolve_stub(r);
                     match *only_child {
                         // if the only child is a leaf, prepend the corresponding nib to it
@@ -383,22 +383,19 @@ impl<M: Memoization> Node<M> {
         }
     }
 
-    /// jeth (advice-trie): resolve a [`Node::Digest`] in place through `r`.
-    /// Panics on a resolver miss ("MPT: Unresolved node access" — INV-W3) and
-    /// on the digest-for-digest refusal / malformed bytes (a malformed node on
-    /// a DIRTY path fails proving, matching the eager build's reveal error).
-    /// No-op on already-resolved nodes.
+    /// Resolve a [`Node::Digest`] in place through `r`. Panics on a resolver
+    /// miss ("MPT: Unresolved node access") and on the digest-for-digest
+    /// refusal / malformed bytes (a malformed node on a DIRTY path fails
+    /// proving, matching the eager build's reveal error). No-op on
+    /// already-resolved nodes.
     pub(super) fn resolve_stub<R: DigestResolver>(&mut self, r: &mut R) {
         if let Node::Digest(digest) = self {
             let bytes = r.resolve(digest).expect("MPT: Unresolved node access");
             let digest = *digest;
-            self.decode_stub_in_place(&digest, bytes)
+            let resolved = self
+                .hydrate(digest, bytes)
                 .expect("MPT: invalid witness node");
-            if matches!(self, Node::Digest(_)) {
-                *self = Node::Digest(digest);
-                panic!("MPT: Unresolved node access"); // digest-for-digest refusal
-            }
-            self.cache_set(super::rlp::RlpNode::from_digest(&digest));
+            assert!(resolved, "MPT: Unresolved node access"); // digest-for-digest refusal
         }
     }
 
@@ -424,8 +421,8 @@ impl<M: Memoization> Node<M> {
 impl<M: Memoization> Slot<M> {
     /// The child behind an occupied slot, resolving a digest stub through `r`
     /// first; `None` for an empty slot. Panics on a resolver miss and on the
-    /// digest-for-digest refusal ("MPT: Unresolved node access" — INV-W3) and
-    /// on malformed bytes, exactly like [`Node::resolve_stub`].
+    /// digest-for-digest refusal ("MPT: Unresolved node access") and on
+    /// malformed bytes, exactly like [`Node::resolve_stub`].
     pub(super) fn resolve_mut<R: DigestResolver>(&mut self, r: &mut R) -> Option<&mut Node<M>> {
         match self {
             Slot::Node(child) => Some(child),

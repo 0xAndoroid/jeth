@@ -1,18 +1,18 @@
-//! Advice-indexed digest resolution (advice-trie Phase 1a).
+//! Advice-indexed digest resolution.
 //!
-//! Replaces the `rlp_by_digest` map: instead of hashing all witness nodes up
-//! front and probing a foldhash `IndexMap` per digest (~90–320 rows/probe,
-//! 9:1 miss-dominated, plus the map build), the prover advises the witness
-//! slot index and the guest verifies the claim locally:
+//! Instead of hashing all witness nodes up front and probing a map per digest
+//! (miss-dominated: most probes are boundary siblings), the prover advises the
+//! witness slot index and the guest verifies the claim locally:
 //!
-//! - miss (`hint == 0`, boundary sibling / absent): 1-row `ADVICE_LD` + a
-//!   branch — the digest stub stays in place (L3: panic-or-identical-output).
+//! - miss (`hint == 0`, boundary sibling / absent): one `ADVICE_LD` and a
+//!   branch — the digest stub stays in place (panic-or-identical-output).
 //! - hit: bounds check via the slice index (a lying hint panics the tracer ⇒
 //!   no proof), then `keccak256(witness[i]) == digest` — the keccak is memoized
-//!   per witness entry, so total reveal-class perms stay ≤ witness count (L1:
-//!   hashing is *relocated* build-time → first-resolve, never multiplied).
+//!   per witness entry, so total reveal-class perms stay ≤ witness count
+//!   (hashing is *relocated* from build time to first resolve, never
+//!   multiplied).
 //!
-//! Advice's entire power here is selection (L4: indices into witness order,
+//! Advice's entire power here is selection (indices into witness order,
 //! pass-stable): point at the right bytes (verified), wrong bytes (assert
 //! panic), or claim absence (stub semantics). It cannot forge content.
 
@@ -74,10 +74,10 @@ pub struct WitnessResolver {
     witness: Vec<Bytes>,
     verified: Vec<[u64; 4]>,
     verified_set: Vec<u64>,
-    /// INV-W6 memo: 2-bit [`NodeKind`] per entry (0 = not yet validated).
+    /// Node-kind memo: 2-bit [`NodeKind`] per entry (0 = not yet validated).
     /// Walked entries get a full `Node::decode`-parity scan exactly once.
     kinds: Vec<u64>,
-    /// Pass-1 / native digest→slot index. `BTreeMap` by the L5 seed-chain rule:
+    /// Pass-1 / native digest→slot index. `BTreeMap` by the seed-chain rule:
     /// a pass-1-only foldhash map would perturb the global per-hasher seed
     /// chain relative to the proven ELF. Never built in the proven ELF.
     #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
@@ -88,7 +88,7 @@ impl WitnessResolver {
     /// `trusted_digests`: pre-computed witness-node keccaks delivered as Jolt
     /// TRUSTED ADVICE (the `--trusted-digests` variant). Seeds the memo up
     /// front — first-resolve hashing becomes a 4-limb compare, and the resolve
-    /// path is otherwise identical to the self-verifying mode (§7).
+    /// path is otherwise identical to the self-verifying mode.
     pub fn new(witness_state: &[Bytes], trusted_digests: Option<&[[u8; 32]]>) -> Self {
         let n = witness_state.len();
         let mut verified = Vec::with_capacity(n);
@@ -100,7 +100,7 @@ impl WitnessResolver {
                 // digests are verifier-attested, wrong ones panic or substitute
                 // content exactly as granted. Limb byte order matches
                 // `le_words_32` (little-endian words) on both sides.
-                debug_assert_eq!(digests.len(), n);
+                assert_eq!(digests.len(), n, "trusted digest count");
                 verified.resize(n, [0u64; 4]);
                 unsafe {
                     core::ptr::copy_nonoverlapping(
@@ -175,9 +175,9 @@ impl WitnessResolver {
     }
 
     /// Authenticate the witness entry advised for `digest` and ensure it has
-    /// passed the INV-W6 well-formedness scan. Returns the entry index.
+    /// passed the well-formedness scan. Returns the entry index.
     /// Panics on a resolver miss — a walk the execution needs must resolve
-    /// (INV-W3, same witness-incompleteness contract as the eager build) —
+    /// (same witness-incompleteness contract as the eager build) —
     /// and on malformed entries (refusal; see walk module docs).
     #[inline]
     fn authenticate_walk(&mut self, digest: [u64; 4]) -> usize {
@@ -192,7 +192,7 @@ impl WitnessResolver {
         i
     }
 
-    /// §4.2 byte-walk storage read: `key` = keccak(slot), anchored at the
+    /// Byte-walk storage read: `key` = keccak(slot), anchored at the
     /// account's `storage_root`. Returns the decoded slot value; `Ok(None)` is
     /// authenticated absence. Never materializes or mutates — the only side
     /// effect is memoization.

@@ -50,7 +50,14 @@ fn add_fillers(trie: &mut zeth_mpt::Trie, key: B256, depth: usize, value: &[u8])
             if n == nib(&key, level) {
                 continue;
             }
-            let mut fk = keccak256((key, level as u64, n as u64).abi_encode_packed_hack());
+            let mut fk = keccak256(
+                [
+                    key.as_slice(),
+                    &(level as u64).to_le_bytes(),
+                    &(n as u64).to_le_bytes(),
+                ]
+                .concat(),
+            );
             // copy the shared prefix (level nibbles) then force nibble `level` = n
             for i in 0..level {
                 let v = nib(&key, i);
@@ -67,18 +74,6 @@ fn add_fillers(trie: &mut zeth_mpt::Trie, key: B256, depth: usize, value: &[u8])
             }
             trie.insert(fk, value.to_vec());
         }
-    }
-}
-
-trait PackedHack {
-    fn abi_encode_packed_hack(&self) -> Vec<u8>;
-}
-impl PackedHack for (B256, u64, u64) {
-    fn abi_encode_packed_hack(&self) -> Vec<u8> {
-        let mut v = self.0.to_vec();
-        v.extend_from_slice(&self.1.to_le_bytes());
-        v.extend_from_slice(&self.2.to_le_bytes());
-        v
     }
 }
 
@@ -142,27 +137,21 @@ fn main() -> Result<()> {
     let pk_bytes: [u8; 65] = pk_point.as_bytes().try_into().unwrap();
     let sender = Address::from_slice(&keccak256(&pk_bytes[1..])[12..]);
 
-    // System contracts (mainnet bytecode fetched via eth_getCode, empty storage).
+    // System contracts (mainnet bytecode, empty storage): `code_<address>.json` is the raw
+    // `eth_getCode` response, read from `JETH_SYNTH_CODE_DIR` (default `/tmp/opcg`).
+    let code_dir = std::env::var("JETH_SYNTH_CODE_DIR").unwrap_or_else(|_| "/tmp/opcg".into());
     let mut accounts: Vec<ContractSpec> = Vec::new();
-    for (addr, file) in [
-        (
-            "0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02",
-            "/tmp/opcg/code_0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02.json",
-        ),
-        (
-            "0x0000F90827F1C53a10cb7A02335B175320002935",
-            "/tmp/opcg/code_0x0000F90827F1C53a10cb7A02335B175320002935.json",
-        ),
-        (
-            "0x00000961Ef480Eb55e80D19ad83579A64c007002",
-            "/tmp/opcg/code_0x00000961Ef480Eb55e80D19ad83579A64c007002.json",
-        ),
-        (
-            "0x0000BBdDc7CE488642fb579F8B00f3a590007251",
-            "/tmp/opcg/code_0x0000BBdDc7CE488642fb579F8B00f3a590007251.json",
-        ),
+    for addr in [
+        "0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02",
+        "0x0000F90827F1C53a10cb7A02335B175320002935",
+        "0x00000961Ef480Eb55e80D19ad83579A64c007002",
+        "0x0000BBdDc7CE488642fb579F8B00f3a590007251",
     ] {
-        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(file)?)?;
+        let file = format!("{code_dir}/code_{addr}.json");
+        let v: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&file)
+                .with_context(|| format!("reading {file} (eth_getCode {addr})"))?,
+        )?;
         let code: Bytes = v["result"].as_str().unwrap().parse()?;
         accounts.push(ContractSpec {
             address: addr.parse()?,

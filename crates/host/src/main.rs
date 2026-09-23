@@ -316,29 +316,28 @@ fn run_native(input_path: &str) -> Result<()> {
             pm::PRE_STATE_HASH.get(),
             pm::POST_ROOT.get(),
         ];
-        let d = |a: [u64; 4], b: [u64; 4]| [b[0] - a[0], b[1] - a[1], b[2] - a[2], b[3] - a[3]];
+        let d = |a: [u64; 3], b: [u64; 3]| [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let (exec, post_storage, state_hash) = (d(sb, ee), d(ee, ph), d(ph, pr));
         println!("premeasure: witness_state_nodes={witness_nodes}");
         println!(
-            "  state_build:         probes={} hits={} decodes={} memo={}",
-            sb[0], sb[1], sb[2], sb[3]
+            "  state_build:         probes={} hits={} decodes={}",
+            sb[0], sb[1], sb[2]
         );
         println!(
-            "  exec storage builds: probes={} hits={} decodes={} memo={}",
-            exec[0], exec[1], exec[2], exec[3]
+            "  exec storage builds: probes={} hits={} decodes={}",
+            exec[0], exec[1], exec[2]
         );
         println!(
-            "  post_root storage:   probes={} hits={} decodes={} dirty_storage_nodes={}",
-            post_storage[0], post_storage[1], post_storage[2], post_storage[3]
+            "  post_root storage:   probes={} hits={} decodes={}",
+            post_storage[0], post_storage[1], post_storage[2]
         );
-        println!("  post_root state:     dirty_state_nodes={}", state_hash[3]);
         println!(
-            "  TOTALS: probes={} hits={} decodes={} dirty_nodes={} dirty/witness={:.1}%",
-            pr[0],
-            pr[1],
-            pr[2],
-            pr[3],
-            100.0 * pr[3] as f64 / witness_nodes as f64
+            "  post_root state:     probes={} hits={} decodes={}",
+            state_hash[0], state_hash[1], state_hash[2]
+        );
+        println!(
+            "  TOTALS: probes={} hits={} decodes={}",
+            pr[0], pr[1], pr[2]
         );
     }
     Ok(())

@@ -10,42 +10,10 @@ use primitives::{hardfork::SpecId, Address, Bytes, B256, U256};
 /// An instruction receives the pointer to the byte after its opcode and returns the pointer
 /// to the next opcode. A null pointer means the frame halted or yielded: an
 /// [`InterpreterAction`] has been set (`Interpreter::halt*` / `Interpreter::set_action_at`)
-/// and the loop stops. Only those helpers produce a null.
+/// and the loop stops. Those helpers produce the null; an instruction returns it directly, or
+/// returns its own null after a helper it called has already halted the frame (the call/create
+/// range and gas helpers, `Interpreter::resize_memory`).
 pub type Ip = *const u8;
-
-/// Helper function to read immediates data from the bytecode
-pub trait Immediates {
-    /// Reads next 16 bits as signed integer from the bytecode.
-    #[inline]
-    fn read_i16(&self) -> i16 {
-        self.read_u16() as i16
-    }
-    /// Reads next 16 bits as unsigned integer from the bytecode.
-    fn read_u16(&self) -> u16;
-
-    /// Reads next 8 bits as signed integer from the bytecode.
-    #[inline]
-    fn read_i8(&self) -> i8 {
-        self.read_u8() as i8
-    }
-
-    /// Reads next 8 bits as unsigned integer from the bytecode.
-    fn read_u8(&self) -> u8;
-
-    /// Reads next 16 bits as signed integer from the bytecode at given offset.
-    #[inline]
-    fn read_offset_i16(&self, offset: isize) -> i16 {
-        self.read_offset_u16(offset) as i16
-    }
-
-    /// Reads next 16 bits as unsigned integer from the bytecode at given offset.
-    fn read_offset_u16(&self, offset: isize) -> u16;
-
-    /// Reads next `len` bytes from the bytecode.
-    ///
-    /// Used by PUSH opcode.
-    fn read_slice(&self, len: usize) -> &[u8];
-}
 
 /// Trait for fetching inputs of the call.
 pub trait InputsTr {
@@ -74,8 +42,6 @@ pub trait LegacyBytecode {
 
 /// Trait for Interpreter to be able to jump
 pub trait Jumps {
-    /// Relative jumps does not require checking for overflow.
-    fn relative_jump(&mut self, offset: isize);
     /// Absolute jumps require checking for overflow and if target is a jump destination
     /// from jump table.
     fn absolute_jump(&mut self, offset: usize);
@@ -342,7 +308,7 @@ pub trait InterpreterTypes {
     /// Memory implementation type.
     type Memory: MemoryTr;
     /// Bytecode implementation type.
-    type Bytecode: Jumps + Immediates + LoopControl + LegacyBytecode;
+    type Bytecode: Jumps + LoopControl + LegacyBytecode;
     /// Return data implementation type.
     type ReturnData: ReturnData;
     /// Input data implementation type.
