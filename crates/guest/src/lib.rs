@@ -1,8 +1,12 @@
 //! jeth guest: statelessly validate one Ethereum mainnet block inside Jolt.
 //!
-//! Sizing rationale (PLAN.md D6): input ~10–15 MB observed; decoded witness +
-//! sparse trie + revm state for a ~29M-gas block needs high-hundreds-MB heap.
-//! All guest addresses stay < 4 GiB (cycle-marker pointers truncate to u32).
+//! Sizing rationale (PLAN.md D6): input ~10–15 MB observed for single mainnet
+//! blocks, up to 90 MB for `jeth merge` multi-block synthetic inputs (19 blocks);
+//! decoded witness + sparse trie + revm state for a ~29M-gas block needs
+//! high-hundreds-MB heap. The I/O region lives below RAM_START and is padded to a
+//! power of two (128 MiB input → 256 MiB region), so widening it moves only
+//! `input_start`; program/stack/heap are unchanged and all guest addresses stay
+//! < 4 GiB (cycle-marker pointers truncate to u32).
 //! KEEP IN SYNC with `GUEST_MEMORY` in `crates/host/src/trace.rs`.
 
 #![cfg_attr(feature = "guest", no_std)]
@@ -76,7 +80,7 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
 
 /// Standard path: JEF arrives as committed input, borrowed from the input region.
 #[jolt::provable(
-    max_input_size = 33554432,   // 32 MiB
+    max_input_size = 134217728,  // 128 MiB (multi-block synthetic inputs reach 90 MB at 19 blocks)
     max_output_size = 4096,      // 4 KiB
     heap_size = 1610612736,      // 1.5 GiB (bump allocator never frees: peak = total allocated; keeps addr space < 4 GiB)
     stack_size = 33554432        // 32 MiB
@@ -93,7 +97,7 @@ fn validate_block(input: &[u8]) -> ValidationResult {
 #[jolt::provable(
     max_input_size = 4096,
     max_output_size = 4096,
-    max_trusted_advice_size = 33554432, // 32 MiB
+    max_trusted_advice_size = 134217728, // 128 MiB
     heap_size = 1610612736,
     stack_size = 33554432
 )]
@@ -111,7 +115,7 @@ fn validate_block_advice(input: jolt::TrustedAdvice<&[u8]>) -> ValidationResult 
 /// Blob layout: u32 LE state-digest count, then that many 32-byte digests,
 /// then 32-byte code hashes for every witness code entry.
 #[jolt::provable(
-    max_input_size = 33554432,          // 32 MiB
+    max_input_size = 134217728,         // 128 MiB
     max_output_size = 4096,
     max_trusted_advice_size = 4194304,  // 4 MiB (52k digests ≈ 1.7 MB observed)
     heap_size = 1610612736,
@@ -225,6 +229,21 @@ pub unsafe extern "C" fn jeth_ecrecover_prehash(
         }
         None => 0,
     }
+}
+
+/// Hook for the vendored revm-interpreter's MULMOD: `(a * b) % m` through the
+/// Jolt BIGINT256_MUL inline, remainder written over `m` (the top-of-stack
+/// word). Zero when `m` is zero. Unconditional because Cargo.toml enables the
+/// interpreter's `bigint-inline` feature (which emits the extern declaration)
+/// in every configuration of this crate.
+#[no_mangle]
+pub unsafe extern "C" fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64) {
+    use alloy_primitives::U256;
+    jeth_core::bigint::mul_mod(
+        &*(a as *const U256),
+        &*(b as *const U256),
+        &mut *(m as *mut U256),
+    );
 }
 
 /// `once_cell`'s critical-section backend (via reth-primitives-traits) needs a

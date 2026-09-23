@@ -7,12 +7,19 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
-// Register the keccak256 + secp256k1 inline opcode handlers with the tracer (inventory).
+// Register the keccak256, secp256k1, sha2, blake2, BLAKE2F, P-256, bigint, bn254 and BLS12-381 inline opcode handlers with the tracer (inventory).
+extern crate jeth_inlines_blake2f as _;
+extern crate jeth_inlines_bls12_381 as _;
+extern crate jeth_inlines_bn254 as _;
+extern crate jolt_inlines_bigint as _;
+extern crate jolt_inlines_blake2 as _;
 extern crate jolt_inlines_keccak256 as _;
+extern crate jolt_inlines_p256 as _;
 extern crate jolt_inlines_secp256k1 as _;
+extern crate jolt_inlines_sha2 as _;
 
 /// Must match the `#[jolt::provable(...)]` attributes in crates/guest/src/lib.rs.
-const MAX_INPUT_SIZE: u64 = 33554432; // 32 MiB
+const MAX_INPUT_SIZE: u64 = 134217728; // 128 MiB (multi-block synthetic inputs)
 const MAX_OUTPUT_SIZE: u64 = 4096;
 const HEAP_SIZE: u64 = 1610612736; // 1.5 GiB
 const STACK_SIZE: u64 = 33554432; // 32 MiB
@@ -22,8 +29,13 @@ const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4194304; // 4 MiB (validate_block_truste
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
 const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
-const GUEST_TARGET_DIR: &str = "/Volumes/Dev/cargo-target/jeth-amber-nolane-guest";
-const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt";
+const DEFAULT_GUEST_TARGET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/guest");
+const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/target/release/jolt";
+
+/// Guest target-dir prefix (this worktree's target/guest); `JETH_GUEST_TARGET_DIR` overrides it.
+fn guest_target_dir() -> String {
+    std::env::var("JETH_GUEST_TARGET_DIR").unwrap_or_else(|_| DEFAULT_GUEST_TARGET_DIR.to_string())
+}
 
 /// Guest entry point variant.
 #[derive(Clone, Copy, PartialEq)]
@@ -51,7 +63,7 @@ impl Variant {
 /// own target dir so switching configurations doesn't thrash rebuilds).
 pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
     let suffix: String = extra_features.iter().map(|f| format!("-{f}")).collect();
-    PathBuf::from(format!("{GUEST_TARGET_DIR}-{}{suffix}", variant.func()))
+    PathBuf::from(format!("{}-{}{suffix}", guest_target_dir(), variant.func()))
         .join("riscv64imac-unknown-none-elf/release")
         .join("jeth-guest")
 }
@@ -126,7 +138,7 @@ fn build_guest_inner(variant: Variant, symbols: bool, extra_features: &[&str]) -
     let jolt_cli = std::env::var("JOLT_PATH").unwrap_or_else(|_| DEFAULT_JOLT_CLI.to_string());
     let func = variant.func();
     let suffix: String = extra_features.iter().map(|f| format!("-{f}")).collect();
-    let target_dir = format!("{GUEST_TARGET_DIR}-{func}{suffix}");
+    let target_dir = format!("{}-{func}{suffix}", guest_target_dir());
     let features: String = core::iter::once("guest")
         .chain(extra_features.iter().copied())
         .collect::<Vec<_>>()

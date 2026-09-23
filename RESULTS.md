@@ -1,6 +1,6 @@
 # jeth results — Jolt-tracing full Ethereum mainnet blocks
 
-**Latest (2026-09-09, branch `amber-nolane`): the ten-block set 25905781–25905790 validates at 13.814672 c/g gas-weighted SELF (wave-4 baseline 19.780546, −30.16%) — jeth-side amber waves C–P on a16z/jolt main plus the keccak/bump-alloc/secp sdk commits, without the Jolt ISA lane tables; see the last section.**
+**Latest (2026-09-10, branch `inlines-b` on `inlines-a`/`amber-nolane`): the ten-block set 25905781–25905790 validates at 13.653997 c/g gas-weighted SELF (amber-nolane 13.814672; wave-4 baseline 19.780546, −30.98%) — Phase A wires the Jolt p256 / sha2 / blake2 / bigint inlines (P256VERIFY 539 → 71.5 c/g); Phase B adds custom bn254 Fq, BLS12-381 Fp and BLAKE2b-round inlines written in this repo (bn254 pairing −20%, BLS G2/pairing −13%, BLAKE2F r1000 232 → 85 c/g); see the last two sections.**
 
 **Headline (after Workstream A — JEF zero-parse input, 2026-08-18): recent mainnet
 blocks validate inside the Jolt RV64IMAC guest at 28.2–30.5 cycles/gas fully
@@ -1946,3 +1946,347 @@ cargo nextest run --cargo-quiet --release --workspace --features jeth-host/secp-
 Repeat `run-native` / `trace --skip-build` for 25905782–25905790; the ten
 `data/<block>/input.bin` files are the wave-4 repacks (JEF, production code
 library).
+
+## Glamsterdam-sized synthetic blocks — multi-block concatenation (2026-09-18)
+
+**Verdict.** A Glamsterdam-sized block — `jeth merge` of 6 consecutive mainnet blocks (N=6:
+203,547,697 gas, 1819 txs) — traces at **2,389,246,432 rows = 11.7380 c/g** self-verifying:
+**−13.0% c/g** vs the gas-weighted sum of its six constituents (13.4903), −14.8% vs the
+ten-block ledger (13.7835). The saving is shared state, not cheaper execution — witness dedup and one
+post-state root instead of six cut keccak permutations −22% (reveal −25%, post-root −25%, execution
+first-touch storage tries −21%); no category grows — and it compounds: N=13 (388,590,542 gas)
+11.16 c/g, N=19 (549,039,933) 10.47 c/g. Fit over N=2..19: **rows = 9.873·gas + 423.4M** (R² 0.9977):
+9.87 marginal c/g plus a 0.42B-row block-level base. Exactly 200M gas = 2.40B rows, 11.7% above 2^31,
+so one proof pads to 2^32 (44% waste); at the a16z-quoted >10M cycles/s (MacBook GPU) that is ~429 s
+padded / ~240 s unpadded = 20 slots; real-time needs ≥200M rows/s.
+
+Setup: `jolt-cli-amber-nolane` @ a0d7b74baa (the 2026-09-09 ledger's CLI), branch `feat/merge-blocks-measure` (PR #6 `8442319` +
+widen + scripts), `validate_block` (committed input, no trusted digests), two-pass advice trace, M4 mini. Guest change: input region
+32 → 128 MiB (memory layout only, c8bfecd) — 25905781 traces **601,659,690 rows (13.6039 c/g)** before and after; N=19 (89.9 MB
+input) fits the 1.5 GiB heap, no panics. That reference is −1,528,173 vs the banked no-lane 603,187,863 @ 966b204: main's review
+refactor 4e5b055 shaved 0.20–0.25% on every block (all ten hashes = records); the 596,202,686 / 13.48 in the lane brief is the
+jolt-amber WITH-lane-tables ladder (596,333,114), not reproducible with this CLI. Inputs = PR #6's
+(`/Volumes/Dev/jeth-inputs/merged/25905781-N<N>/`, byte-identical at 2848739). Profiles carry per-tx markers (+0.2% rows vs trace).
+
+### Single blocks — widened tree (25905781–90 hashes = 2026-09-09 records; 91–99 = `run-native`)
+| block | gas | txs | rows | c/g | Δ rows vs 09-09 | block | gas | txs | rows | c/g |
+|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 434 | 601,659,690 | 13.6039 | -1,528,173 | 25905791 | 27,129,738 | 273 | 403,830,576 | 14.8852 |
+| 25905782 | 47,065,991 | 342 | 720,625,963 | 15.3110 | -1,296,382 | 25905792 | 26,134,337 | 277 | 334,938,404 | 12.8160 |
+| 25905783 | 25,320,107 | 271 | 332,318,755 | 13.1247 | -893,962 | 25905793 | 30,527,380 | 243 | 425,990,381 | 13.9544 |
+| 25905784 | 19,039,352 | 219 | 250,459,244 | 13.1548 | -696,530 | 25905794 | 34,833,992 | 350 | 462,075,864 | 13.2651 |
+| 25905785 | 47,351,982 | 320 | 628,266,829 | 13.2680 | -1,283,282 | 25905795 | 28,831,813 | 209 | 369,781,706 | 12.8255 |
+| 25905786 | 26,354,048 | 245 | 290,987,479 | 11.0415 | -945,533 | 25905796 | 30,337,509 | 301 | 347,493,924 | 11.4543 |
+| 25905787 | 27,961,947 | 277 | 400,791,053 | 14.3334 | -931,216 | 25905797 | 8,194,043 | 158 | 118,251,158 | 14.4314 |
+| 25905788 | 6,217,605 | 120 | 92,234,380 | 14.8344 | -230,662 | 25905798 | 59,177,995 | 403 | 1,047,980,181 | 17.7090 |
+| 25905789 | 44,608,380 | 325 | 675,886,741 | 15.1516 | -1,203,533 | 25905799 | 19,684,774 | 247 | 270,478,319 | 13.7405 |
+| 25905790 | 32,881,199 | 352 | 431,640,094 | 13.1273 | -1,012,812 | | | | | |
+| **gas-weighted 10** | 321,027,690 | | 4,424,870,228 | **13.7835** | | **gas-weighted 19** | 585,879,271 | | 8,205,690,741 | **14.0058** |
+
+### Merged N=2..19 (block 25905781 context; Σ = the N constituents above)
+| N | txs | gas | rows | c/g | Σ rows | Σ c/g | Δ rows | Δ c/g | perms Σ→merged | state nodes Σ→union | input MB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 774 | 90,381,226 | 1,246,998,390 | 13.7971 | 1,322,285,653 | 14.4840 | -75,287,263 | -4.7% | 239,490→218,974 (-9%) | 39,095→37,528 | 15.6 |
+| 3 | 1043 | 114,790,130 | 1,507,007,592 | 13.1284 | 1,654,604,408 | 14.1888 | -147,596,816 | -7.5% | 301,376→260,394 (-14%) | 49,581→46,165 | 19.2 |
+| 4 | 1259 | 133,295,378 | 1,695,942,140 | 12.7232 | 1,905,063,652 | 14.0437 | -209,121,512 | -9.4% | 352,800→295,077 (-16%) | 57,930→53,355 | 22.3 |
+| 5 | 1577 | 178,303,854 | 2,188,842,876 | 12.2759 | 2,533,330,481 | 13.8430 | -344,487,605 | -11.3% | 474,423→381,551 (-20%) | 77,097→70,151 | 29.4 |
+| 6 | 1819 | 203,547,697 | 2,389,246,432 | 11.7380 | 2,824,317,960 | 13.4903 | -435,071,528 | -13.0% | 533,447→416,237 (-22%) | 86,584→78,048 | 32.9 |
+| 7 | 2091 | 229,957,413 | 2,678,640,064 | 11.6484 | 3,225,109,013 | 13.5897 | -546,468,949 | -14.3% | 603,532→455,881 (-24%) | 97,967→87,356 | 36.9 |
+| 8 | 2210 | 235,953,839 | 2,733,551,300 | 11.5851 | 3,317,343,393 | 13.6215 | -583,792,093 | -14.9% | 622,770→464,627 (-25%) | 101,197→89,959 | 38.0 |
+| 9 | 2533 | 280,267,840 | 3,289,539,277 | 11.7371 | 3,993,230,134 | 13.8583 | -703,690,857 | -15.3% | 756,412→560,847 (-26%) | 121,577→107,892 | 45.6 |
+| 10 | 2878 | 311,259,213 | 3,576,834,233 | 11.4915 | 4,424,870,228 | 13.7835 | -848,035,995 | -16.6% | 846,463→611,332 (-28%) | 137,147→120,905 | 51.0 |
+| 11 | 3145 | 335,309,021 | 3,844,452,758 | 11.4654 | 4,828,700,804 | 13.8693 | -984,248,046 | -17.3% | 921,851→651,671 (-29%) | 149,538→130,829 | 55.6 |
+| 12 | 3417 | 359,795,638 | 4,052,491,326 | 11.2633 | 5,163,639,208 | 13.7958 | -1,111,147,882 | -18.4% | 989,676→685,418 (-31%) | 161,325→139,777 | 59.5 |
+| 13 | 3652 | 388,590,542 | 4,335,221,631 | 11.1563 | 5,589,629,589 | 13.8077 | -1,254,407,958 | -19.2% | 1,075,364→731,025 (-32%) | 175,352→151,084 | 64.1 |
+| 14 | 3996 | 422,115,608 | 4,662,108,587 | 11.0446 | 6,051,705,453 | 13.7647 | -1,389,596,866 | -19.8% | 1,161,820→780,003 (-33%) | 189,488→162,308 | 69.1 |
+| 15 | 4203 | 445,164,200 | 4,830,981,006 | 10.8521 | 6,421,487,159 | 13.7069 | -1,590,506,153 | -20.8% | 1,225,492→810,042 (-34%) | 199,696→170,530 | 72.6 |
+| 16 | 4494 | 471,345,010 | 5,015,133,941 | 10.6400 | 6,768,981,083 | 13.5699 | -1,753,847,142 | -21.6% | 1,297,878→840,738 (-35%) | 211,851→179,445 | 76.3 |
+| 17 | 4649 | 479,345,862 | 5,081,950,705 | 10.6018 | 6,887,232,241 | 13.5838 | -1,805,281,536 | -22.0% | 1,323,032→851,502 (-36%) | 216,088→182,757 | 77.7 |
+| 18 | 5041 | 530,882,689 | 5,604,910,698 | 10.5577 | 7,935,212,422 | 14.0150 | -2,330,301,724 | -24.7% | 1,478,052→930,587 (-37%) | 242,910→204,640 | 86.9 |
+| 19 | 5277 | 549,039,933 | 5,748,610,252 | 10.4703 | 8,205,690,741 | 14.0058 | -2,457,080,489 | -25.2% | 1,534,052→952,976 (-38%) | 251,904→211,560 | 89.9 |
+
+Fit over the 18 merged points: **rows = 9.8728·gas + 423,420,646** (R² 0.99774); 19 single blocks alone fit a = 16.37, R² 0.940.
+
+### N=6 vs its six constituents — shared-state amortization (`jeth profile --rows --split-markers --json`, `scripts/aggregate_markers.py`)
+| category | Σ singles rows | share | N=6 rows | share | Δ rows | Δ % |
+|---|---:|---:|---:|---:|---:|---:|
+| keccak | 1,380,413,904 | 48.79% | 1,077,170,041 | 44.99% | -303,243,863 | -21.97% |
+| mpt | 232,326,753 | 8.21% | 178,835,676 | 7.47% | -53,491,077 | -23.02% |
+| memcpy | 143,902,079 | 5.09% | 133,996,621 | 5.60% | -9,905,458 | -6.88% |
+| interpreter | 320,521,512 | 11.33% | 303,339,727 | 12.67% | -17,181,785 | -5.36% |
+| revm_handler_state | 249,532,116 | 8.82% | 235,540,200 | 9.84% | -13,991,916 | -5.61% |
+| bytecode_analysis | 18,250,038 | 0.65% | 17,121,280 | 0.72% | -1,128,758 | -6.18% |
+| sig_verify | 132,617,177 | 4.69% | 112,111,746 | 4.68% | -20,505,431 | -15.46% |
+| precompiles | 156,485,848 | 5.53% | 155,984,751 | 6.51% | -501,097 | -0.32% |
+| allocator | 2,500,082 | 0.09% | 2,052,932 | 0.09% | -447,150 | -17.89% |
+| deserialize | 6,140,117 | 0.22% | 5,215,494 | 0.22% | -924,623 | -15.06% |
+| u256_ruint | 65,895,356 | 2.33% | 63,763,254 | 2.66% | -2,132,102 | -3.24% |
+| other | 110,696,798 | 3.91% | 99,327,947 | 4.15% | -11,368,851 | -10.27% |
+| **total** | 2,829,335,305 | 100% | 2,394,457,147 | 100% | -434,878,158 | -15.37% |
+keccak permutations, proven-pass census (Σ constituents → merged):
+
+| segment | N=6 | N=13 | N=19 |
+|---|---|---|---|
+| reveal | 157,039 → 117,664 (-25.1%) | 322,710 → 207,323 (-35.8%) | 460,436 → 269,043 (-41.6%) |
+| execution | 176,396 → 140,135 (-20.6%) | 352,770 → 248,156 (-29.7%) | 511,736 → 329,789 (-35.6%) |
+| post_root | 165,922 → 124,810 (-24.8%) | 334,678 → 212,039 (-36.6%) | 469,980 → 265,475 (-43.5%) |
+| total | 533,447 → 416,237 (-22.0%) | 1,075,364 → 731,025 (-32.0%) | 1,534,052 → 952,976 (-37.9%) |
+
+Reading: phase rows Σ→N=6: reveal −24.4%, execution −10.5%, post-root −23.8%, outside −9.3% (keccak rows −25.1% / −21.9% / −24.8% /
+−4.4%). The −435M rows are 70% keccak (nodes hashed once, one post-root pass, storage tries materialized once), 12% MPT decode/walk,
+5% signature batch (one Pippenger MSM over 1,819 pubkeys instead of six); interpreter/handler −5% ≈ the 2.8% dropped gas plus warm
+journal state; precompiles −0.3% (nothing to share). Shares at N=13 / N=19: keccak 43.5% / 42.8%, interpreter 14.1% / 14.6%, MPT 7.1% / 7.0%.
+
+### Extrapolation (fit) and proving memo — no prove performed
+| gas | rows (fit) | c/g | nearest measured | single-proof pad | waste | chunks @2^24 / 2^29 / 2^30 | prove @10M/s | @20M/s | slots @10M/s |
+|---|---:|---:|---|---|---:|---|---:|---:|---:|
+| 200,000,000 | 2,397,981,665 | 11.99 | N6: 2,389,246,432 (11.74) | 2^32 = 4,294,967,296 | 44.2% | 143 / 5 / 3 | 429 s | 215 s | 35.8 |
+| 400,000,000 | 4,372,542,684 | 10.93 | N13: 4,335,221,631 (11.16) | 2^33 = 8,589,934,592 | 49.1% | 261 / 9 / 5 | 859 s | 429 s | 71.6 |
+| 600,000,000 | 6,347,103,703 | 10.58 | N19: 5,748,610,252 (10.47) | 2^33 = 8,589,934,592 | 26.1% | 379 / 12 / 6 | 859 s | 429 s | 71.6 |
+Assumptions: a16z Lattice/Jolt post (2026-09-09) "over 10M cycles/s on a MacBook GPU" (20M/s = 2× headroom); one row = one cycle;
+single proof padded to the next power of two; `max_trace_length` default 2^24, practical single-shot ceiling 2^29–2^30 (memo above) → a
+200M-gas block is 143 default segments or 3–5 at the ceiling (continuations + aggregation); 600M gas extrapolates beyond N=19 (549M).
+Unpadded @10M/s: 240 / 437 / 635 s. A further −10.5% at 200M gas (≤10.7 c/g) drops the pad to 2^31 and halves the single proof.
+
+### Fidelity of the synthetic blocks (`merge-meta.json`; PR #6 body has the post-2848739 counts)
+| N | source txs | kept | dropped | status_changed | gas_changed (status unchanged) | gas retained | witness codes Σ→union | header rewrites |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| 6 | 1831 | 1819 | 12 | 28 | 24 (52 counted independently) | 97.22% | 260→240 | gas_limit, gas_used, base_fee, excess_blob_gas |
+| 13 | 3698 | 3652 | 46 | 81 | 100 | 95.99% | 550→481 | same four parent-header fields |
+| 19 | 5366 | 5277 | 89 | 137 | 168 | 93.71% | 871→719 | same four parent-header fields |
+
+Later-block txs run in block 1's context (timestamp, base fee, BLOCKHASH of merged-away blocks = 0); drops = blob cap / nonce cascade / state outside the witness union (`dropped_txs`). Merged gas is 94–99% of the constituents', so Σ-vs-merged row deltas carry a −0.8% (N=2) … −6.3% (N=19) gas effect.
+
+### Reproduce
+```sh
+cd ~/dev/jeth.feat-merge-blocks-measure && export CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam \
+  JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam-guest     # isolated guest ELF dirs (other lanes rebuild the shared ones)
+cargo build -q --release -p jeth-host --features secp-inline; J=$CARGO_TARGET_DIR/release/jeth; IN=/Volumes/Dev/jeth-inputs
+$J trace --input $IN/25905781/input.bin        # 601,659,690 rows; builds the ELF pair (trace-summary.json lands next to the input)
+for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done   # merged: $IN/merged/25905781-N$n
+$J profile --input $IN/merged/25905781-N6/input.bin --rows --split-markers --json N6.json           # + 25905781..86 likewise
+uv run python scripts/aggregate_markers.py agg N6.json --trace-log <its trace log> --out N6.agg.json   # then: compare N6.agg.json 25905781.agg.json ...
+uv run python scripts/merged_summary.py --results DIR --native DIR --merged-dir $IN/merged --baseline-json <unchanged-tree summary> --trace-logs DIR --profiles DIR --out summary.json
+```
+
+## Campaign inlines-a — existing Jolt inlines wired into jeth (2026-09-09)
+
+Jolt ships eight inline crates; jeth used two (keccak256, secp256k1). This
+branch wires four more, all through revm's `Crypto` trait (`JoltCrypto`,
+`crates/core/src/crypto.rs`) or the vendored interpreter, guest-only
+(`cfg(all(feature, target_arch = "riscv64"))`) so `run-native` stays the
+independent software reference. No jolt-side edits; `MAX_SUFFIXES` and the
+lookup tables are untouched. Each lane was reviewed by an independent
+adversarial reviewer with a soundness focus (accept-set / output equality
+against the software path) before merging.
+
+| inline | jeth site | rows per unit before → after | c/g before → after |
+|---|---|---:|---:|
+| p256 (MULQ 264, FAKE_GLV_ADV 29) | P256VERIFY (0x100), `crates/core/src/p256.rs` | 3,784,035 → 501,756 per verify | **539.1 → 71.5** |
+| sha2 (SHA256INIT 1864 + SHA256 1900) | SHA256 (0x02) | 554,560 → 255,650 (8 KiB) · 78,673 → 38,595 (1 KiB) · 9,751 → 7,004 (32 B) | 170.6 → 78.6 · 139.7 → 68.6 · 51.1 → 36.7 |
+| blake2 (BLAKE2 1067, fixed 12 rounds) | BLAKE2F (0x09), `rounds == 12 && t[1] == 0` only | 9,853 → 7,814 (r12) · r1000 unchanged | 75.2 → 59.7 · 232.4 |
+| bigint (BIGINT256_MUL 141) | MULMOD 512-bit product (vendored interpreter, `jeth_mul_mod` hook) | 1,239 → 1,005 (op alone 65.2 → 52.9 c/g); N128 1,015 → 788; N3 947 → 718 | — |
+| bigint | MODEXP, odd moduli of 9..=32 significant bytes, `crates/core/src/bigint.rs` Montgomery ladder | 32-32-32 479,810 → 207,620 · 24-32-24 338,167 → 202,788 · 16-32-16 220,236 → 200,067 · 32-e1-32 19,192 → 11,741 | 115.2 → ~49.8 |
+
+Not routed, measured: MUL (95 rows compiled vs 141 inline), EXP, ADDMOD,
+MODEXP with ≤ 8-byte moduli (ladder would be +38%), 64+-byte moduli and
+even moduli (aurora software path), BLAKE2F with rounds ≠ 12 or a 128-bit
+counter (software), the one software SHA-256 per block in the EIP-7685
+requests hash. Adversarial 60M-gas single-op blocks: P256VERIFY 32.35B →
+4.29B rows (3.0× the worst real block, 1.43B); SHA256/8 KiB 10.23B → 4.72B;
+BLAKE2F r12 4.51B → 3.58B; BLAKE2F r1000 13.94B unchanged; MODEXP/32-32-32
+loop ≈ 6.9B → ≈ 3.0B.
+
+### Ten-block set (jolt-amber-nolane @ a0d7b74baa; before = the no-lane ledger above)
+
+| Block | Gas | Rows before | Rows after | Δ rows | c/g before | c/g after | Perms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 603,187,863 | 601,992,101 | -1,195,762 | 13.638429 | 13.611392 | 115,373 |
+| 25905782 | 47,065,991 | 721,922,345 | 715,141,963 | -6,780,382 | 15.338514 | 15.194452 | 124,117 |
+| 25905783 | 25,320,107 | 333,212,717 | 333,107,908 | -104,809 | 13.160004 | 13.155865 | 61,886 |
+| 25905784 | 19,039,352 | 251,155,774 | 250,985,973 | -169,801 | 13.191403 | 13.182485 | 51,424 |
+| 25905785 | 47,351,982 | 629,550,111 | 628,588,538 | -961,573 | 13.295116 | 13.274809 | 121,623 |
+| 25905786 | 26,354,048 | 291,933,012 | 291,810,444 | -122,568 | 11.077350 | 11.072699 | 59,024 |
+| 25905787 | 27,961,947 | 401,722,269 | 395,621,866 | -6,100,403 | 14.366749 | 14.148581 | 70,085 |
+| 25905788 | 6,217,605 | 92,465,042 | 92,464,391 | -651 | 14.871489 | 14.871384 | 19,238 |
+| 25905789 | 44,608,380 | 677,090,274 | 676,244,012 | -846,262 | 15.178544 | 15.159573 | 133,642 |
+| 25905790 | 32,881,199 | 432,652,906 | 432,649,242 | -3,664 | 13.158064 | 13.157952 | 90,051 |
+| Gas-weighted | 321,027,690 | 4,434,892,313 | 4,418,606,438 | -16,285,875 | 13.814672 | **13.763942** | 846,463 |
+
+−16,285,875 rows, 13.814672 → **13.763942 c/g** (−0.37%). The set has no
+P256VERIFY or BLAKE2F calls and 15 SHA256 calls; the rows come from MULMOD
+(781 5,288 calls; 782 29,480; 787 15,710) and MODEXP (787 58 calls, 785 8,
+789 6). The set-wide win is small by construction — these inlines cap the
+adversarial per-op cost, which is where the study found the 20× gap.
+The feature-off build of this tree traces every block 14 rows under the
+ledger (build-path layout, identical sources); per-lane deltas were measured
+tree-internally.
+
+### Gates
+
+- `run-native` and `jeth trace` block hashes equal the records on all ten
+  blocks; keccak permutation counts equal the ledger on all ten.
+- Forged/edge blocks (synth harness, outputs SSTOREd, guest hash == native
+  hash): P256VERIFY 38 vectors (r/s ∈ {0, n, n−1, 2²⁵⁶−1}, pk off-curve /
+  x ≥ p / (0,0) / −Q, msg ≥ n, z = 0 with Q ∈ {G, 2G, 3G}, lengths 0/159/161,
+  RIP-7212 + high-s twins); SHA256 18 lengths incl. 55/56/63/64/65/119/120;
+  BLAKE2F 21 (EIP-152 vectors 3–7, t[1] ≠ 0, counter max, r0/r1/r11/r13/r1000);
+  MULMOD 142 triples (N ∈ {0, 1, even, 2²⁵⁵}, a = b = N−1); MODEXP 761 calls
+  (even/zero/empty/over-padded moduli, 33–64-byte bases, 30-step chains).
+- Native differential tests: p256 vs revm's `verify_impl` (edge vectors +
+  seeded random 200 keys + 200 garbage inputs), sha2 vs the `sha2` crate,
+  blake2 vs revm `algo::compress` (4,000 random), MULMOD vs ruint, MODEXP vs
+  aurora-engine-modexp — workspace nextest 37/37; pre-commit fmt + clippy
+  `-D warnings` on every commit.
+- P-256 semantics: the inline `ecdsa_verify` rejects z = 0 while the
+  software path accepts it; jeth rewrites that case to the equivalent
+  instance `(z' = r, r, s, Q − G)` (or `(n − r, r, s, 2G)` when Q = G) —
+  proven in `.journals/lanes/inlines-a-p256.md`, pinned by tests.
+
+### Reproduce
+
+As in the previous section with `cd /Volumes/Dev/worktrees/jeth/inlines-a`
+(each worktree builds into its own `target/`; the guest ELF pair goes to
+`target/guest-*`, override with `JETH_GUEST_TARGET_DIR`);
+copy `data/<block>/input.bin` elsewhere before tracing (`jeth trace` writes
+`trace-summary.json` beside its input). Per-op numbers: the synth harness
+(`crates/host/src/bin/synth.rs`, `.journals/opcode-max-cg/`), lane copies in
+`.journals/lanes/inlines-a-{p256,hash,bigint}.md`.
+
+## Campaign inlines-b — custom Jolt inlines written in jeth: bn254 Fq, BLS12-381 Fp, BLAKE2b rounds (2026-09-10)
+
+Three inline crates authored in this repository (`crates/inlines/{bn254,
+bls12-381,blake2f}`, opcode 0x2B = the custom-1 space the Jolt book reserves
+for user inlines), registered through the same inventory path as the stock
+crates under a one-variant jolt-side addition (`InlineExtension::External`,
+jolt-private branch `jolt-inlines-b` @ `3158917254` = `jolt-amber-nolane` +
+that commit; no lookup tables, no instruction kinds, `MAX_SUFFIXES`
+untouched). The field inlines are deterministic product-scanning Montgomery
+multiplications (no advice, no assert rows) hooked into a vendored ark-ff
+0.5.0 (`crates/vendor/ark-ff`, byte-identical upstream plus cfg'd arms in
+`MontBackend::{mul_assign, sum_of_products}` and the Fp2 multiplication,
+guest-only) so every arkworks-backed precompile picks them up; the BLAKE2b
+round inlines cover every BLAKE2F round count and 128-bit counter the stock
+12-round inline cannot. Each crate carries an `InlineSpec` harness (≥ 10k
+random + edge cases through the tracer against an independent big-integer
+model), direct sequence-vs-upstream-arkworks tests, golden row counts, and a
+structural row test; each lane had an independent adversarial soundness
+review before merging.
+
+| inline op | rows (golden) | replaces (compiled, rows/call) | hooked site |
+|---|---:|---:|---|
+| BN254 MULQ / SOPQ2 / FP2MULQ | 273 / 415 / 797 | 310 / 507 / ≈1,000 | ark-ff `MontBackend<FqConfig,4>` mul_assign, sum_of_products (M = 2), Fq2 mul; squaring left compiled (257) |
+| BLS12-381 MULP / SOPP2 / FP2MUL | 647 / 957 / 1,875 | 714 / 1,183 / 2,567 | ark-ff `MontBackend<FqConfig,6>` mul_assign, sum_of_products (M = 2), Fq2 mul; squaring left compiled (581) |
+| BLAKE2b FULL10 / PREFIX_r (r = 1..9) | 880 / 80r + 80 | 253 rows per software round | BLAKE2F for rounds ≠ 12 or t[1] ≠ 0 (software init/fold around ⌊rounds/10⌋ × FULL10 + PREFIX_(rounds mod 10)) |
+
+| precompile / config | rows per unit before → after | c/g before → after |
+|---|---:|---:|
+| BN254PAIRING k1 / k2 / k4 / k8 | 11,872,925 → 9,544,692 · 16,398,981 → 13,093,035 · 26,755,440 → 21,338,705 · 48,843,571 → 38,935,488 | 150.1 → 120.6 · 145.0 → 115.8 · 147.7 → 117.8 · 154.0 → 122.8 |
+| BN254MUL full scalar · BN254ADD | 790,027 → 745,722 · 61,535 → 61,139 | 129.1 → 121.9 · 228.8 → 227.3 |
+| BLS_G2MSM k1 (k8 −18.4%) | 9,925,612 → 8,114,948 (−18.2%) | 438.9 → 358.8 |
+| BLS_PAIRING k1 (k2 −17.6%) | 20,818,507 → 17,141,281 (−17.7%) | 295.6 → 243.4 |
+| POINTEVAL · MAP_FP2_TO_G2 · G2ADD · G1MSM · MAP_FP_TO_G1 · G1ADD | −16.5% · −11.7% · −5.9% · −4.9% · −3.3% · −0.7% | |
+| BLAKE2F r1 · r10 · r12 (t[1] ≠ 0) · r13 · r20 · r100 · r1000 | 7,042 → 6,970 · 9,318 → 7,691 · 9,822 → 7,931 · 10,071 → 8,007 · 11,837 → 8,562 · 32,084 → 15,625 · 259,756 → 94,977 | 58.7 → 58.1 · 72.2 → 59.6 · 75.0 → 60.5 · 76.3 → 60.7 · 85.2 → 61.6 · 146.5 → 71.4 · **232.1 → 84.9** |
+
+Correction to the max-c/g study: its POINTEVAL row used a degenerate input
+(zero polynomial, infinity commitment/proof → 283 c/g). A valid KZG proof
+measures 37,923,831 → 31,672,325 rows per call (757 → 632 c/g), so after this
+campaign POINTEVAL is the worst precompile bound (above the old P256VERIFY
+539), followed by BLS_G2MSM k1 359, MAP_FP_TO_G1 287, G1MSM k1 271, G1ADD 261.
+
+Adversarial 60M-gas single-op blocks: BLAKE2F r1000 13.93B → 5.09B rows;
+BN254PAIRING ≈ 9.0B → 7.2B; BLS_G2MSM k1 26.3B → 21.5B. The BLS G1 paths
+gain little (Fp-only, one MULP saves 9%); the G2/pairing/KZG paths sit on
+Fp2 and gain the fused op. Pre-gates recorded in the lane journals: bn254
+mul_assign 310 / sum_of_products 507 / square 257 rows per call on 781 (the
+design's GO rule for the fused-Fp2 package); BLS G2MSM 73% of rows in Fp
+multiplication.
+
+### Ten-block set + the heaviest top-50 block (jolt-inlines-b @ 3158917254)
+
+| Block | Gas | Rows inlines-a | Rows inlines-b | Δ rows | c/g before | c/g after | Perms |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 25905781 | 44,227,079 | 601,992,101 | 596,202,724 | -5,789,377 | 13.611392 | 13.480491 | 115,373 |
+| 25905782 | 47,065,991 | 715,141,963 | 703,571,840 | -11,570,123 | 15.194452 | 14.948625 | 124,117 |
+| 25905783 | 25,320,107 | 333,107,908 | 327,442,400 | -5,665,508 | 13.155865 | 12.932110 | 61,886 |
+| 25905784 | 19,039,352 | 250,985,973 | 250,985,973 | +0 | 13.182485 | 13.182485 | 51,424 |
+| 25905785 | 47,351,982 | 628,588,538 | 624,144,707 | -4,443,831 | 13.274809 | 13.180963 | 121,623 |
+| 25905786 | 26,354,048 | 291,810,444 | 291,810,444 | +0 | 11.072699 | 11.072699 | 59,024 |
+| 25905787 | 27,961,947 | 395,621,866 | 392,228,863 | -3,393,003 | 14.148581 | 14.027237 | 70,085 |
+| 25905788 | 6,217,605 | 92,464,391 | 92,464,391 | +0 | 14.871384 | 14.871384 | 19,238 |
+| 25905789 | 44,608,380 | 676,244,012 | 671,810,582 | -4,433,430 | 15.159573 | 15.060188 | 133,642 |
+| 25905790 | 32,881,199 | 432,649,242 | 432,649,242 | +0 | 13.157952 | 13.157952 | 90,051 |
+| Gas-weighted | 321,027,690 | 4,418,606,438 | 4,383,311,166 | -35,295,272 | 13.763942 | **13.653997** | 846,463 |
+| 25694235 (Aztec, top-50 worst) | 59,999,955 | 1,426,158,765 | 1,375,135,731 | -51,023,034 | 23.769331 | 22.918946 | 193,806 |
+
+Ten blocks 13.763942 → **13.653997 c/g** (−35,295,272 rows, −0.80%), all
+from bn254 (781: 17,556 Fq muls + 28,133 sum-of-products in ecmul/pairing;
+782 −1.62%, 783 −1.70%); the set has no BLS or BLAKE2F calls (rows measured on the BLS lane worktree at
+the union tree; a rebuild in `inlines-b` reproduces 781 at 596,202,686 — a
+38-row layout shift from the embedded worktree path, same hash and perms). On the
+heaviest block of the top-50 profile (25694235, four Aztec rollup txs on
+BLS12-381 + bn254) the union saves 51.0M rows (−3.58%): BLS share 125.1M →
+≈ 94M, the rest bn254. Cumulative since amber-nolane: 13.814672 → 13.653997
+(−1.16%); since the wave-4 baseline −30.98%.
+
+### Gates
+
+- `run-native` and `jeth trace` hashes equal the records on all ten blocks
+  and on 25694235; keccak permutation counts equal the ledger everywhere.
+- Forged/edge synth blocks (outputs SSTOREd, guest hash == native hash):
+  bn254 62 txs (infinity, off-curve, coordinates q and q+1, scalars 0/1/n/
+  n±1/2²⁵⁶−1/q, G2 off-twist and outside the r-torsion, swapped re/im,
+  truncated/extra input, k=1..8 identities); BLS 199 cases (every EIP-2537
+  vector incl. all fail-* vectors, infinity encodings, coords p/p+1, padding
+  bit, scalars 0/r/r−1/2²⁵⁶−1, MSM k=0/duplicates, pairing with infinity,
+  KZG wrong proof/commitment/versioned hash, z = r, infinity commitment);
+  BLAKE2F 30 vectors (EIP-152 3–8 incl. the bad-flag failure and the
+  2³²−1-round OOG, rounds 0/1/9/10/11/12/13/100/1000, t[1] ≠ 0, counter max).
+- Inline tests: 10k random + edge cartesian per op through the tracer
+  harness vs independent models; sequences vs upstream arkworks (bn254 20k
+  random + 22³ adversarial triples; BLS 1k + edges); structural row tests
+  (virtual-only destinations, loads before stores, zero advice/assert rows,
+  reset set == written set); golden row counts. Workspace nextest 71/71;
+  fmt + clippy `-D warnings` on every commit.
+- Soundness (per review): every sequence is straight-line RV64IM + virtual
+  ops with total semantics — no prover freedom; Montgomery bounds t < 1.378q
+  (bn254, one caller-side conditional subtraction) and t < 1.25p (BLS,
+  in-inline branch-free subtraction), column carries ≤ 33 terms ≪ 2⁶⁴,
+  `lo(m_k·q₀)` replaced by the exact carry `[r_k ≠ 0]`; hooks keyed by
+  compile-time modulus + layout checks (bn254 Fr and other fields fall
+  through); canonical invariant preserved at every hooked path.
+- **Proof gate (2026-09-10): every custom inline family proves AND
+  verifies.** Jolt example guest `examples/jeth-inlines-proof-gate` on
+  `jolt-inlines-b` @ `c0e9fb845f` (standalone workspace; guest patches
+  ark-ff to the vendored crate with both hook features, host links the three
+  jeth crates for registration; legacy prover, `RV64IMAC_JOLT_ALL_INLINES`
+  incl. `External`), Apple M4 16 GiB, outputs checked against native
+  arkworks / EIP-152: bn254 pairing e(P,Q) 8,621,982 cycles (10,495,866
+  unhooked, −17.9%), padded 2²⁴, prove 173.7 s, verify 0.60 s, 7.77 GiB —
+  PASS; bn254 e(P,Q)·e(−P,Q) = 1 multi-pairing 11,548,881 cycles
+  (15,028,695 unhooked, −23.2%), prove 201.2 s, verify 0.26 s — PASS;
+  BLS12-381 G2 add + 2-term G2 MSM 2,931,348 cycles, 2²², prove 69.7 s,
+  verify 0.27 s — PASS; BLAKE2F r12 (FULL10 + PREFIX_2, EIP-152 vector 5),
+  r13, r20 (128-bit counter) 6,892 / 6,972 / 9,066 cycles, prove ≈ 1 s each
+  — PASS. Trace census inside the proven guests: bn254 1,870 × MULQ (273) +
+  15 × SOPQ2 (415) + 5,261 × FP2MULQ (797) = 55% of rows; BLS 962 × MULP
+  (647) + 692 × FP2MUL (1,875) = 52%. `jolt-inlines-fixtures` 3/3, golden
+  file untouched. Reproduce: `cd …/jolt-inlines-b/examples/jeth-inlines-proof-gate
+  && cargo build --release && ./target/release/jeth-inlines-proof-gate
+  {blake2f|bls|bn254|bn254-check}`; journal `.journals/lanes/proof-gate.md`.
+- Finding from the proof-gate guest: the BLS Fq2 hook guard (`is_fq2`) did
+  not const-fold there (runtime 48-byte memcmp + negation ≈ 711 rows per Fq2
+  mul in that guest, ≈ 103 in the jeth guest); fixed by making the guard a
+  const fn over compile-time constants (`92a1093`, round-2 reviewed):
+  BLS_G2MSM −13.9% → −18.2%, pairing −13.0% → −17.7%, POINTEVAL −12.5% →
+  −16.5%, Aztec block −3.15% → −3.58% — the tables above carry the fixed
+  numbers. The bn254 guard was folded by the compiler already; it received
+  the same const treatment for robustness (rows unchanged).
+
+### Reproduce
+
+`cd /Volumes/Dev/worktrees/jeth/inlines-b` (jolt pin
+`/Volumes/Dev/worktrees/jolt/jolt-inlines-b`, CLI
+`…/jolt-inlines-b/target/release/jolt`; builds live in the worktree's
+`target/`), then as above. Lane journals with the per-op derivations and
+harness copies: `.journals/lanes/inlines-b-{bn254,bls,blake2f}.md`.

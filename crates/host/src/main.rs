@@ -5,9 +5,11 @@
 //! - `run-native` native `stateless_validation` over an input (witness-compatibility gate)
 //! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
 //! - `touches`    native state-touch census (repeat share of accounts/slots/codes across txs)
+//! - `merge`      concatenate N consecutive block inputs into one synthetic block input
 
 mod fetch;
 mod library;
+mod merge;
 mod opcodes;
 mod profile;
 mod repack;
@@ -53,6 +55,22 @@ enum Command {
     RunNative {
         #[arg(long)]
         input: String,
+    },
+    /// Merge N consecutive block inputs into one synthetic block input
+    /// (block 1's header context, all txs + withdrawals concatenated).
+    Merge {
+        /// Comma-separated input.bin paths of consecutive blocks, ascending.
+        #[arg(long, required = true, value_delimiter = ',', num_args = 1..)]
+        inputs: Vec<String>,
+        /// Output directory (input.bin + merge-meta.json).
+        #[arg(long)]
+        out: String,
+        /// Synthetic block gas limit (default: next 1M above what the kept txs need).
+        #[arg(long)]
+        gas_limit: Option<u64>,
+        /// Embedded code-library manifest (id cross-check; re-filters the union codes).
+        #[arg(long, default_value = library::DEFAULT_MANIFEST)]
+        library: String,
     },
     /// Rebuild JEF input.bin from a cached block and witness.
     Repack {
@@ -116,6 +134,17 @@ enum Command {
         /// Exact trace-row attribution (real + virtual/inline rows) per symbol.
         #[arg(long)]
         rows: bool,
+        /// With --rows: per-PC row histogram inside the first symbol matching
+        /// this substring (splits a function into its phases).
+        #[arg(long)]
+        pcs_of: Option<String>,
+        /// With --rows: count entries (PC == symbol start) of every symbol
+        /// containing one of these substrings (comma-separated) — call counts.
+        #[arg(long, value_delimiter = ',')]
+        entries: Vec<String>,
+        /// Skip rebuilding the (symbolized) guest ELF pair if it already exists.
+        #[arg(long)]
+        skip_build: bool,
         /// With --rows: attribute rows per (marker, symbol) — phase AND per-tx
         /// spans (builds the guest with the pertx feature).
         #[arg(long)]
@@ -196,6 +225,12 @@ fn main() -> Result<()> {
             library,
         } => fetch::run(block, latest_minus, rpc_list, &out, &library).map(|_| ()),
         Command::RunNative { input } => run_native(&input),
+        Command::Merge {
+            inputs,
+            out,
+            gas_limit,
+            library,
+        } => merge::run(&inputs, &out, gas_limit, &library),
         Command::Repack { dir, library } => repack::run(&dir, &library),
         Command::Library { command } => match command {
             LibraryCommand::Build { blocks, top_n, out } => library::build(&blocks, top_n, &out),
@@ -230,6 +265,9 @@ fn main() -> Result<()> {
             top,
             callers_of,
             rows,
+            pcs_of,
+            entries,
+            skip_build,
             split_markers,
             json,
             guest_features,
@@ -239,12 +277,16 @@ fn main() -> Result<()> {
                 .filter(|f| !f.is_empty())
                 .map(|f| f.as_str())
                 .collect();
+            let entries: Vec<&str> = entries.iter().map(String::as_str).collect();
             profile::run(
                 &input,
                 every,
                 top,
                 callers_of,
                 rows,
+                pcs_of,
+                &entries,
+                skip_build,
                 split_markers,
                 json,
                 &features,
@@ -279,7 +321,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_native(input_path: &str) -> Result<()> {
+pub(crate) fn run_native(input_path: &str) -> Result<()> {
     use std::time::Instant;
 
     let bytes = std::fs::read(input_path)?;

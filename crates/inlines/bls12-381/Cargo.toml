@@ -1,0 +1,23 @@
+[package]
+name = "jeth-inlines-bls12-381"
+version.workspace = true
+edition.workspace = true
+description = "BLS12-381 base-field inlines for the Jolt guest (Montgomery multiplication, two-term sum of products, Fp2 multiplication)"
+
+[features]
+default = []
+host = ["jolt-inlines-sdk/host"]
+
+[dependencies]
+jolt-inlines-sdk = { workspace = true }
+
+[dev-dependencies]
+jeth-inlines-bls12-381 = { path = ".", features = ["host"] }
+jolt-inlines-sdk = { workspace = true, features = ["test-utils"] }
+tracer = { workspace = true, features = ["std", "test-utils"] }
+ark-ff = { version = "0.5.0", default-features = false }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
+rand = "0.8"
+
+[lib]
+doctest = false

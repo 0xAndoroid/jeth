@@ -19,6 +19,12 @@ jeth-core = { workspace = true, features = ["std", "census"] }
 
 reth-ethereum-primitives = { workspace = true, features = ["std", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }
+# `merge`: host-side execution (same trie/witness DB/executor as the guest loop)
+# + header derivation rules; all already built for jeth-core.
+reth-chainspec.workspace = true
+reth-evm.workspace = true
+tries.workspace = true
+alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std", "serde", "k256"] }
 alloy-rlp.workspace = true
@@ -41,9 +47,24 @@ tracer.workspace = true
 jolt-common.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
+jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+jolt-inlines-blake2 = { workspace = true, features = ["host"] }
+jolt-inlines-p256 = { workspace = true, features = ["host"] }
+jolt-inlines-bigint = { workspace = true, features = ["host"] }
+jeth-inlines-blake2f = { workspace = true, features = ["host"] }
+jeth-inlines-bn254 = { path = "../inlines/bn254", features = ["host"] }
+jeth-inlines-bls12-381 = { workspace = true, features = ["host"] }
 
 # profiler: guest ELF symbolization
 object = "0.36"
 rustc-demangle = "0.1"
 # txprofile: cycle-marker report parsing
 regex-lite = "0.1"
+
+# synth (dev tool): synthetic-block harness for the per-opcode max c/g study (src/bin/synth.rs)
+zeth-mpt.workspace = true
+
+[dev-dependencies]
+# merge tests: validate the synthetic header with the consensus rules the guest applies.
+reth-consensus.workspace = true
+reth-ethereum-consensus.workspace = true
