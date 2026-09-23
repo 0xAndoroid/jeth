@@ -28,10 +28,10 @@ compute_advice = ["jeth-core/compute_advice"]
 # `bump-alloc`: no-free bump heap (alloc ~10 rows, dealloc no-op, in-place realloc
 # of the newest block) instead of the size-class allocator. Peak heap = total
 # bytes ever allocated; the tracer aborts if a block exceeds the 1.5 GiB heap.
-jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-sdk", features = ["bump-alloc"] }
-jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-amber-nolane/jolt-inlines/keccak256", default-features = false }
+jolt = { package = "jolt-sdk", path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-sdk", features = ["bump-alloc"] }
+jolt-inlines-keccak256 = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/keccak256", default-features = false }
 
-jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "p256-inline", "bigint-inline", "guest-instrument"] }
+jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "blake2f-inline", "p256-inline", "bigint-inline", "bn254-inline", "bls12-381-inline", "guest-instrument"] }
 # Direct dependency only to reach the vendored crate's `bigint-inline` feature:
 # EVM MULMOD through the `jeth_mul_mod` hook in lib.rs (always on, like the
 # jeth-core inline features above).
@@ -60,6 +60,10 @@ alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 # identical across the compute_advice/proven ELF pair — upstream seeds from
 # stack/fn/static addresses, which differ between two ELFs. Guest-only patch.
 foldhash = { path = "../vendor/foldhash" }
+# ark-ff with the bn254 and BLS12-381 inline hooks (jeth-core `bn254-inline`, `bls12-381-inline`):
+# replaces the registry crate for revm-precompile, ark-ec, ark-bn254, ark-bls12-381 and jeth-core;
+# the jolt crates' a16z fork is a different source.
+ark-ff = { path = "../vendor/ark-ff" }
 
 # zeth-mpt fork: inline slot children (digest stubs unboxed), in-place node
 # decode + zero-copy values (Bytes::slice_ref views into witness node bytes) —
