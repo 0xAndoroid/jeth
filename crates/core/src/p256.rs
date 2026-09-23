@@ -202,22 +202,32 @@ mod tests {
         ((u1 * s).to_bytes().into(), sig)
     }
 
-    /// Edges that need a real signature to mean anything: the on-curve key (0, y0) (x = 0, yet
-    /// not the (0, 0) infinity encoding), its non-canonical alias (p, y0) and (0, 0), each with
-    /// z ≠ 0 and z = 0 (the rewrite); and an accepted s = n − 1 (r = n − 1 is never valid: n − 1
-    /// is not an x-coordinate and 2n − 1 ≥ p).
+    /// Edges that need a real signature to mean anything: on-curve keys with a 256-bit
+    /// non-canonical alias, (0, y0) as (p, y0) (x = 0, yet not the (0, 0) infinity encoding) and
+    /// (x1, 1) as (x1, p + 1), plus (0, 0), each with z ≠ 0 and z = 0 (the rewrite); and an
+    /// accepted s = n − 1 (r = n − 1 is never valid: n − 1 is not an x-coordinate and
+    /// 2n − 1 ≥ p).
     #[test]
     fn key_encoding_and_high_s_boundaries_match_software() {
         let q0 = AffinePoint::decompress(&Default::default(), Choice::from(0)).unwrap();
-        let mut pk = [0; 64];
-        pk.copy_from_slice(&q0.to_encoded_point(false).as_bytes()[1..]);
-        let mut alias = pk;
-        alias[..32].copy_from_slice(&P.to_be_bytes::<32>());
-        for (u1, u2) in [(1, 2), (0, 2)] {
-            let (msg, sig) = forge(&q0, u1, u2);
-            assert!(compare(msg, sig, pk));
-            assert!(!compare(msg, sig, alias));
-            assert!(!compare(msg, sig, [0; 64]));
+        // x1 is a root of x³ − 3x + b − 1, so (x1, 1) is on the curve.
+        let x1 = hex!("6916fac45e568b6b9e2e2ecd611b282e5fcc40a3067d601057f879ce5a8a73cc");
+        let q1 = AffinePoint::decompress(&x1.into(), Choice::from(1)).unwrap();
+        // The coordinate that still fits in 256 bits after adding p.
+        for (q, coord) in [(q0, 0..32), (q1, 32..64)] {
+            let mut pk = [0; 64];
+            pk.copy_from_slice(&q.to_encoded_point(false).as_bytes()[1..]);
+            let mut alias = pk;
+            let aliased = U256::from_be_slice(&pk[coord.clone()])
+                .checked_add(P)
+                .unwrap();
+            alias[coord].copy_from_slice(&aliased.to_be_bytes::<32>());
+            for (u1, u2) in [(1, 2), (0, 2)] {
+                let (msg, sig) = forge(&q, u1, u2);
+                assert!(compare(msg, sig, pk));
+                assert!(!compare(msg, sig, alias));
+                assert!(!compare(msg, sig, [0; 64]));
+            }
         }
         // Nonce k: r = x(k·G) mod n, and d = (−k − z)/r makes s = k⁻¹(z + r·d) = −1.
         let k = U256::from(0x1234_5678u64);
