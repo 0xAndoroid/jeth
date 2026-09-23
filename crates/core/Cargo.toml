@@ -14,9 +14,10 @@ sha2-inline = ["secp-inline", "dep:jolt-inlines-sha2"]
 # BLAKE2F (0x09) precompile on the Jolt BLAKE2b inline for 12-round, 64-bit-counter calls.
 blake2-inline = ["secp-inline", "dep:jolt-inlines-blake2"]
 # RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
-p256-inline = ["dep:jolt-inlines-p256"]
-# EVM MULMOD product through the BIGINT256_MUL inline (`bigint.rs`; the guest hooks it into revm-interpreter).
-bigint-inline = ["dep:jolt-inlines-bigint"]
+p256-inline = ["secp-inline", "dep:jolt-inlines-p256"]
+# EVM MULMOD (the guest hooks `bigint.rs` into revm-interpreter) and MODEXP for odd moduli of
+# 9..=32 significant bytes on the BIGINT256_MUL inline (guest builds only, like the above).
+bigint-inline = ["secp-inline", "dep:jolt-inlines-bigint"]
 # Phase markers + keccak checkpoints around trie reveal/root (guest builds only;
 # the binary must provide the jeth_phase_start/end extern hooks).
 guest-instrument = []
