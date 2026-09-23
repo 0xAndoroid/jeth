@@ -19,7 +19,7 @@ extern crate jolt_inlines_secp256k1 as _;
 extern crate jolt_inlines_sha2 as _;
 
 /// Must match the `#[jolt::provable(...)]` attributes in crates/guest/src/lib.rs.
-const MAX_INPUT_SIZE: u64 = 33554432; // 32 MiB
+const MAX_INPUT_SIZE: u64 = 134217728; // 128 MiB (multi-block synthetic inputs)
 const MAX_OUTPUT_SIZE: u64 = 4096;
 const HEAP_SIZE: u64 = 1610612736; // 1.5 GiB
 const STACK_SIZE: u64 = 33554432; // 32 MiB
