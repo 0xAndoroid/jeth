@@ -38,3 +38,42 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # v1.50.2
+
+  test:
+    name: host unit tests
+    # Linux arm64 rental (docs: pika/docs/ci.md). The mini pool is private-repos-only.
+    runs-on: ubicloud-standard-2-arm
+    env:
+      # Jolt path deps in Cargo.toml point at this worktree path; see the
+      # `jolt-private` comment in the workspace Cargo.toml for the rev.
+      JOLT_WORKTREE: /Volumes/Dev/worktrees/jolt/jolt-inlines-b
+      JOLT_REV: 3158917254a645afd56f81b07eb8c6a26b4346b0
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: check deploy key
+        # Read-only deploy key on 0xAndoroid/jolt-private. Fork PRs have no
+        # secrets and cannot run this job.
+        run: |
+          if [ -z "${{ secrets.JOLT_PRIVATE_DEPLOY_KEY }}" ]; then
+            echo "::error::JOLT_PRIVATE_DEPLOY_KEY secret missing — add a read-only deploy key of 0xAndoroid/jolt-private as this repo secret"
+            exit 1
+          fi
+      - uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.JOLT_PRIVATE_DEPLOY_KEY }}
+      - name: checkout jolt worktree (path deps)
+        run: |
+          sudo mkdir -p "$JOLT_WORKTREE" && sudo chown -R "$USER" /Volumes
+          git -C "$JOLT_WORKTREE" init -q
+          git -C "$JOLT_WORKTREE" fetch -q --depth 1 git@github.com:0xAndoroid/jolt-private.git "$JOLT_REV"
+          git -C "$JOLT_WORKTREE" checkout -q FETCH_HEAD
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09-12
+        with:
+          toolchain: "1.95"
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: nextest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo nextest run --workspace --locked --no-fail-fast
