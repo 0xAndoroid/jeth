@@ -4,6 +4,7 @@
 //! - `fetch`      block + execution witness + recovered pubkeys → `data/<N>/input.bin`
 //! - `run-native` native `stateless_validation` over an input (witness-compatibility gate)
 //! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
+//! - `touches`    native state-touch census (repeat share of accounts/slots/codes across txs)
 //! - `merge`      concatenate N consecutive block inputs into one synthetic block input
 
 mod fetch;
@@ -13,6 +14,7 @@ mod opcodes;
 mod profile;
 mod repack;
 mod rpc;
+mod touches;
 mod trace;
 mod txprofile;
 
@@ -165,6 +167,22 @@ enum Command {
         #[arg(long)]
         skip_build: bool,
     },
+    /// Native state-touch census: opcode counts, distinct/repeated accounts and
+    /// slots, DB misses, code reuse (see jeth_core::census).
+    Touches {
+        #[arg(long)]
+        input: String,
+        /// Write the full report as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+        /// Number of hottest accounts to list.
+        #[arg(long, default_value_t = 10)]
+        top: usize,
+        /// Write the sorted keccak digests of the witness state nodes here (one
+        /// hex line each) for cross-block overlap counts.
+        #[arg(long)]
+        dump_digests: Option<String>,
+    },
     /// End-to-end: fetch a fresh block, validate natively, trace in the guest.
     Bench {
         /// How far behind head to target.
@@ -279,6 +297,12 @@ fn main() -> Result<()> {
             top,
             skip_build,
         } => txprofile::run(&input, top, skip_build),
+        Command::Touches {
+            input,
+            json,
+            top,
+            dump_digests,
+        } => touches::run(&input, json.as_deref(), top, dump_digests.as_deref()),
         Command::Bench {
             latest_minus,
             rpc_list,

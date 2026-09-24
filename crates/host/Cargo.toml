@@ -15,7 +15,7 @@ premeasure = ["jeth-core/premeasure"]
 secp-inline = ["jeth-core/secp-inline"]
 
 [dependencies]
-jeth-core = { workspace = true, features = ["std"] }
+jeth-core = { workspace = true, features = ["std", "census"] }
 
 reth-ethereum-primitives = { workspace = true, features = ["std", "serde"] }
 reth-primitives-traits = { workspace = true, features = ["std"] }

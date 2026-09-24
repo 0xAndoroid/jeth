@@ -2,6 +2,8 @@
 [default]
 extend-ignore-re = ["\\b[0-9a-f]{7,40}\\b"]
 
-# Vendored upstream ark-ff (crates/vendor/ark-ff) keeps its own identifiers (`ba_add` etc.).
+# Vendored upstream crates keep their own identifiers / hex test vectors:
+# ark-ff (`ba_add` etc.); alloy-primitives + hashbrown (byte-for-byte except the
+# riscv64 gather patches noted in their Cargo.toml headers).
 [files]
-extend-exclude = ["crates/vendor/ark-ff/"]
+extend-exclude = ["crates/vendor/ark-ff/", "crates/vendor/alloy-primitives/", "crates/vendor/hashbrown/"]

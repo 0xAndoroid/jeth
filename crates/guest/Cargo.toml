@@ -60,6 +60,15 @@ alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 # identical across the compute_advice/proven ELF pair — upstream seeds from
 # stack/fn/static addresses, which differ between two ELFs. Guest-only patch.
 foldhash = { path = "../vendor/foldhash" }
+# alloy-primitives: `FbHasher::write` (every Address/B256/U256 map key in revm and
+# jeth) reads its key chunks byte-wise on riscv64 (8 `lbu` + shifts per 8-byte word,
+# about 46 rows); the vendored copy gathers them from the containing aligned words.
+# Guest-only patch; hashes are bit-identical so native parity holds by construction.
+alloy-primitives = { path = "../vendor/alloy-primitives" }
+# hashbrown 0.17 (alloy-primitives + indexmap maps): `Group::load` reads the 8 ctrl
+# bytes of every probe unaligned (8 `lbu` + shifts on riscv64); the vendored copy
+# gathers them from the containing aligned words. Guest-only, no semantic change.
+hashbrown = { path = "../vendor/hashbrown" }
 # ark-ff with the bn254 and BLS12-381 inline hooks (jeth-core `bn254-inline`, `bls12-381-inline`):
 # replaces the registry crate for revm-precompile, ark-ec, ark-bn254, ark-bls12-381 and jeth-core;
 # the jolt crates' a16z fork is a different source.

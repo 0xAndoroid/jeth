@@ -14,6 +14,8 @@ pub mod advice;
 pub mod bigint;
 #[cfg(feature = "secp-inline")]
 mod bn254;
+#[cfg(feature = "census")]
+pub mod census;
 mod chainspec;
 pub mod code_library;
 pub mod container;

@@ -5,6 +5,9 @@ edition.workspace = true
 
 [features]
 std = []
+# Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode
+# inspector around the same validation loop. Never enabled by the guest.
+census = ["std"]
 code-library = []
 # Deferred tx, precompile, and authorization recovery using the secp256k1 inlines.
 secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]

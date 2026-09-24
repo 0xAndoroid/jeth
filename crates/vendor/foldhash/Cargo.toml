@@ -1,12 +1,16 @@
 # jeth vendored fork of foldhash 0.2.0 (zlib license) — advice-trie campaign.
 #
-# One change: FIXED seeds (src/seed.rs). Upstream derives seeds from stack /
-# function / static addresses plus a global per-hasher nondeterminism chain.
-# The advice two-pass runs TWO DIFFERENT ELFs (compute_advice on/off) that must
-# produce identical hashbrown iteration order everywhere, or the advice tape
-# written by pass 1 misaligns with pass 2's reads (design law L5). Applied via
-# [patch.crates-io] in the guest workspace only; native host builds keep
-# upstream foldhash.
+# Two changes:
+# 1. FIXED seeds (src/seed.rs). Upstream derives seeds from stack /
+#    function / static addresses plus a global per-hasher nondeterminism chain.
+#    The advice two-pass runs TWO DIFFERENT ELFs (compute_advice on/off) that must
+#    produce identical hashbrown iteration order everywhere, or the advice tape
+#    written by pass 1 misaligns with pass 2's reads (design law L5).
+# 2. riscv64-only containing-word gather for the 8-byte key reads in `load()` /
+#    `hash_bytes_short` (src/lib.rs `gather`): the unaligned reads lower to 8
+#    `lbu` each on the guest (about 46 trace rows per word). Bit-identical hashes.
+# Applied via [patch.crates-io] in the guest workspace only; native host builds
+# keep upstream foldhash.
 [package]
 name = "foldhash"
 version = "0.2.0"
