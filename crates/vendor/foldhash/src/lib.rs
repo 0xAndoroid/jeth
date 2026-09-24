@@ -294,8 +294,10 @@ unsafe fn load(bytes: &[u8], offset: usize) -> u64 {
 /// `crates/guest/src/mem.rs`. Jolt guest RAM is one flat, word-granular address
 /// space whose regions all start 8-aligned, so the aligned word holding a live
 /// byte is always inside mapped memory, and only words containing at least one
-/// live byte of the caller's range are loaded. The loads are volatile so LLVM
-/// never reasons about the bytes outside the caller's slice. Compiled for the
+/// live byte of the caller's range are loaded. The loads are volatile, but LLVM
+/// assumes an 8-byte access never touches an allocation smaller than 8 bytes and
+/// may drop the stores filling one; every caller here reads 8 bytes of a slice
+/// with len >= 8, so the allocation always spans a word. Compiled for the
 /// guest target and for the host unit test only; native builds keep the
 /// upstream reads.
 #[cfg(any(target_arch = "riscv64", test))]

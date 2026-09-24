@@ -64,7 +64,9 @@ pub(super) use self::imp::{BITMASK_ITER_MASK, BITMASK_STRIDE, BitMaskWord, NonZe
 /// byte is always inside mapped memory, and only words containing at least one
 /// live byte of `p..p + 8` are loaded (the ctrl array always carries
 /// `Group::WIDTH` trailing mirror bytes, so those 8 bytes are live). The loads
-/// are volatile so LLVM never reasons about the bytes outside the range.
+/// are volatile, but LLVM assumes an 8-byte access never touches an allocation
+/// smaller than 8 bytes and may drop the stores filling one; ctrl arrays hold
+/// at least `Group::WIDTH` bytes, so that never applies here.
 /// Compiled for the guest target and for the host unit test only; native
 /// builds keep the upstream read.
 #[cfg(any(target_arch = "riscv64", test))]

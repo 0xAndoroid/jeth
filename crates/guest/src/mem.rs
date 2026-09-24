@@ -37,12 +37,12 @@
 //!   leave the traced range. That takes the 1.5 GiB heap full to within 7
 //!   bytes (peak use on the benchmark set is ~58 MiB); pin it upstream
 //!   (`align_up(program_size, 8)` or a boot assert) before relying on more.
-//! * Every such access is volatile, through a pointer rebuilt from the integer
-//!   address (`addr & !7`), so LLVM neither elides nor reorders it nor derives
-//!   facts from the bytes outside the caller's range. The overrides here add
-//!   an `extern "C"` / `#[inline(never)]` boundary on top; the hashing gathers
-//!   are `#[inline(always)]` into callers that know the allocation (stack
-//!   keys, ctrl arrays) and rely on the volatile integer-address load alone.
+//! * Every such access is volatile, through a pointer rebuilt from `addr & !7`.
+//!   The overrides here add an `extern "C"` / `#[inline(never)]` boundary; the
+//!   `#[inline(always)]` hashing gathers do not, so LLVM sees the allocation and
+//!   assumes an 8-byte load never touches one under 8 bytes: it deletes the
+//!   stores filling it (seen for `FbHasher<4>` stack keys). Gathers therefore
+//!   read only objects of >= 8 bytes (keys N >= 8, slices len >= 8, ctrl).
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests

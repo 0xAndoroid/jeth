@@ -148,6 +148,8 @@ impl<const N: usize> Hasher for FbHasher<N> {
 
 #[inline(always)]
 fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
+    // jeth patch: gather only keys of at least one word (see `gather`).
+    let gather = bytes.len() >= 8;
     while let Some((chunk, rest)) = bytes.split_first_chunk() {
         hasher.write_usize(read_ne_usize(chunk));
         bytes = rest;
@@ -160,7 +162,7 @@ fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
     }
     if usize::BITS > 32 {
         if let Some((chunk, rest)) = bytes.split_first_chunk() {
-            hasher.write_u32(read_ne_u32(chunk));
+            hasher.write_u32(if gather { read_ne_u32(chunk) } else { u32::from_ne_bytes(*chunk) });
             bytes = rest;
         }
     }
@@ -225,9 +227,12 @@ fn read_ne_u32(chunk: &[u8; 4]) -> u32 {
 /// `crates/guest/src/mem.rs`. Jolt guest RAM is one flat, word-granular address space
 /// whose regions all start 8-aligned, so the aligned word holding a live byte is always
 /// inside mapped memory, and only words containing at least one live byte of the caller's
-/// range are loaded. The loads are volatile so LLVM never reasons about the bytes outside
-/// the caller's array. Compiled for the guest target and for the host unit test only;
-/// native builds keep the upstream reads.
+/// range are loaded. The loads are volatile, but once inlined LLVM still sees the key's
+/// allocation and assumes an 8-byte access never touches an object smaller than 8 bytes: it
+/// deletes the stores filling such a key (`FbHasher<4>` on a stack key hashed stale stack,
+/// rustc 1.95 riscv64), so `write_bytes_unrolled` gathers only keys of >= 8 bytes. Compiled
+/// for the guest target and for the host unit test only; native builds keep the upstream
+/// reads.
 #[cfg(any(target_arch = "riscv64", test))]
 mod gather {
     /// Read the `n` (4 or 8) bytes at `p` into the low bytes of a `u64`, little-endian,
@@ -237,7 +242,8 @@ mod gather {
     /// # Safety
     /// `p..p + n` must be readable, and the aligned words containing that range must be
     /// mapped (true on the Jolt guest, see the module comment; the host test provides an
-    /// aligned buffer around the range).
+    /// aligned buffer around the range). The allocation holding `p..p + n` must be at least
+    /// 8 bytes (see the module comment).
     #[inline(always)]
     pub(super) unsafe fn load_le(p: *const u8, n: usize) -> u64 {
         debug_assert!(n == 4 || n == 8);
