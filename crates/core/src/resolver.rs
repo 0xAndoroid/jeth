@@ -182,7 +182,7 @@ impl WitnessResolver {
     /// Authenticate the witness entry advised for `digest` and ensure it has
     /// passed the well-formedness scan. Returns the entry index.
     /// Panics on a resolver miss — a walk the execution needs must resolve
-    /// (same witness-incompleteness contract as the eager build) —
+    /// (same witness-incompleteness contract as the eager build).
     /// Malformed entries return an RLP error (refusal; see walk module docs).
     #[inline]
     fn authenticate_walk(&mut self, digest: [u64; 4]) -> alloy_rlp::Result<usize> {

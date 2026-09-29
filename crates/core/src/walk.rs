@@ -14,8 +14,8 @@
 //! nibble deliberately UNchecked — upstream is lax there, exact-length
 //! consumption). The verdict + node kind is memoized (2 bits/entry). One
 //! documented narrowing: a bare-string witness entry (`0x80` / digest-for-
-//! digest) panics the walk where the eager build resolved-to-Null or kept a
-//! stub — refusal-only divergence, unreachable from digest-anchored mainnet
+//! digest) returns an RLP error where the eager build resolved-to-Null or kept
+//! a stub — refusal-only divergence, unreachable from digest-anchored mainnet
 //! state; the native gate runs this same code so guest/native always agree.
 //!
 //! Inline children (any list first byte, incl. long-form `0xf8+`) are
