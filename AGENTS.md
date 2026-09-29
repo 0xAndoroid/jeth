@@ -2,7 +2,17 @@
 
 branch → PR → CI green (`.github/workflows/ci.yml`) → merge; no direct pushes to main.
 
-CI runs on GitHub-hosted runners and covers `rustfmt --check` (first-party
-crates, `crates/vendor/` excluded) and `typos` only. The workspace has path
-dependencies on a local jolt worktree, so a full build is not possible in CI:
-run `cargo check`/`cargo test` and the guest build locally before opening a PR.
+CI runs on GitHub-hosted runners: first-party rustfmt, typos, and Python lint.
+Clippy requires the local Jolt path dependencies and cannot run on GitHub.
+`~/.git-hooks/pre-commit` runs Clippy with `-D warnings` and the workspace lint
+policy; its repository hook runs the Python gate when Python or lint config is staged.
+
+- Rust: `cargo clippy -q --workspace --all-targets --message-format=short -j 6 -- -D warnings`
+- Formatting: `git ls-files 'crates/*.rs' ':!crates/vendor/**' | xargs rustfmt --check --edition 2021`
+- Python: `scripts/lint/python.sh` (Ruff 0.15.7 check + format check via uv)
+- Spelling: `typos`
+- Hook: `scripts/pre-commit.sh` (runs when relevant files are staged)
+
+Vendor crates are excluded. Guest lint: skip; guest built only via Jolt CLI.
+For Rust behavior changes, run the affected tests locally with
+`cargo nextest run --cargo-quiet -p <crate>` before opening a PR.

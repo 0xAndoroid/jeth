@@ -7,7 +7,6 @@
 //! contract: the digest map becomes verifier-trusted input, so this variant
 //! proves "the block is valid GIVEN this digest map" — appropriate when the
 //! verifier (or proving customer) independently possesses the witness.
-#![allow(warnings)]
 // Copyright 2025 RISC Zero, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +27,10 @@ use tries::{StatelessTrie, StatelessTrieError, WitnessDbError};
 
 /// Pre-computed digests: (state trie node keccaks, bytecode keccaks), in
 /// witness order. Set by the guest from trusted advice before validation.
+#[expect(
+    clippy::type_complexity,
+    reason = "The pair is the state-node and bytecode digest slices."
+)]
 static mut TRUSTED_DIGESTS: Option<(&'static [[u8; 32]], &'static [[u8; 32]])> = None;
 
 /// Install trusted digests for the next `SparseState::new` (single-hart guest).
@@ -40,12 +43,19 @@ static mut TRUSTED_DIGESTS: Option<(&'static [[u8; 32]], &'static [[u8; 32]])> =
 /// linkage still anchors the trie shape: only nodes whose (claimed) digest is
 /// referenced from the root are reachable.
 pub fn set_trusted_digests(state: &'static [[u8; 32]], codes: &'static [[u8; 32]]) {
+    // SAFETY: assumes single-hart guest use; this public API does not enforce that restriction.
     unsafe { TRUSTED_DIGESTS = Some((state, codes)) }
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "The pair is the state-node and bytecode digest slices."
+)]
 fn take_trusted_digests() -> Option<(&'static [[u8; 32]], &'static [[u8; 32]])> {
-    unsafe { TRUSTED_DIGESTS.take() }
+    // SAFETY: assumes single-hart guest use; the public setter does not enforce that restriction.
+    unsafe { core::ptr::replace(core::ptr::addr_of_mut!(TRUSTED_DIGESTS), None) }
 }
+
 use crate::keccak_memo::{
     address_words, hash_address, hash_address_words, hash_slot, hashed_post_state, AddressMemo,
     AlignedB256, LastRead, SlotMemo,
@@ -149,7 +159,7 @@ impl SparseState {
     /// Removes an account from the state.
     fn remove_account(&mut self, hashed_address: &B256) {
         self.state.remove(hashed_address);
-        self.storages.remove(hashed_address);
+        self.storages.swap_remove(hashed_address);
     }
 
     /// `HashedPostState::from_bundle_state::<KeccakKeyHasher>` with the address
@@ -304,7 +314,7 @@ impl StatelessTrie for SparseState {
                 hash_address_words(words, &self.address_hashes)
             }
         };
-        match self.state.get(&hashed_address.0)? {
+        match self.state.get(hashed_address.0)? {
             None => Ok(None),
             Some(account) => {
                 // record the storage anchor for byte-walk reads; no
@@ -333,18 +343,19 @@ impl StatelessTrie for SparseState {
             let last = self.last_read.borrow();
             words_eq(&last.address, &words).then_some(last.root)
         };
-        let root = match memo {
-            Some(root) => root,
-            None => {
-                let hashed = hash_address_words(words, &self.address_hashes);
-                let root = *self.storage_roots.borrow().get(&hashed.0).unwrap();
-                *self.last_read.borrow_mut() = LastRead {
-                    root,
-                    hashed: hashed.words(),
-                    address: words,
-                };
-                root
-            }
+        let root = if let Some(root) = memo {
+            root
+        } else {
+            let hashed = hash_address_words(words, &self.address_hashes);
+            let root = *self.storage_roots.borrow().get(&hashed.0).ok_or_else(|| {
+                WitnessDbError::TrieWitness(alloc::format!("storage anchor missing for {address}"))
+            })?;
+            *self.last_read.borrow_mut() = LastRead {
+                root,
+                hashed: hashed.words(),
+                address: words,
+            };
+            root
         };
         let key = hash_slot(slot, &self.slot_hashes);
         Ok(self
@@ -390,7 +401,7 @@ impl StatelessTrie for SparseState {
                     // account leaf, exactly like the old storage_trie_mut
                     None => state_trie
                         .get(hashed_address)
-                        .unwrap()
+                        .map_err(|_| StatelessTrieError::StatelessStateRootCalculationFailed)?
                         .map_or(EMPTY_ROOT_HASH, |a| a.storage_root),
                 },
                 Some(storage) => {
@@ -398,8 +409,10 @@ impl StatelessTrie for SparseState {
                         // fresh empty trie, discard the pre-root: merging
                         // against the pre-trie would demand witness paths that
                         // legitimately don't exist (selfdestruct/recreate)
-                        storages.insert(hashed_address, RlpTrie::default());
-                        storages.get_mut(&hashed_address).unwrap()
+                        storages
+                            .entry(hashed_address)
+                            .insert_entry(RlpTrie::default())
+                            .into_mut()
                     } else {
                         match storages.entry(hashed_address) {
                             Entry::Occupied(entry) => entry.into_mut(),
@@ -412,7 +425,9 @@ impl StatelessTrie for SparseState {
                                     Some(root) => b256_from_le_words(*root),
                                     None => state_trie
                                         .get(hashed_address)
-                                        .unwrap()
+                                        .map_err(|_| {
+                                            StatelessTrieError::StatelessStateRootCalculationFailed
+                                        })?
                                         .map_or(EMPTY_ROOT_HASH, |a| a.storage_root),
                                 };
                                 entry.insert(RlpTrie::from_digest_root(anchor))
@@ -450,9 +465,9 @@ impl StatelessTrie for SparseState {
             };
             state_trie.insert(hashed_address, account);
         }
-        removed_accounts
-            .iter()
-            .for_each(|hashed_address| self.remove_account(hashed_address));
+        for hashed_address in &removed_accounts {
+            self.remove_account(hashed_address);
+        }
 
         #[cfg(feature = "premeasure")]
         crate::premeasure::PRE_STATE_HASH.record();

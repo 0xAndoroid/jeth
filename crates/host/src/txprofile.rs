@@ -8,7 +8,7 @@
 
 use anyhow::{Context, Result};
 use std::io::Write as _;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use tracing_subscriber::layer::SubscriberExt;
@@ -36,7 +36,10 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Capture {
         let mut visitor = MessageVisitor(None);
         event.record(&mut visitor);
         if let Some(msg) = visitor.0 {
-            self.0.lock().unwrap().push(msg);
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(msg);
         }
     }
 }
@@ -142,11 +145,15 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     // Marker report: "txNNNN": R RV64IMAC cycles + V virtual instructions = T total cycles
     let marker_re = regex_lite::Regex::new(
         r#""([^"]+)": (\d+) RV64IMAC cycles \+ (\d+) virtual instructions = (\d+) total cycles"#,
-    )
-    .unwrap();
+    )?;
     let mut tx_cycles: Vec<Option<u64>> = vec![None; txs_meta.len()];
     let mut phase_cycles: Vec<(String, u64)> = Vec::new();
-    for line in capture.0.lock().unwrap().iter() {
+    for line in capture
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+    {
         let Some(caps) = marker_re.captures(line) else {
             continue;
         };
@@ -173,17 +180,20 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     let mut rows: Vec<TxRow> = txs_meta
         .into_iter()
         .enumerate()
-        .map(|(i, (hash, to, selector, tx_type, input_len))| TxRow {
-            index: i,
-            hash,
-            cycles: tx_cycles[i].unwrap(),
-            gas_used: gas_per_tx[i],
-            cycles_per_gas: tx_cycles[i].unwrap() as f64 / gas_per_tx[i] as f64,
-            to,
-            selector,
-            tx_type,
-            input_len,
-        })
+        .zip(tx_cycles.into_iter().flatten())
+        .map(
+            |((i, (hash, to, selector, tx_type, input_len)), cycles)| TxRow {
+                index: i,
+                hash,
+                cycles,
+                gas_used: gas_per_tx[i],
+                cycles_per_gas: cycles as f64 / gas_per_tx[i] as f64,
+                to,
+                selector,
+                tx_type,
+                input_len,
+            },
+        )
         .collect();
 
     let exec_total: u64 = rows.iter().map(|r| r.cycles).sum();

@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use ark_ff::{Field, Fp2Config, MontConfig};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
@@ -213,7 +214,7 @@ fn sequence_structure() {
             assert!(rd >= 32, "writes x{rd}: {debug}");
             match instruction {
                 Instruction::ADDI(addi) if addi.operands.rs1 == 0 && addi.operands.imm == 0 => {
-                    resets.push(rd)
+                    resets.push(rd);
                 }
                 _ => written.push(rd),
             }

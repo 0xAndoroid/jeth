@@ -70,7 +70,10 @@ pub struct ValidatedBlock {
 
 /// Stateless validation with the tx loop expanded in-line (see module docs).
 // The enumerate index feeds the per-tx markers, which are feature-gated.
-#[allow(clippy::unused_enumerate_index)]
+#[expect(
+    clippy::unused_enumerate_index,
+    reason = "The transaction index is consumed only by guest instrumentation."
+)]
 pub fn validate_recovered_pertx(
     current_block: RecoveredBlock<Block>,
     witness: ExecutionWitness,
@@ -269,7 +272,9 @@ impl CodeMap {
     }
 
     fn get(&self, code_hash: &B256) -> Result<Bytecode, WitnessDbError> {
-        if let Some(code) = crate::code_library::lookup(code_hash) {
+        if let Some(code) = crate::code_library::lookup(code_hash).map_err(|error| {
+            WitnessDbError::TrieWitness(format!("invalid code library: {error:?}"))
+        })? {
             return Ok(code);
         }
         match self {

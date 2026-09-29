@@ -2,6 +2,10 @@
 //! / slot words to digest words, the aligned `B256` they hand out, and the
 //! one-entry last-read chain `SparseState` keeps in front of them.
 
+#![expect(
+    clippy::inline_always,
+    reason = "Guest memo access keeps aligned words in registers across callers."
+)]
 use crate::resolver::b256_from_le_words;
 use alloc::vec::Vec;
 use alloy_primitives::{keccak256, Address, B256, U256};
@@ -143,7 +147,7 @@ impl AlignedB256 {
     #[inline(always)]
     pub(crate) fn words(&self) -> [u64; 4] {
         let bytes = &self.0 .0;
-        core::array::from_fn(|i| u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap()))
+        core::array::from_fn(|i| u64::from_le_bytes(bytes.as_chunks::<8>().0[i]))
     }
 }
 
@@ -158,9 +162,9 @@ impl AlignedB256 {
 pub(crate) fn address_words(address: &Address) -> [u64; 3] {
     let bytes = &address.0 .0;
     [
-        u64::from_le_bytes(bytes[..8].try_into().unwrap()),
-        u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
-        u32::from_le_bytes(bytes[16..].try_into().unwrap()) as u64,
+        u64::from_le_bytes(bytes.as_chunks::<8>().0[0]),
+        u64::from_le_bytes(bytes.as_chunks::<8>().0[1]),
+        u64::from(u32::from_le_bytes(bytes.as_chunks::<4>().0[4])),
     ]
 }
 

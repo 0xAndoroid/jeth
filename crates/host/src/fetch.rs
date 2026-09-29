@@ -19,15 +19,14 @@ pub fn run(
     let client = RpcClient::new(endpoints);
 
     // 1. Pick the target block.
-    let target = match block {
-        Some(n) => n,
-        None => {
-            let (head, ep) = client.call("eth_blockNumber", json!([]))?;
-            let head = parse_quantity(&head)?;
-            let target = head - latest_minus;
-            println!("head {head} (via {ep}) → target {target} (head-{latest_minus})");
-            target
-        }
+    let target = if let Some(n) = block {
+        n
+    } else {
+        let (head, ep) = client.call("eth_blockNumber", json!([]))?;
+        let head = parse_quantity(&head)?;
+        let target = head - latest_minus;
+        println!("head {head} (via {ep}) → target {target} (head-{latest_minus})");
+        target
     };
     let tag = format!("0x{target:x}");
 
@@ -89,7 +88,7 @@ pub fn run(
         &input.signers,
         &input.witness,
         crate::trace::stream_start(crate::trace::Variant::Input),
-        u64::from_le_bytes(library_id[..8].try_into().unwrap()),
+        u64::from_le_bytes(library_id.as_chunks::<8>().0[0]),
     )
     .map_err(anyhow::Error::msg)?;
 
@@ -131,9 +130,7 @@ pub(crate) fn recover_signers(txs: &[TransactionSigned]) -> Result<Vec<Uncompres
                 .recover_from_prehash(&tx.signature_hash())
                 .with_context(|| format!("pubkey recovery failed for tx #{i}"))?;
             let point = vk.to_encoded_point(false);
-            Ok(UncompressedPublicKey(
-                point.as_bytes().try_into().expect("65-byte sec1 point"),
-            ))
+            Ok(UncompressedPublicKey(point.as_bytes().try_into()?))
         })
         .collect()
 }
@@ -210,8 +207,8 @@ struct LibraryMeta<'a> {
 
 /// ISO-ish UTC timestamp without pulling chrono.
 fn chrono_free_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap();
-    format!("unix:{}", now.as_secs())
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(now) => format!("unix:{}", now.as_secs()),
+        Err(error) => format!("unix:-{}", error.duration().as_secs()),
+    }
 }

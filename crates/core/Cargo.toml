@@ -109,3 +109,6 @@ jolt-inlines-bigint = { workspace = true, features = ["host"] }
 aurora-engine-modexp = "1.2"
 k256 = { workspace = true, features = ["ecdsa"] }
 postcard = { workspace = true, features = ["use-std"] }
+
+[lints]
+workspace = true

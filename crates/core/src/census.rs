@@ -20,7 +20,7 @@ use core::cell::{Cell, RefCell};
 use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::{
     keccak256,
-    map::{AddressMap, B256Map, HashMap},
+    map::{AddressMap, B256Map, HashMap, HashSet},
     Address, B256, U256,
 };
 use reth_ethereum_consensus::validate_block_post_execution;
@@ -186,7 +186,7 @@ impl Database for CountingDb<'_> {
         let info = self.inner.basic(address)?;
         let mut counts = self.counts.borrow_mut();
         counts.basic += 1;
-        counts.basic_none += info.is_none() as u64;
+        counts.basic_none += u64::from(info.is_none());
         Ok(info)
     }
 
@@ -194,7 +194,7 @@ impl Database for CountingDb<'_> {
         let value = self.inner.storage(address, slot)?;
         let mut counts = self.counts.borrow_mut();
         counts.storage += 1;
-        counts.storage_zero += value.is_zero() as u64;
+        counts.storage_zero += u64::from(value.is_zero());
         Ok(value)
     }
 
@@ -202,7 +202,10 @@ impl Database for CountingDb<'_> {
         let code = self.inner.code_by_hash(code_hash)?;
         let mut counts = self.counts.borrow_mut();
         counts.code_by_hash += 1;
-        counts.code_from_library += crate::code_library::lookup(&code_hash).is_some() as u64;
+        counts.code_from_library += u64::from(matches!(
+            crate::code_library::lookup(&code_hash),
+            Ok(Some(_))
+        ));
         Ok(code)
     }
 
@@ -385,7 +388,7 @@ pub fn run(
 
     let mut account_loads: AddressMap<Touch> = AddressMap::default();
     let mut slot_loads: HashMap<(Address, U256), Touch> = HashMap::default();
-    let mut written: HashMap<(Address, U256), ()> = HashMap::default();
+    let mut written: HashSet<(Address, U256)> = HashSet::default();
     let mut per_tx_accounts: Vec<Vec<Address>> = Vec::new();
     for (i, tx) in current_block.transactions_recovered().enumerate() {
         tx_cursor.set(i);
@@ -399,7 +402,7 @@ pub fn run(
             for (slot, value) in &account.storage {
                 slot_loads.entry((*address, *slot)).or_default().hit(i);
                 if value.is_changed() {
-                    written.insert((*address, *slot), ());
+                    written.insert((*address, *slot));
                 }
             }
         }
@@ -473,10 +476,10 @@ pub fn run(
             }
         })
         .collect();
-    let hot_set: AddressMap<()> = ranked.iter().map(|(a, _)| (*a, ())).collect();
+    let hot_set: HashSet<Address> = ranked.iter().map(|(a, _)| *a).collect();
     let hottest_union_txs = per_tx_accounts
         .iter()
-        .filter(|loaded| loaded.iter().any(|a| hot_set.contains_key(a)))
+        .filter(|loaded| loaded.iter().any(|a| hot_set.contains(a)))
         .count() as u64;
 
     let db = *db_counts.borrow();

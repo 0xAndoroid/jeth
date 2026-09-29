@@ -171,7 +171,7 @@ pub fn build(block_dirs: &[String], top_n: Option<usize>, out: &str) -> Result<(
         }
     }
 
-    let oldest_block = *source_blocks.iter().min().unwrap();
+    let oldest_block = *source_blocks.iter().min().context("no source blocks")?;
     let score = |candidate: &Candidate| {
         candidate.block_frequency * (candidate.last_seen - oldest_block + 1)
     };
@@ -202,7 +202,9 @@ pub fn build(block_dirs: &[String], top_n: Option<usize>, out: &str) -> Result<(
         let jump_table_offset = jump_tables.len();
         let (jump_table_len, jump_table_bit_len, kind) = match analyzed.kind() {
             BytecodeKind::LegacyAnalyzed => {
-                let jump_table = analyzed.legacy_jump_table().unwrap();
+                let jump_table = analyzed
+                    .legacy_jump_table()
+                    .context("legacy bytecode missing jump table")?;
                 jump_tables.extend_from_slice(jump_table.as_slice());
                 (jump_table.as_slice().len(), jump_table.len(), KIND_LEGACY)
             }

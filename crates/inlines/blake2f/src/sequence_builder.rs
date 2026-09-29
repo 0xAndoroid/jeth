@@ -3,6 +3,10 @@
 //!
 //! Rows: 32 loads + 80 per round (8 G × 10) + 16 stores + 32 register resets = `80·R + 80`.
 
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Register operands match the BLAKE2b G function notation."
+)]
 use crate::{SIGMA, STATE_LEN};
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,

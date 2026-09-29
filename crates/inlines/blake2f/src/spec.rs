@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference,
     assert_reference_matches_harness, host::InlineOp, InlineReference, InlineSpec,
@@ -181,7 +182,7 @@ fn assert_structure<const R: usize>() {
         assert!(rd >= 32, "writes x{rd}: {debug}");
         match instruction {
             Instruction::ADDI(addi) if addi.operands.rs1 == 0 && addi.operands.imm == 0 => {
-                resets.push(rd)
+                resets.push(rd);
             }
             _ => written.push(rd),
         }

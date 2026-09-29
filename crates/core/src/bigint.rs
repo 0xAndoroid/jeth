@@ -1,6 +1,14 @@
 //! U256 arithmetic on the Jolt BIGINT256_MUL inline (256×256→512-bit product,
 //! 141 rows; `jolt-inlines/bigint`).
 
+#![expect(
+    clippy::inline_always,
+    reason = "Guest word operations must stay in the caller to avoid register spills."
+)]
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Limb variables follow Montgomery multiplication notation."
+)]
 use alloc::vec::Vec;
 use alloy_primitives::{ruint::algorithms, U256};
 use jolt_inlines_bigint::bigint256_mul_inline;
@@ -88,7 +96,8 @@ fn mont_mul(a: &U256, b: &U256, n: &U256, n_prime: u64) -> U256 {
         let m = t[i].wrapping_mul(n_prime);
         let mut carry = 0u64;
         for j in 0..4 {
-            let wide = (m as u128) * (limbs[j] as u128) + (t[i + j] as u128) + (carry as u128);
+            let wide =
+                u128::from(m) * u128::from(limbs[j]) + u128::from(t[i + j]) + u128::from(carry);
             t[i + j] = wide as u64;
             carry = (wide >> 64) as u64;
         }
@@ -96,7 +105,7 @@ fn mont_mul(a: &U256, b: &U256, n: &U256, n_prime: u64) -> U256 {
         while carry != 0 {
             let (sum, c) = t[k].overflowing_add(carry);
             t[k] = sum;
-            carry = c as u64;
+            carry = u64::from(c);
             k += 1;
         }
     }
@@ -138,7 +147,7 @@ mod tests {
             half - one,
             half,
             half + one,
-            U256::from_limbs([0x1234567 | u64::MAX, u64::MAX, u64::MAX, u64::MAX >> 1]),
+            U256::from_limbs([0x123_4567 | u64::MAX, u64::MAX, u64::MAX, u64::MAX >> 1]),
             max - one,
             max,
         ]
@@ -237,16 +246,16 @@ mod tests {
     }
 
     const BN254_P: U256 = U256::from_limbs([
-        0x3C208C16D87CFD47,
-        0x97816A916871CA8D,
-        0xB85045B68181585D,
-        0x30644E72E131A029,
+        0x3C20_8C16_D87C_FD47,
+        0x9781_6A91_6871_CA8D,
+        0xB850_45B6_8181_585D,
+        0x3064_4E72_E131_A029,
     ]);
     const SECP256K1_N: U256 = U256::from_limbs([
-        0xBFD25E8CD0364141,
-        0xBAAEDCE6AF48A03B,
-        0xFFFFFFFFFFFFFFFE,
-        0xFFFFFFFFFFFFFFFF,
+        0xBFD2_5E8C_D036_4141,
+        0xBAAE_DCE6_AF48_A03B,
+        0xFFFF_FFFF_FFFF_FFFE,
+        0xFFFF_FFFF_FFFF_FFFF,
     ]);
 
     fn odd_moduli() -> Vec<U256> {

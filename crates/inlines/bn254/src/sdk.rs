@@ -35,7 +35,10 @@ macro_rules! insn {
 #[cfg(all(not(feature = "host"), target_arch = "riscv64"))]
 #[inline(always)]
 pub unsafe fn mulq(out: *mut u64, a: *const u64, b: *const u64) {
-    insn!(crate::BN254_MULQ_FUNCT3, out, a, b);
+    // SAFETY: the caller supplies aligned, valid buffers; the inline loads operands before stores.
+    unsafe {
+        insn!(crate::BN254_MULQ_FUNCT3, out, a, b);
+    }
 }
 
 /// `out[0..4] = (a[0..4]·b[0..4] + a[4..8]·b[4..8] + m·q) / 2^256`.
@@ -45,7 +48,10 @@ pub unsafe fn mulq(out: *mut u64, a: *const u64, b: *const u64) {
 #[cfg(all(not(feature = "host"), target_arch = "riscv64"))]
 #[inline(always)]
 pub unsafe fn sopq2(out: *mut u64, a: *const u64, b: *const u64) {
-    insn!(crate::BN254_SOPQ2_FUNCT3, out, a, b);
+    // SAFETY: the caller supplies aligned, valid buffers; the inline loads operands before stores.
+    unsafe {
+        insn!(crate::BN254_SOPQ2_FUNCT3, out, a, b);
+    }
 }
 
 /// Fq2 product for the nonresidue −1: `out[0..4] = REDC(a₀·b₀ + a₁·(q − b₁))`,
@@ -56,7 +62,10 @@ pub unsafe fn sopq2(out: *mut u64, a: *const u64, b: *const u64) {
 #[cfg(all(not(feature = "host"), target_arch = "riscv64"))]
 #[inline(always)]
 pub unsafe fn fp2mulq(out: *mut u64, a: *const u64, b: *const u64) {
-    insn!(crate::BN254_FP2MULQ_FUNCT3, out, a, b);
+    // SAFETY: the caller supplies aligned, valid buffers; the inline loads operands before stores.
+    unsafe {
+        insn!(crate::BN254_FP2MULQ_FUNCT3, out, a, b);
+    }
 }
 
 /// # Safety
@@ -86,8 +95,12 @@ pub unsafe fn fp2mulq(_out: *mut u64, _a: *const u64, _b: *const u64) {
 /// Same contract as the guest entry point.
 #[cfg(feature = "host")]
 pub unsafe fn mulq(out: *mut u64, a: *const u64, b: *const u64) {
-    let result = crate::exec::mulq(&*(a as *const [u64; 4]), &*(b as *const [u64; 4]));
-    core::ptr::copy_nonoverlapping(result.as_ptr(), out, 4);
+    // SAFETY: callers provide aligned, valid operands and output per this function contract;
+    // the software model copies inputs before writing output, preserving permitted aliasing.
+    unsafe {
+        let result = crate::exec::mulq(&*a.cast::<[u64; 4]>(), &*b.cast::<[u64; 4]>());
+        core::ptr::copy_nonoverlapping(result.as_ptr(), out, 4);
+    }
 }
 
 /// Software model of `BN254_SOPQ2`.
@@ -96,8 +109,12 @@ pub unsafe fn mulq(out: *mut u64, a: *const u64, b: *const u64) {
 /// Same contract as the guest entry point.
 #[cfg(feature = "host")]
 pub unsafe fn sopq2(out: *mut u64, a: *const u64, b: *const u64) {
-    let result = crate::exec::sopq2(&*(a as *const [u64; 8]), &*(b as *const [u64; 8]));
-    core::ptr::copy_nonoverlapping(result.as_ptr(), out, 4);
+    // SAFETY: callers provide aligned, valid operands and output per this function contract;
+    // the software model copies inputs before writing output, preserving permitted aliasing.
+    unsafe {
+        let result = crate::exec::sopq2(&*a.cast::<[u64; 8]>(), &*b.cast::<[u64; 8]>());
+        core::ptr::copy_nonoverlapping(result.as_ptr(), out, 4);
+    }
 }
 
 /// Software model of `BN254_FP2MULQ`.
@@ -106,6 +123,10 @@ pub unsafe fn sopq2(out: *mut u64, a: *const u64, b: *const u64) {
 /// Same contract as the guest entry point.
 #[cfg(feature = "host")]
 pub unsafe fn fp2mulq(out: *mut u64, a: *const u64, b: *const u64) {
-    let result = crate::exec::fp2mulq(&*(a as *const [u64; 8]), &*(b as *const [u64; 8]));
-    core::ptr::copy_nonoverlapping(result.as_ptr(), out, 8);
+    // SAFETY: callers provide aligned, valid operands and output per this function contract;
+    // the software model copies inputs before writing output, preserving permitted aliasing.
+    unsafe {
+        let result = crate::exec::fp2mulq(&*a.cast::<[u64; 8]>(), &*b.cast::<[u64; 8]>());
+        core::ptr::copy_nonoverlapping(result.as_ptr(), out, 8);
+    }
 }

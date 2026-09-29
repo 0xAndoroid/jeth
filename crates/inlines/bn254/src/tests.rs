@@ -1,3 +1,8 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests fail by panicking"
+)]
 use ark_bn254::{Fq, Fq2, FqConfig};
 use ark_ff::{AdditiveGroup, Field, Fp2Config, MontConfig, PrimeField};
 use jolt_inlines_sdk::host::InlineOp;
@@ -270,6 +275,10 @@ fn assert_sequences_match_ark(
     );
 }
 
+#[expect(
+    clippy::large_stack_arrays,
+    reason = "Three harnesses fit the test stack and are reused across cases."
+)]
 fn harnesses() -> [InlineTestHarness; 3] {
     [
         Bn254MulQ::harness(),

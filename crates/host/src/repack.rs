@@ -19,7 +19,7 @@ pub fn run(dir: &str, library_manifest: &str) -> Result<()> {
         &signers,
         &witness,
         crate::trace::stream_start(crate::trace::Variant::Input),
-        u64::from_le_bytes(library_id[..8].try_into().unwrap()),
+        u64::from_le_bytes(library_id.as_chunks::<8>().0[0]),
     )
     .map_err(anyhow::Error::msg)?;
 

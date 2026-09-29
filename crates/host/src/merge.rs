@@ -185,12 +185,12 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
                 index,
             });
         }
-        withdrawals.extend(source.block.body.withdrawals.iter().flatten().cloned());
+        withdrawals.extend(source.block.body.withdrawals.iter().flatten().copied());
     }
     let (mut witness, witness_stats) = union_witness(&sources);
     let (library_id, _) = crate::library::filter_witness(&mut witness, library)?;
     ensure!(
-        u64::from_le_bytes(library_id[..8].try_into().unwrap())
+        u64::from_le_bytes(library_id.as_chunks::<8>().0[0])
             == jeth_core::code_library::LIBRARY_ID_LO,
         "library manifest {library} does not match the embedded code library"
     );
@@ -200,12 +200,12 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         .iter()
         .map(|s| s.block.header.base_fee_per_gas.unwrap_or(0))
         .min()
-        .unwrap();
+        .context("no source blocks")?;
     let excess_target = sources
         .iter()
         .map(|s| s.block.header.excess_blob_gas.unwrap_or(0))
         .min()
-        .unwrap();
+        .context("no source blocks")?;
     let (ancestors, original_parent) = union_ancestors(&sources)?;
 
     // Blob gas is bounded by block 1's schedule, including across a BPO boundary.
@@ -363,11 +363,16 @@ pub fn run(inputs: &[String], out: &str, gas_limit_arg: Option<u64>, library: &s
         })
         .collect();
     for d in &dropped {
-        fidelity.get_mut(&d.cand.source).unwrap().dropped += 1;
+        fidelity
+            .get_mut(&d.cand.source)
+            .context("dropped transaction source missing")?
+            .dropped += 1;
     }
     for (cand, (status, gas)) in cands.iter().zip(per_tx_outcomes(&executed.receipts)) {
         let (base_status, base_gas) = baseline[&cand.hash];
-        let f = fidelity.get_mut(&cand.source).unwrap();
+        let f = fidelity
+            .get_mut(&cand.source)
+            .context("transaction source missing")?;
         f.record((status, gas), (base_status, base_gas));
     }
     println!("fidelity (per source block):");
@@ -570,7 +575,7 @@ fn union_ancestors(sources: &[Source]) -> Result<(Vec<(u64, Bytes)>, Header)> {
         .get(&(first - 1))
         .context("block 1's witness carries no parent header")?
         .clone();
-    let parent: Header = alloy_rlp::decode_exact(parent_bytes.as_ref()).unwrap();
+    let parent: Header = alloy_rlp::decode_exact(parent_bytes.as_ref())?;
     let mut chain = vec![(first - 1, parent_bytes)];
     let mut child = parent.clone();
     while chain.len() < ANCESTOR_LIMIT {
@@ -580,7 +585,7 @@ fn union_ancestors(sources: &[Source]) -> Result<(Vec<(u64, Bytes)>, Header)> {
         if keccak256(bytes) != child.parent_hash {
             break;
         }
-        child = alloy_rlp::decode_exact(bytes.as_ref()).unwrap();
+        child = alloy_rlp::decode_exact(bytes.as_ref())?;
         chain.push((child.number, bytes.clone()));
     }
     chain.reverse();
@@ -591,7 +596,8 @@ fn union_ancestors(sources: &[Source]) -> Result<(Vec<(u64, Bytes)>, Header)> {
 /// by its rewritten form.
 fn ancestor_records(ancestors: &[(u64, Bytes)], parent: &Header) -> Vec<Bytes> {
     let mut records: Vec<Bytes> = ancestors.iter().map(|(_, b)| b.clone()).collect();
-    *records.last_mut().unwrap() = Bytes::from(alloy_rlp::encode(parent));
+    records.pop();
+    records.push(Bytes::from(alloy_rlp::encode(parent)));
     records
 }
 
