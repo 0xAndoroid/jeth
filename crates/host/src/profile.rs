@@ -82,6 +82,8 @@ pub fn run(
         }
     };
 
+    // --callers-of: restrict to samples whose PC is inside a matching symbol and
+    // bucket the RETURN ADDRESS (ra/x1) instead — a one-level caller profile.
     let target_range: Option<(u64, u64)> = callers_of
         .as_deref()
         .map(|needle| -> Result<_> {

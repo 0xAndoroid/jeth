@@ -112,7 +112,7 @@ unsafe fn store_le_partial(d: *mut u8, v: u64, n: usize) {
         write_volatile(base, (old & !mask) | ((v << (off * 8)) & mask));
     }
     if n > n0 {
-        let rem = n - n0;
+        let rem = n - n0; // 1..=7 bytes into the next word
         let mask = (1u64 << (rem * 8)) - 1;
         let old = read_volatile(base.add(1));
         write_volatile(base.add(1), (old & !mask) | ((v >> (n0 * 8)) & mask));
