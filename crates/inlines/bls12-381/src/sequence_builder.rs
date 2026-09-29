@@ -6,6 +6,10 @@
 //! (valueₖ ≠ 0), so lo(mₖ·p₀) is never multiplied. Columns 6..12 are t = (Σ aᵢbᵢ + m·p) / 2³⁸⁴ < 2p
 //! (inputs < p), which one branch-free conditional subtraction makes canonical. No advice rows.
 
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Register names follow the product-scanning Montgomery formula."
+)]
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOp, InlineOperands,
     InlineRegister, Kind, NoAdvice, SourceKind,
@@ -115,7 +119,10 @@ fn columns(
 
 /// Stores `t − p` if `t ≥ p`, else `t`, at `base + offset` (requires t < 2p, p < 2³⁸¹).
 /// `d` receives t − p; `bw`, `s1`, `s2` are scratch.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Operands describe the fixed instruction-register layout."
+)]
 fn reduce_store(
     asm: &mut InlineExpansionBuilder,
     t: &Limbs,

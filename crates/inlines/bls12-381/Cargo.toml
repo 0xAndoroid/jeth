@@ -21,3 +21,6 @@ rand = "0.8"
 
 [lib]
 doctest = false
+
+[lints]
+workspace = true

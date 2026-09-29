@@ -6,6 +6,10 @@
 //! inline rejects `z == 0`, which the software path accepts, so that case is
 //! rewritten into an equivalent nonzero-z instance.
 
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Coordinates and field limbs follow the P-256 formulas."
+)]
 use alloy_primitives::U256;
 use jolt_inlines_p256::{ecdsa_verify, P256Fr, P256Point, P256PointExt, P256_ORDER};
 
@@ -40,16 +44,17 @@ pub(crate) fn verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
             (r.clone(), q.add(&g.neg()))
         }
     } else {
-        (
-            P256Fr::from_u64_arr(z.as_limbs()).expect("reduced mod n"),
-            q,
-        )
+        let Ok(z) = P256Fr::from_u64_arr(z.as_limbs()) else {
+            return false;
+        };
+        (z, q)
     };
     ecdsa_verify(z, r, s, q).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec::Vec;
     use alloy_primitives::hex;
@@ -384,7 +389,7 @@ mod tests {
                     let hash: [u8; 32] = sha2::Sha256::digest(&msg).into();
                     assert_eq!(compare(hash, sig, pk), expected, "tcId {tc}: {line}");
                     seen += 1;
-                    valid += expected as usize;
+                    valid += usize::from(expected);
                 }
                 _ => {}
             }

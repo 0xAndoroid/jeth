@@ -7,13 +7,14 @@
 //! Verified equivalent to reth's `MAINNET` for validation purposes by zeth's tests.
 
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
+use alloy_consensus::constants::MAINNET_GENESIS_HASH;
 use alloy_eips::{
     eip2124::{ForkFilter, ForkId, Head},
     eip7840::BlobParams,
     BlobScheduleBlobParams,
 };
 use alloy_genesis::Genesis;
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, b256, Address, B256, U256};
 use core::any::Any;
 use core::fmt::{self, Debug, Display};
 use reth_chainspec::{BaseFeeParams, Chain, DepositContract, EthChainSpec, Hardforks, NamedChain};
@@ -23,6 +24,11 @@ use reth_primitives_traits::Header;
 
 const MAINNET_DEPOSIT_CONTRACT_ADDRESS: Address =
     address!("0x00000000219ab540356cbb839cbe05303d7705fa");
+const MAINNET_DEPOSIT_CONTRACT: DepositContract = DepositContract::new(
+    MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+    11_052_984,
+    b256!("649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5"),
+);
 
 /// Ethereum mainnet specification (Fusaka-era: Osaka + BPO1/BPO2 blob schedules).
 pub fn mainnet_spec() -> ChainSpec {
@@ -82,15 +88,15 @@ impl Hardforks for ChainSpec {
     }
 
     fn fork_id(&self, _: &Head) -> ForkId {
-        unimplemented!()
+        unreachable!("fork_id: not consulted by stateless validation")
     }
 
     fn latest_fork_id(&self) -> ForkId {
-        unimplemented!()
+        unreachable!("latest_fork_id: not consulted by stateless validation")
     }
 
     fn fork_filter(&self, _: Head) -> ForkFilter {
-        unimplemented!()
+        unreachable!("fork_filter: not consulted by stateless validation")
     }
 }
 
@@ -123,15 +129,15 @@ impl EthChainSpec for ChainSpec {
     }
 
     fn deposit_contract(&self) -> Option<&DepositContract> {
-        unimplemented!()
+        Some(&MAINNET_DEPOSIT_CONTRACT)
     }
 
     fn genesis_hash(&self) -> B256 {
-        unimplemented!()
+        MAINNET_GENESIS_HASH
     }
 
     fn prune_delete_limit(&self) -> usize {
-        unimplemented!()
+        20_000
     }
 
     fn display_hardforks(&self) -> Box<dyn Display> {
@@ -139,11 +145,11 @@ impl EthChainSpec for ChainSpec {
     }
 
     fn genesis_header(&self) -> &Self::Header {
-        unimplemented!()
+        unreachable!("genesis_header: not consulted by stateless validation")
     }
 
     fn genesis(&self) -> &Genesis {
-        unimplemented!()
+        unreachable!("genesis: not consulted by stateless validation")
     }
 
     fn bootnodes(&self) -> Option<Vec<reth_network_peers::NodeRecord>> {

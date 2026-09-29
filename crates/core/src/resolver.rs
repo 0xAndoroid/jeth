@@ -16,6 +16,10 @@
 //! pass-stable): point at the right bytes (verified), wrong bytes (assert
 //! panic), or claim absence (stub semantics). It cannot forge content.
 
+#![expect(
+    clippy::inline_always,
+    reason = "Guest digest and bitmap operations avoid call overhead."
+)]
 use crate::advice::{advice_assert_eq, advice_u64};
 use crate::walk::{self, NodeKind, Step};
 use alloc::vec::Vec;
@@ -102,6 +106,7 @@ impl WitnessResolver {
                 // `le_words_32` (little-endian words) on both sides.
                 assert_eq!(digests.len(), n, "trusted digest count");
                 verified.resize(n, [0u64; 4]);
+                // SAFETY: both allocations contain n initialized 32-byte entries and cannot overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         digests.as_ptr().cast::<u8>(),
@@ -132,7 +137,7 @@ impl WitnessResolver {
     #[inline]
     fn slot_impl(&self, digest: &B256) -> u64 {
         match self.index.get(digest) {
-            Some(&i) => i as u64 + 1,
+            Some(&i) => u64::from(i) + 1,
             None => 0,
         }
     }
@@ -177,19 +182,19 @@ impl WitnessResolver {
     /// Authenticate the witness entry advised for `digest` and ensure it has
     /// passed the well-formedness scan. Returns the entry index.
     /// Panics on a resolver miss — a walk the execution needs must resolve
-    /// (same witness-incompleteness contract as the eager build) —
-    /// and on malformed entries (refusal; see walk module docs).
+    /// (same witness-incompleteness contract as the eager build).
+    /// Malformed entries return an RLP error (refusal; see walk module docs).
     #[inline]
-    fn authenticate_walk(&mut self, digest: [u64; 4]) -> usize {
+    fn authenticate_walk(&mut self, digest: [u64; 4]) -> alloy_rlp::Result<usize> {
         let hint = advice_u64!(self.slot_impl(&b256_from_le_words(digest)));
         assert!(hint != 0, "MPT: unresolved node access");
         let i = (hint - 1) as usize;
         self.verify_slot(i, digest);
         if self.kind(i) == NodeKind::Unvalidated {
-            let kind = walk::validate_entry(&self.witness[i]).expect("MPT: invalid witness node");
+            let kind = walk::validate_entry(&self.witness[i])?;
             self.set_kind(i, kind);
         }
-        i
+        Ok(i)
     }
 
     /// Byte-walk storage read: `key` = keccak(slot), anchored at the
@@ -209,8 +214,8 @@ impl WitnessResolver {
         let mut digest = root;
         let mut depth = 0usize;
         loop {
-            let i = self.authenticate_walk(digest);
-            match walk::walk_entry(&self.witness[i], self.kind(i), key, &mut depth) {
+            let i = self.authenticate_walk(digest)?;
+            match walk::walk_entry(&self.witness[i], self.kind(i), key, &mut depth)? {
                 Step::Digest(d) => digest = d,
                 Step::Absent => return Ok(None),
                 Step::Value(range) => {
@@ -248,5 +253,18 @@ impl WitnessResolver {
         let i = (hint - 1) as usize;
         self.verify_slot(i, le_words_32(digest.as_slice()));
         &self.witness[i]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_storage_witness_returns_an_error() {
+        let node = Bytes::from_static(&[0xc1]);
+        let root = le_words_const(keccak256(&node).0);
+        let mut resolver = WitnessResolver::new(&[node], None);
+        assert!(resolver.walk_storage(root, &B256::ZERO).is_err());
     }
 }

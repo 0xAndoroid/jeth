@@ -1,6 +1,10 @@
 //! Software model of the inline semantics: word-by-word Montgomery reduction (HAC 14.32) of the
 //! exact 512-bit sum of products. Used by the host fallbacks and as the test reference.
 
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Intermediate limbs match the Montgomery reference formula."
+)]
 use crate::{BN254_INV, BN254_MODULUS};
 
 pub type Limbs = [u64; 4];
@@ -58,13 +62,13 @@ pub fn redc(pairs: &[(Limbs, Limbs)]) -> Limbs {
 fn mac_row(s: &mut [u64; 9], i: usize, x: u64, y: &Limbs) {
     let mut carry = 0u128;
     for j in 0..4 {
-        let t = s[i + j] as u128 + x as u128 * y[j] as u128 + carry;
+        let t = u128::from(s[i + j]) + u128::from(x) * u128::from(y[j]) + carry;
         s[i + j] = t as u64;
         carry = t >> 64;
     }
     let mut k = i + 4;
     while carry != 0 && k < 9 {
-        let t = s[k] as u128 + carry;
+        let t = u128::from(s[k]) + carry;
         s[k] = t as u64;
         carry = t >> 64;
         k += 1;
@@ -72,9 +76,9 @@ fn mac_row(s: &mut [u64; 9], i: usize, x: u64, y: &Limbs) {
 }
 
 fn lo(x: &[u64; 8]) -> Limbs {
-    x[..4].try_into().unwrap()
+    x.as_chunks::<4>().0[0]
 }
 
 fn hi(x: &[u64; 8]) -> Limbs {
-    x[4..].try_into().unwrap()
+    x.as_chunks::<4>().0[1]
 }

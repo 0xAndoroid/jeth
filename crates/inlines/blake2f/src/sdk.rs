@@ -1,4 +1,12 @@
 //! Guest entry points: the round ops and the compression built around them.
+#![expect(
+    clippy::inline_always,
+    reason = "The guest inline instruction must operate directly on caller arrays."
+)]
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Arguments match the EIP-152 compression function notation."
+)]
 use crate::{IV, STATE_LEN};
 
 /// `R` rounds (sigma rows `0..R`, `R ∈ 1..=10`) of `v` with message `m`, in place.

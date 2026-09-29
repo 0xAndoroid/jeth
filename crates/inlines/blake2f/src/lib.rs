@@ -6,6 +6,10 @@
 //! Encoding (opcode 0x2B): `k = 10` and `k = 1..=7` use funct7 [`FUNCT7_LOW`] with funct3
 //! `k % 10`; `k = 8, 9` use funct7 [`FUNCT7_HIGH`] with funct3 `k − 8`.
 //! Tests live behind the `host` feature, which the crate's self dev-dependency enables.
+#![expect(
+    clippy::many_single_char_names,
+    reason = "Variable names match the BLAKE2b G function in RFC 7693."
+)]
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x2B;
@@ -25,31 +29,30 @@ pub const fn funct7(rounds: usize) -> u32 {
 }
 
 pub const fn name(rounds: usize) -> &'static str {
-    match rounds {
-        1 => "BLAKE2B_ROUNDS_1",
-        2 => "BLAKE2B_ROUNDS_2",
-        3 => "BLAKE2B_ROUNDS_3",
-        4 => "BLAKE2B_ROUNDS_4",
-        5 => "BLAKE2B_ROUNDS_5",
-        6 => "BLAKE2B_ROUNDS_6",
-        7 => "BLAKE2B_ROUNDS_7",
-        8 => "BLAKE2B_ROUNDS_8",
-        9 => "BLAKE2B_ROUNDS_9",
-        10 => "BLAKE2B_ROUNDS_10",
-        _ => panic!("round count without an inline"),
-    }
+    [
+        "BLAKE2B_ROUNDS_1",
+        "BLAKE2B_ROUNDS_2",
+        "BLAKE2B_ROUNDS_3",
+        "BLAKE2B_ROUNDS_4",
+        "BLAKE2B_ROUNDS_5",
+        "BLAKE2B_ROUNDS_6",
+        "BLAKE2B_ROUNDS_7",
+        "BLAKE2B_ROUNDS_8",
+        "BLAKE2B_ROUNDS_9",
+        "BLAKE2B_ROUNDS_10",
+    ][rounds - 1]
 }
 
 /// BLAKE2b initialization vector (RFC 7693 §2.6).
 pub const IV: [u64; 8] = [
-    0x6a09e667f3bcc908,
-    0xbb67ae8584caa73b,
-    0x3c6ef372fe94f82b,
-    0xa54ff53a5f1d36f1,
-    0x510e527fade682d1,
-    0x9b05688c2b3e6c1f,
-    0x1f83d9abfb41bd6b,
-    0x5be0cd19137e2179,
+    0x6a09_e667_f3bc_c908,
+    0xbb67_ae85_84ca_a73b,
+    0x3c6e_f372_fe94_f82b,
+    0xa54f_f53a_5f1d_36f1,
+    0x510e_527f_ade6_82d1,
+    0x9b05_688c_2b3e_6c1f,
+    0x1f83_d9ab_fb41_bd6b,
+    0x5be0_cd19_137e_2179,
 ];
 
 /// BLAKE2b message schedule (RFC 7693 §2.7); round `i` uses row `i % 10`.

@@ -54,7 +54,7 @@ fn add_fillers(trie: &mut zeth_mpt::Trie, key: B256, depth: usize, value: &[u8])
                 [
                     key.as_slice(),
                     &(level as u64).to_le_bytes(),
-                    &(n as u64).to_le_bytes(),
+                    &u64::from(n).to_le_bytes(),
                 ]
                 .concat(),
             );
@@ -134,7 +134,7 @@ fn main() -> Result<()> {
     let sk = k256::ecdsa::SigningKey::from_bytes(&[0x11u8; 32].into())?;
     let vk = sk.verifying_key();
     let pk_point = vk.to_encoded_point(false);
-    let pk_bytes: [u8; 65] = pk_point.as_bytes().try_into().unwrap();
+    let pk_bytes: [u8; 65] = pk_point.as_bytes().try_into()?;
     let sender = Address::from_slice(&keccak256(&pk_bytes[1..])[12..]);
 
     // System contracts (mainnet bytecode, empty storage): `code_<address>.json` is the raw
@@ -152,7 +152,10 @@ fn main() -> Result<()> {
             &std::fs::read(&file)
                 .with_context(|| format!("reading {file} (eth_getCode {addr})"))?,
         )?;
-        let code: Bytes = v["result"].as_str().unwrap().parse()?;
+        let code: Bytes = v["result"]
+            .as_str()
+            .context("eth_getCode result is not a string")?
+            .parse()?;
         accounts.push(ContractSpec {
             address: addr.parse()?,
             code,
@@ -267,7 +270,7 @@ fn main() -> Result<()> {
         prev_hash = h.hash_slow();
         headers.push(h);
     }
-    let parent = headers.last().unwrap().clone();
+    let parent = headers.last().context("missing parent header")?.clone();
 
     // Transactions (legacy, EIP-155, same sender, sequential nonces).
     let mut txs: Vec<EthereumTxEnvelope<TxEip4844>> = Vec::new();
@@ -290,7 +293,7 @@ fn main() -> Result<()> {
         let (sig, recid) = match sig.normalize_s() {
             Some(n) => (
                 n,
-                k256::ecdsa::RecoveryId::from_byte(recid.to_byte() ^ 1).unwrap(),
+                k256::ecdsa::RecoveryId::new(!recid.is_y_odd(), recid.is_x_reduced()),
             ),
             None => (sig, recid),
         };
@@ -372,10 +375,10 @@ fn main() -> Result<()> {
                     let tok = msg
                         .split("root: ")
                         .nth(1)
-                        .unwrap()
+                        .context("state-root error missing root")?
                         .split_whitespace()
                         .next()
-                        .unwrap();
+                        .context("state-root error missing value")?;
                     header.state_root = tok.parse()?;
                 } else {
                     anyhow::bail!("unhandled validation error: {msg}");

@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use jolt_inlines_sdk::host::NBigUint;
 use jolt_inlines_sdk::{InlineReference, InlineSpec};
 use rand::RngCore;
@@ -201,7 +202,7 @@ impl InlineSpec for Fp2Mul {
     }
 
     fn load(harness: &mut InlineTestHarness, input: &Self::Input) {
-        Sopp2::load(harness, input)
+        Sopp2::load(harness, input);
     }
 
     fn read(harness: &mut InlineTestHarness) -> Self::Output {

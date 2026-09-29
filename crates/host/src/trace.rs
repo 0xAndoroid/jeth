@@ -19,12 +19,12 @@ extern crate jolt_inlines_secp256k1 as _;
 extern crate jolt_inlines_sha2 as _;
 
 /// Must match the `#[jolt::provable(...)]` attributes in crates/guest/src/lib.rs.
-const MAX_INPUT_SIZE: u64 = 134217728; // 128 MiB (multi-block synthetic inputs)
+const MAX_INPUT_SIZE: u64 = 134_217_728; // 128 MiB (multi-block synthetic inputs)
 const MAX_OUTPUT_SIZE: u64 = 4096;
-const HEAP_SIZE: u64 = 1610612736; // 1.5 GiB
-const STACK_SIZE: u64 = 33554432; // 32 MiB
+const HEAP_SIZE: u64 = 1_610_612_736; // 1.5 GiB
+const STACK_SIZE: u64 = 33_554_432; // 32 MiB
 const MAX_ADVICE_SIZE: u64 = 4096; // jolt defaults (attrs unset)
-const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4194304; // 4 MiB (validate_block_trusted)
+const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4_194_304; // 4 MiB (validate_block_trusted)
 
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
@@ -62,7 +62,7 @@ impl Variant {
 /// ELF path for a build with extra guest features (each feature set gets its
 /// own target dir so switching configurations doesn't thrash rebuilds).
 pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
-    let suffix: String = extra_features.iter().map(|f| format!("-{f}")).collect();
+    let suffix: String = extra_features.iter().flat_map(|f| ["-", *f]).collect();
     PathBuf::from(format!("{}-{}{suffix}", guest_target_dir(), variant.func()))
         .join("riscv64imac-unknown-none-elf/release")
         .join("jeth-guest")
@@ -137,7 +137,7 @@ pub fn build_guest_features(variant: Variant, extra_features: &[&str]) -> Result
 fn build_guest_inner(variant: Variant, symbols: bool, extra_features: &[&str]) -> Result<()> {
     let jolt_cli = std::env::var("JOLT_PATH").unwrap_or_else(|_| DEFAULT_JOLT_CLI.to_string());
     let func = variant.func();
-    let suffix: String = extra_features.iter().map(|f| format!("-{f}")).collect();
+    let suffix: String = extra_features.iter().flat_map(|f| ["-", *f]).collect();
     let target_dir = format!("{}-{func}{suffix}", guest_target_dir());
     let features: String = core::iter::once("guest")
         .chain(extra_features.iter().copied())
@@ -298,7 +298,12 @@ pub fn run(
     let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {
         Variant::Input => (&wrapped, &[]),
         Variant::Advice => (&[], &wrapped),
-        Variant::Trusted => (&wrapped, digest_blob.as_deref().unwrap()),
+        Variant::Trusted => (
+            &wrapped,
+            digest_blob
+                .as_deref()
+                .context("trusted trace missing digest blob")?,
+        ),
     };
 
     // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.

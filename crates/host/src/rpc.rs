@@ -23,7 +23,7 @@ impl RpcClient {
         // Generous: a zeth-rpc-proxy witness rebuild re-executes the block against
         // upstream getProof/getCode and can take many minutes on free endpoints.
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(3600))
+            .timeout(Duration::from_hours(1))
             .build();
         Self { endpoints, agent }
     }

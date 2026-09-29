@@ -13,7 +13,7 @@ fn big(x: &Element) -> NBigUint {
 fn element(x: &NBigUint) -> Element {
     let mut bytes = x.to_bytes_le();
     bytes.resize(8 * N, 0);
-    core::array::from_fn(|i| u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap()))
+    core::array::from_fn(|i| u64::from_le_bytes(bytes.as_chunks::<8>().0[i]))
 }
 
 fn modulus() -> NBigUint {

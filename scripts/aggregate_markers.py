@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Aggregate `jeth profile --rows --split-markers --json` matrices into
-phase x category tables and compare a merged multi-block run against the
+"""Aggregate profiler matrices into phase x category tables.
+
+Compare a merged multi-block run against the
 gas-weighted sum of its constituent single-block runs.
 
 Usage:
@@ -19,13 +20,11 @@ totals (deserialize / sig_verify / validation) are attached.
 
 import argparse
 import json
-import os
 import re
-import sys
 from collections import defaultdict
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from aggregate_profile import classify, root_path  # noqa: E402
+from aggregate_profile import classify, root_path
 
 CATEGORIES = [
     "keccak",
@@ -103,10 +102,8 @@ def phase_of(label: str) -> str:
 
 def parse_trace_log(path: str) -> dict:
     """Proven-pass keccak census + jolt marker totals from a `jeth trace` log."""
-    text = open(path).read()
-    census = re.findall(
-        r"keccak\[(\w+)\]: calls=(\d+) bytes=(\d+) perms=(\d+)", text
-    )
+    text = Path(path).read_text(encoding="utf-8")
+    census = re.findall(r"keccak\[(\w+)\]: calls=(\d+) bytes=(\d+) perms=(\d+)", text)
     # Two passes (compute_advice, then proven); the proven pass is the last
     # seven checkpoints: pre_sig, post_sig, reveal start/end, post_root
     # start/end, post_validation.
@@ -121,14 +118,16 @@ def parse_trace_log(path: str) -> dict:
         "post_root",
         "post_validation",
     ]
-    out: dict = {"checkpoints": [
-        {"label": l, "calls": int(a), "bytes": int(b), "perms": int(p)}
-        for l, a, b, p in proven
-    ]}
+    out: dict = {
+        "checkpoints": [
+            {"label": label, "calls": int(a), "bytes": int(b), "perms": int(p)}
+            for label, a, b, p in proven
+        ]
+    }
     if labels == expected:
         v = [(int(a), int(b), int(p)) for _, a, b, p in proven]
 
-        def seg(i, j, k):
+        def seg(i: int, j: int, k: int) -> int:
             return v[j][k] - v[i][k]
 
         for k, name in enumerate(("calls", "bytes", "perms")):
@@ -141,7 +140,9 @@ def parse_trace_log(path: str) -> dict:
                 "tail_glue": seg(5, 6, k),
                 "total": v[6][k],
             }
-    markers = re.findall(r'"(\w+)": \d+ RV64IMAC cycles \+ \d+ virtual instructions = (\d+) total cycles', text)
+    markers = re.findall(
+        r'"(\w+)": \d+ RV64IMAC cycles \+ \d+ virtual instructions = (\d+) total cycles', text
+    )
     jolt: dict = {}
     for name, total in markers:  # last occurrence = proven pass
         jolt[name] = int(total)
@@ -153,7 +154,7 @@ def parse_trace_log(path: str) -> dict:
 
 
 def aggregate(profile_path: str, trace_log: str | None) -> dict:
-    prof = json.load(open(profile_path))
+    prof = json.loads(Path(profile_path).read_text(encoding="utf-8"))
     total = prof["total_rows"]
     phases = defaultdict(int)
     cats = {c: {"total": 0, "by_phase": defaultdict(int)} for c in CATEGORIES}
@@ -193,7 +194,10 @@ def aggregate(profile_path: str, trace_log: str | None) -> dict:
         "subcategories": {
             c: dict(sorted(s.items(), key=lambda kv: -kv[1])[:12]) for c, s in subs.items()
         },
-        "unattributed_below_cutoff": {**{p: unattributed[p] for p in PHASES}, "total": unattributed_total},
+        "unattributed_below_cutoff": {
+            **{p: unattributed[p] for p in PHASES},
+            "total": unattributed_total,
+        },
         "census": parse_trace_log(trace_log) if trace_log else None,
     }
 
@@ -212,12 +216,18 @@ def print_agg(a: dict) -> None:
     print("| phase | rows | share |\n|---|---:|---:|")
     for p in PHASES:
         print(f"| {p} | {fmt(a['phases'][p])} | {pct(a['phases'][p], total)} |")
-    print(f"| unattributed (<256-row symbols) | {fmt(a['unattributed_below_cutoff']['total'])} | {pct(a['unattributed_below_cutoff']['total'], total)} |")
-    print("\n| category | rows | share | reveal | execution | post_root | outside |\n|---|---:|---:|---:|---:|---:|---:|")
+    print(
+        f"| unattributed (<256-row symbols) | {fmt(a['unattributed_below_cutoff']['total'])} | {pct(a['unattributed_below_cutoff']['total'], total)} |"
+    )
+    print(
+        "\n| category | rows | share | reveal | execution | post_root | outside |\n|---|---:|---:|---:|---:|---:|---:|"
+    )
     for c in CATEGORIES:
         v = a["categories"][c]
         bp = v["by_phase"]
-        print(f"| {c} | {fmt(v['total'])} | {pct(v['total'], total)} | {fmt(bp['reveal'])} | {fmt(bp['execution'])} | {fmt(bp['post_root'])} | {fmt(bp['outside'])} |")
+        print(
+            f"| {c} | {fmt(v['total'])} | {pct(v['total'], total)} | {fmt(bp['reveal'])} | {fmt(bp['execution'])} | {fmt(bp['post_root'])} | {fmt(bp['outside'])} |"
+        )
     if a.get("census") and a["census"].get("perms"):
         print("\nkeccak perms (proven pass):", json.dumps(a["census"]["perms"]))
     if a.get("census") and a["census"].get("jolt_markers"):
@@ -225,26 +235,27 @@ def print_agg(a: dict) -> None:
 
 
 def compare(merged: dict, singles: list[dict]) -> dict:
-    def sum_key(getter):
-        return sum(getter(s) for s in singles)
-
-    total_single = sum_key(lambda s: s["total_rows"])
+    total_single = sum(s["total_rows"] for s in singles)
     total_merged = merged["total_rows"]
     out = {
         "merged_input": merged["input"],
         "singles": [s["input"] for s in singles],
-        "total_rows": {"singles_sum": total_single, "merged": total_merged, "delta": total_merged - total_single},
+        "total_rows": {
+            "singles_sum": total_single,
+            "merged": total_merged,
+            "delta": total_merged - total_single,
+        },
         "phases": {},
         "categories": {},
         "keccak_by_phase": {},
         "census_perms": {},
     }
     for p in PHASES:
-        s = sum_key(lambda x: x["phases"][p])
+        s = sum(x["phases"][p] for x in singles)
         m = merged["phases"][p]
         out["phases"][p] = {"singles_sum": s, "merged": m, "delta": m - s}
     for c in CATEGORIES:
-        s = sum_key(lambda x: x["categories"][c]["total"])
+        s = sum(x["categories"][c]["total"] for x in singles)
         m = merged["categories"][c]["total"]
         out["categories"][c] = {
             "singles_sum": s,
@@ -252,21 +263,31 @@ def compare(merged: dict, singles: list[dict]) -> dict:
             "delta": m - s,
             "by_phase": {
                 p: {
-                    "singles_sum": sum_key(lambda x: x["categories"][c]["by_phase"][p]),
+                    "singles_sum": sum(x["categories"][c]["by_phase"][p] for x in singles),
                     "merged": merged["categories"][c]["by_phase"][p],
                 }
                 for p in PHASES
             },
         }
     for p in PHASES:
-        s = sum_key(lambda x: x["categories"]["keccak"]["by_phase"][p])
+        s = sum(x["categories"]["keccak"]["by_phase"][p] for x in singles)
         m = merged["categories"]["keccak"]["by_phase"][p]
         out["keccak_by_phase"][p] = {"singles_sum": s, "merged": m, "delta": m - s}
-    if merged.get("census") and merged["census"].get("perms") and all(
-        s.get("census") and s["census"].get("perms") for s in singles
+    if (
+        merged.get("census")
+        and merged["census"].get("perms")
+        and all(s.get("census") and s["census"].get("perms") for s in singles)
     ):
-        for seg in ("sigs", "pre_reveal_glue", "reveal", "execution", "post_root", "tail_glue", "total"):
-            s = sum_key(lambda x: x["census"]["perms"][seg])
+        for seg in (
+            "sigs",
+            "pre_reveal_glue",
+            "reveal",
+            "execution",
+            "post_root",
+            "tail_glue",
+            "total",
+        ):
+            s = sum(x["census"]["perms"][seg] for x in singles)
             m = merged["census"]["perms"][seg]
             out["census_perms"][seg] = {"singles_sum": s, "merged": m, "delta": m - s}
     return out
@@ -274,24 +295,42 @@ def compare(merged: dict, singles: list[dict]) -> dict:
 
 def print_compare(c: dict) -> None:
     ts, tm = c["total_rows"]["singles_sum"], c["total_rows"]["merged"]
-    print(f"merged: {c['merged_input']}\nsingles: {len(c['singles'])} runs, Σ rows {fmt(ts)} → merged {fmt(tm)} (Δ {fmt(tm - ts)}, {pct(tm - ts, ts)})\n")
-    print("| category | Σ singles rows | share | merged rows | share | Δ rows | Δ % |\n|---|---:|---:|---:|---:|---:|---:|")
+    print(
+        f"merged: {c['merged_input']}\nsingles: {len(c['singles'])} runs, Σ rows {fmt(ts)} → merged {fmt(tm)} (Δ {fmt(tm - ts)}, {pct(tm - ts, ts)})\n"
+    )
+    print(
+        "| category | Σ singles rows | share | merged rows | share | Δ rows | Δ % |\n|---|---:|---:|---:|---:|---:|---:|"
+    )
     for cat in CATEGORIES:
         v = c["categories"][cat]
-        print(f"| {cat} | {fmt(v['singles_sum'])} | {pct(v['singles_sum'], ts)} | {fmt(v['merged'])} | {pct(v['merged'], tm)} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |")
-    print(f"| **total** | {fmt(ts)} | 100% | {fmt(tm)} | 100% | {fmt(tm - ts)} | {pct(tm - ts, ts)} |")
+        print(
+            f"| {cat} | {fmt(v['singles_sum'])} | {pct(v['singles_sum'], ts)} | {fmt(v['merged'])} | {pct(v['merged'], tm)} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |"
+        )
+    print(
+        f"| **total** | {fmt(ts)} | 100% | {fmt(tm)} | 100% | {fmt(tm - ts)} | {pct(tm - ts, ts)} |"
+    )
     print("\n| phase | Σ singles | merged | Δ rows | Δ % |\n|---|---:|---:|---:|---:|")
     for p in PHASES:
         v = c["phases"][p]
-        print(f"| {p} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |")
-    print("\n| keccak rows by phase | Σ singles | merged | Δ rows | Δ % |\n|---|---:|---:|---:|---:|")
+        print(
+            f"| {p} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |"
+        )
+    print(
+        "\n| keccak rows by phase | Σ singles | merged | Δ rows | Δ % |\n|---|---:|---:|---:|---:|"
+    )
     for p in PHASES:
         v = c["keccak_by_phase"][p]
-        print(f"| {p} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |")
+        print(
+            f"| {p} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |"
+        )
     if c["census_perms"]:
-        print("\n| keccak perms (census) | Σ singles | merged | Δ | Δ % |\n|---|---:|---:|---:|---:|")
+        print(
+            "\n| keccak perms (census) | Σ singles | merged | Δ | Δ % |\n|---|---:|---:|---:|---:|"
+        )
         for seg, v in c["census_perms"].items():
-            print(f"| {seg} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |")
+            print(
+                f"| {seg} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {fmt(v['delta'])} | {pct(v['delta'], v['singles_sum'])} |"
+            )
 
 
 def main() -> None:
@@ -310,10 +349,13 @@ def main() -> None:
         res = aggregate(args.profile, args.trace_log)
         print_agg(res)
     else:
-        res = compare(json.load(open(args.merged)), [json.load(open(s)) for s in args.singles])
+        res = compare(
+            json.loads(Path(args.merged).read_text(encoding="utf-8")),
+            [json.loads(Path(s).read_text(encoding="utf-8")) for s in args.singles],
+        )
         print_compare(res)
     if args.out:
-        json.dump(res, open(args.out, "w"), indent=1)
+        Path(args.out).write_text(json.dumps(res, indent=1), encoding="utf-8")
         print(f"\n→ {args.out}")
 
 

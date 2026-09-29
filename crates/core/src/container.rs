@@ -119,8 +119,8 @@ impl<'a> ContainerReader<'a> {
         let code_count = reader.header_u32(CODE_COUNT_OFFSET)? as usize;
         let header_count = reader.header_u32(HEADER_COUNT_OFFSET)? as usize;
         let signer_count = reader.header_u32(SIGNER_COUNT_OFFSET)? as usize;
-        let library_id_lo = reader.header_u32(LIBRARY_ID_OFFSET)? as u64
-            | ((reader.header_u32(LIBRARY_ID_OFFSET + 4)? as u64) << 32);
+        let library_id_lo = u64::from(reader.header_u32(LIBRARY_ID_OFFSET)?)
+            | (u64::from(reader.header_u32(LIBRARY_ID_OFFSET + 4)?) << 32);
 
         let block_len = reader.read_u64()?;
         let block_len = usize::try_from(block_len).map_err(|_| ContainerError::InvalidLength)?;
@@ -134,6 +134,7 @@ impl<'a> ContainerReader<'a> {
         if !(signer_data.as_ptr() as usize).is_multiple_of(8) {
             return Err(ContainerError::Misaligned);
         }
+        // SAFETY: take() returned signer_count * SIGNER_SIZE bytes; byte arrays have alignment 1.
         let signers = unsafe {
             core::slice::from_raw_parts(
                 signer_data.as_ptr().cast::<[u8; SIGNER_SIZE]>(),
@@ -166,6 +167,10 @@ impl<'a> ContainerReader<'a> {
         self.read_u32_at(self.header_start + offset)
     }
 
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "The address is checked for alignment before reading."
+    )]
     fn read_u16_at(&self, offset: usize) -> Result<u16, ContainerError> {
         let end = offset
             .checked_add(core::mem::size_of::<u16>())
@@ -173,13 +178,19 @@ impl<'a> ContainerReader<'a> {
         if end > self.bytes.len() {
             return Err(ContainerError::Truncated);
         }
+        // SAFETY: the checked end is within bytes, so the starting offset is in bounds.
         let ptr = unsafe { self.bytes.as_ptr().add(offset) };
         if !(ptr as usize).is_multiple_of(core::mem::align_of::<u16>()) {
             return Err(ContainerError::Misaligned);
         }
+        // SAFETY: bounds and u16 alignment were checked above.
         Ok(u16::from_le(unsafe { ptr.cast::<u16>().read() }))
     }
 
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "The address is checked for alignment before reading."
+    )]
     fn read_u32_at(&self, offset: usize) -> Result<u32, ContainerError> {
         let end = offset
             .checked_add(core::mem::size_of::<u32>())
@@ -187,13 +198,19 @@ impl<'a> ContainerReader<'a> {
         if end > self.bytes.len() {
             return Err(ContainerError::Truncated);
         }
+        // SAFETY: the checked end is within bytes, so the starting offset is in bounds.
         let ptr = unsafe { self.bytes.as_ptr().add(offset) };
         if !(ptr as usize).is_multiple_of(core::mem::align_of::<u32>()) {
             return Err(ContainerError::Misaligned);
         }
+        // SAFETY: bounds and u32 alignment were checked above.
         Ok(u32::from_le(unsafe { ptr.cast::<u32>().read() }))
     }
 
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "The address is checked for alignment before reading."
+    )]
     fn read_u64(&mut self) -> Result<u64, ContainerError> {
         let end = self
             .cursor
@@ -202,11 +219,13 @@ impl<'a> ContainerReader<'a> {
         if end > self.bytes.len() {
             return Err(ContainerError::Truncated);
         }
+        // SAFETY: the checked end is within bytes, so the starting offset is in bounds.
         let ptr = unsafe { self.bytes.as_ptr().add(self.cursor) };
         if !(ptr as usize).is_multiple_of(core::mem::align_of::<u64>()) {
             return Err(ContainerError::Misaligned);
         }
         self.cursor = end;
+        // SAFETY: bounds and u64 alignment were checked above.
         Ok(u64::from_le(unsafe { ptr.cast::<u64>().read() }))
     }
 
@@ -400,6 +419,7 @@ fn postcard_varint_len(mut value: usize) -> usize {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec;
     use alloy_primitives::Bytes;
@@ -422,7 +442,7 @@ mod tests {
             (stream_start
                 + (borrowed.as_ptr() as usize - wrapped.as_ptr() as usize) as u64
                 + 1
-                + borrowed[0] as u64)
+                + u64::from(borrowed[0]))
                 % 8,
             0
         );

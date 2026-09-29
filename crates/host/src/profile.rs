@@ -10,7 +10,10 @@ use object::{Object, ObjectSymbol};
 use std::collections::HashMap;
 use std::time::Instant;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Arguments mirror independent profiler CLI options."
+)]
 pub fn run(
     input_path: &str,
     every: u64,
@@ -84,24 +87,30 @@ pub fn run(
 
     // --callers-of: restrict to samples whose PC is inside a matching symbol and
     // bucket the RETURN ADDRESS (ra/x1) instead — a one-level caller profile.
-    let target_range: Option<(u64, u64)> = callers_of.as_deref().map(|needle| {
-        let (addr, size, name) = symbols
-            .iter()
-            .find(|(_, _, n)| n.contains(needle))
-            .unwrap_or_else(|| panic!("no symbol matching {needle:?}"));
-        println!("caller profile of {name} @ {addr:#x}+{size:#x}");
-        (*addr, *addr + *size)
-    });
+    let target_range: Option<(u64, u64)> = callers_of
+        .as_deref()
+        .map(|needle| -> Result<_> {
+            let (addr, size, name) = symbols
+                .iter()
+                .find(|(_, _, n)| n.contains(needle))
+                .with_context(|| format!("no symbol matching {needle:?}"))?;
+            println!("caller profile of {name} @ {addr:#x}+{size:#x}");
+            Ok((*addr, *addr + *size))
+        })
+        .transpose()?;
 
     // --pcs-of: per-PC row histogram inside one symbol (phase split of a function).
-    let pc_range: Option<(u64, u64)> = pcs_of.as_deref().map(|needle| {
-        let (addr, size, name) = symbols
-            .iter()
-            .find(|(_, _, n)| n.contains(needle))
-            .unwrap_or_else(|| panic!("no symbol matching {needle:?}"));
-        println!("per-PC rows of {name} @ {addr:#x}+{size:#x}");
-        (*addr, *addr + *size)
-    });
+    let pc_range: Option<(u64, u64)> = pcs_of
+        .as_deref()
+        .map(|needle| -> Result<_> {
+            let (addr, size, name) = symbols
+                .iter()
+                .find(|(_, _, n)| n.contains(needle))
+                .with_context(|| format!("no symbol matching {needle:?}"))?;
+            println!("per-PC rows of {name} @ {addr:#x}+{size:#x}");
+            Ok((*addr, *addr + *size))
+        })
+        .transpose()?;
     let mut pc_rows: HashMap<u64, u64> = HashMap::new();
     // --entries: entry counts (PC == symbol start) of every matching symbol.
     let entry_syms: Vec<(u64, String)> = symbols

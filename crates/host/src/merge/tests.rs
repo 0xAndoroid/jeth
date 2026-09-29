@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests fail by panicking"
+)]
 use super::*;
 use alloy_consensus::{SignableTransaction, TxLegacy};
 use alloy_primitives::Signature;

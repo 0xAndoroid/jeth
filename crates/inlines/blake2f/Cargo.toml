@@ -15,3 +15,6 @@ jeth-inlines-blake2f = { path = ".", features = ["host"] }
 jolt-inlines-sdk = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/jolt-inlines/sdk", default-features = false, features = ["test-utils"] }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 tracer = { path = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/tracer", features = ["std", "test-utils"] }
+
+[lints]
+workspace = true

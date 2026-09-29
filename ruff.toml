@@ -1,0 +1,23 @@
+target-version = "py310"
+line-length = 100
+
+[lint]
+select = ["ALL"]
+allowed-confusables = ["×"] # Multiplication sign in report output.
+ignore = [
+    "E501", # Formatter controls wrapping; report tables and symbol regexes stay readable.
+    "C901", # Classification tables and report assembly are intentionally linear.
+    "PLR0911", # Early returns encode ordered symbol-classification rules.
+    "PLR0912", # Report commands branch by measured data and requested output.
+    "PLR0915", # Keep report assembly together instead of one-use helpers.
+    "PLR2004", # Literal counts and thresholds are part of the analysis formulas.
+    "D100", # CLI module usage is documented where needed.
+    "D103", # Analysis helpers use descriptive names and annotations.
+    "D203", # Conflicts with D211.
+    "D213", # Conflicts with D212.
+    "COM812", # Ruff's formatter owns trailing commas.
+    "ISC001", # Ruff's formatter owns adjacent string layout.
+]
+
+[lint.per-file-ignores]
+"scripts/*.py" = ["T201"] # CLI tables and JSON summaries are the scripts' output.

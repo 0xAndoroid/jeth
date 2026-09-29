@@ -144,7 +144,8 @@ pub struct ValidationResult {
 /// tracer surfaces as a failed run.
 pub fn validate_mainnet(input: BlockInput) -> Result<ValidationResult, StatelessValidationError> {
     let mut input = input;
-    code_library::append_raw_codes(&mut input.witness.codes);
+    code_library::append_raw_codes(&mut input.witness.codes)
+        .map_err(|_| StatelessValidationError::StatelessStateRootCalculationFailed)?;
     let chain_spec = Arc::new(mainnet_spec());
     let evm_config = EthEvmConfig::new(chain_spec.clone());
 
@@ -218,7 +219,7 @@ mod rlp_block {
 
     struct RlpBytesVisitor;
 
-    impl<'de> de::Visitor<'de> for RlpBytesVisitor {
+    impl de::Visitor<'_> for RlpBytesVisitor {
         type Value = Block;
 
         fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

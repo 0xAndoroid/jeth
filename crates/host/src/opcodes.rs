@@ -5,6 +5,10 @@
 //! (compressed forms folded into their expanded class). Sizes the sub-word
 //! load/store pool for the Jolt ISA lane without touching the guest.
 
+#![expect(
+    clippy::verbose_bit_mask,
+    reason = "Masks match the RISC-V encoding bit positions."
+)]
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -58,8 +62,8 @@ fn classify(insn: u32, compressed: bool) -> &'static str {
                     "SW/u"
                 }
             }
-            (0, 3) | (2, 3) => "LD",
-            (0, 7) | (2, 7) => "SD",
+            (0 | 2, 3) => "LD",
+            (0 | 2, 7) => "SD",
             _ => "C.other",
         };
     }
@@ -198,9 +202,9 @@ pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> R
         }
         let (insn, compressed) = {
             let mmu = emulator.get_mut_cpu().get_mut_mmu();
-            let lo = mmu.load_raw(pc) as u32 | ((mmu.load_raw(pc + 1) as u32) << 8);
+            let lo = u32::from(mmu.load_raw(pc)) | (u32::from(mmu.load_raw(pc + 1)) << 8);
             if lo & 3 == 3 {
-                let hi = mmu.load_raw(pc + 2) as u32 | ((mmu.load_raw(pc + 3) as u32) << 8);
+                let hi = u32::from(mmu.load_raw(pc + 2)) | (u32::from(mmu.load_raw(pc + 3)) << 8);
                 (lo | (hi << 16), false)
             } else {
                 (lo, true)

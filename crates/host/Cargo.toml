@@ -68,3 +68,62 @@ zeth-mpt.workspace = true
 # merge tests: validate the synthetic header with the consensus rules the guest applies.
 reth-consensus.workspace = true
 reth-ethereum-consensus.workspace = true
+
+# Cargo cannot override inherited lints; keep these in sync with workspace.lints.
+# CLI binaries print their results and progress to the terminal.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+pedantic = { level = "warn", priority = -1 }
+
+case_sensitive_file_extension_comparisons = "allow" # Repository inputs use fixed lowercase extensions.
+default_trait_access = "allow" # Default types are clear at these call sites.
+doc_markdown = "allow" # Domain notation need not use Rustdoc code spans.
+double_must_use = "allow" # Generated trait wrappers can repeat this annotation.
+fn_params_excessive_bools = "allow" # Independent flags mirror existing CLI and protocol inputs.
+format_push_string = "allow" # Short diagnostic strings favor direct formatting.
+implicit_hasher = "allow" # Map signatures keep the selected hasher explicit.
+items_after_statements = "allow" # Local constants and helper items stay near their uses.
+manual_let_else = "allow" # Equivalent match forms remain readable.
+match_same_arms = "allow" # Separate protocol cases retain their domain meaning.
+missing_errors_doc = "allow" # Error enums describe failures at their definitions.
+missing_panics_doc = "allow" # Document invariants where they are enforced.
+module_name_repetitions = "allow" # Qualified crypto names retain their meaning when imported.
+must_use_candidate = "allow" # Do not annotate every getter.
+needless_pass_by_value = "allow" # Keep existing ownership contracts.
+no_effect_underscore_binding = "allow" # Named ignored bindings can document external contracts.
+redundant_closure_for_method_calls = "allow" # Closures keep iterator intent local.
+ref_option = "allow" # Borrowed option signatures follow existing APIs.
+ref_option_ref = "allow" # Borrowed option signatures follow existing APIs.
+return_self_not_must_use = "allow" # Builder return annotations are not required.
+similar_names = "allow" # Crypto formulas use related operand names.
+struct_excessive_bools = "allow" # Independent options are not mutually exclusive states.
+too_many_lines = "allow" # Keep algorithms and report assembly in one place.
+trivially_copy_pass_by_ref = "allow" # Preserve trait-compatible borrowed signatures.
+uninlined_format_args = "allow" # Both formatting syntaxes are accepted.
+unnecessary_wraps = "allow" # Uniform callback signatures may have infallible branches.
+unused_async = "allow" # Async callback contracts can have synchronous implementations.
+used_underscore_binding = "allow" # Conditional instrumentation may consume marked bindings.
+
+cast_possible_truncation = "allow" # Fixed-width arithmetic intentionally selects low limbs.
+cast_possible_wrap = "allow" # Signed instruction immediates preserve their bit patterns.
+cast_precision_loss = "allow" # Profiler ratios intentionally use floating-point estimates.
+cast_sign_loss = "allow" # Signed instruction encodings preserve their bit patterns.
+
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"
+
+allow_attributes = "deny"
+
+result_large_err = "allow" # Do not box errors solely to change their stack size.
+
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+enum_variant_names = "allow" # Protocol variants may share descriptive prefixes.
+large_futures = "allow" # Future size changes require measurement.
+significant_drop_tightening = "allow" # Resource lifetime changes require local reasoning.
