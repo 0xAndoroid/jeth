@@ -139,7 +139,6 @@ pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> R
     };
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
 
-    // Optional: symbol table for per-kind caller attribution.
     let symbols: Vec<(u64, u64, String)> = if symbols_for.is_some() {
         use object::{Object, ObjectSymbol};
         let obj = object::File::parse(&*elf).context("parsing guest ELF")?;
@@ -250,7 +249,6 @@ pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> R
     }
 
     if !sym_buckets.is_empty() {
-        // Aggregate by symbol across matched kinds, then top-30.
         let mut by_sym: HashMap<usize, (u64, u64)> = HashMap::new();
         for ((_, sym), (execs, rows)) in &sym_buckets {
             let e = by_sym.entry(*sym).or_default();

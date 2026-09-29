@@ -99,37 +99,28 @@ pub fn decode_container(bytes: &'static [u8]) -> Result<BlockInput, container::C
 /// exclusion proofs the reth sparse trie demands for absent-slot reads, while
 /// the zeth MPT resolves absence from the revealed partial trie directly
 /// (this is the trie zeth 0.3 runs in production on risc0).
-/// (Vendored from `tries::zeth` with the trusted-digest extension — see
-/// `zeth_trie.rs`; behavior without trusted digests is identical.)
 #[cfg(not(feature = "guest-instrument"))]
 pub type Trie = zeth_trie::SparseState;
-/// Instrumented variant (markers + keccak checkpoints around reveal/root).
 #[cfg(feature = "guest-instrument")]
 pub type Trie = instrument::InstrumentedTrie;
 
-/// EVM config type used for both native and guest validation.
 pub type EthEvmConfig = reth_evm_ethereum::EthEvmConfig<ChainSpec, EthEvmFactory>;
 
 /// Host-side form of everything needed to statelessly validate one block.
-///
-/// JEF encodes the block as canonical RLP and the witness as borrowed byte records.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockInput {
-    /// The block to validate.
     #[serde(with = "rlp_block")]
     pub block: Block,
     /// Host-recovered uncompressed secp256k1 public key per transaction (tx order).
     /// The guest *verifies* each tx signature against these instead of running
     /// in-guest ecrecover — same soundness, cheaper.
     pub signers: Vec<UncompressedPublicKey>,
-    /// Execution witness: trie nodes, contract codes, (unused) keys, ancestor headers.
     pub witness: ExecutionWitness,
 }
 
 /// Compact result returned from the guest.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValidationResult {
-    /// Hash of the validated block.
     pub block_hash: [u8; 32],
     /// Cumulative gas used by the block (from execution, cross-checked against the
     /// header by `validate_block_post_execution`).
@@ -195,7 +186,6 @@ pub fn validate_recovered(
     })
 }
 
-/// Serde adapter: RLP bytes for binary serializers, derived serde for JSON.
 mod rlp_block {
     use alloc::vec::Vec;
     use reth_ethereum_primitives::Block;
@@ -235,7 +225,6 @@ mod rlp_block {
         }
     }
 
-    /// Encode a block as RLP (host-side helper, e.g. for size stats).
     pub fn encode(block: &Block) -> Vec<u8> {
         alloy_rlp::encode(block)
     }

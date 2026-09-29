@@ -228,7 +228,6 @@ pub const LIBRARY_ID_LO: u64 = u64::from_le_bytes([
     LIBRARY_ID[7],
 ]);
 
-/// The library baked into this build, if any.
 fn embedded() -> Result<Option<LibraryView<'static>>, LibraryError> {
     #[cfg(feature = "code-library")]
     {

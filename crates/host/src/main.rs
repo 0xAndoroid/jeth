@@ -1,11 +1,4 @@
 //! jeth — Jolt-trace stateless Ethereum block validation.
-//!
-//! Subcommands:
-//! - `fetch`      block + execution witness + recovered pubkeys → `data/<N>/input.bin`
-//! - `run-native` native `stateless_validation` over an input (witness-compatibility gate)
-//! - `trace`      run the input through the Jolt guest on the RISC-V tracer (no proving)
-//! - `touches`    native state-touch census (repeat share of accounts/slots/codes across txs)
-//! - `merge`      concatenate N consecutive block inputs into one synthetic block input
 
 mod fetch;
 mod library;

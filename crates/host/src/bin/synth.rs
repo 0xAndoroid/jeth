@@ -58,7 +58,6 @@ fn add_fillers(trie: &mut zeth_mpt::Trie, key: B256, depth: usize, value: &[u8])
                 ]
                 .concat(),
             );
-            // copy the shared prefix (level nibbles) then force nibble `level` = n
             for i in 0..level {
                 let v = nib(&key, i);
                 if i % 2 == 0 {
@@ -130,7 +129,6 @@ fn main() -> Result<()> {
     std::fs::create_dir_all(out)?;
     let spec: Spec = serde_json::from_slice(&std::fs::read(spec_path)?)?;
 
-    // Sender key: fixed scalar.
     let sk = k256::ecdsa::SigningKey::from_bytes(&[0x11u8; 32].into())?;
     let vk = sk.verifying_key();
     let pk_point = vk.to_encoded_point(false);
@@ -173,7 +171,6 @@ fn main() -> Result<()> {
     });
     accounts.extend(spec.contracts);
 
-    // Full pre-state trie + storage tries.
     let mut state = zeth_mpt::Trie::default();
     let mut nodes: Vec<Bytes> = Vec::new();
     let mut codes: Vec<Bytes> = Vec::new();
@@ -242,7 +239,6 @@ fn main() -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     state_nodes.retain(|n| seen.insert(keccak256(n)));
 
-    // Ancestor headers: parent (+ optional extra ancestors for BLOCKHASH).
     let mut headers: Vec<Header> = Vec::new();
     let ancestor_count = spec.ancestors.max(1);
     let mut prev_hash = B256::ZERO;
@@ -272,7 +268,6 @@ fn main() -> Result<()> {
     }
     let parent = headers.last().context("missing parent header")?.clone();
 
-    // Transactions (legacy, EIP-155, same sender, sequential nonces).
     let mut txs: Vec<EthereumTxEnvelope<TxEip4844>> = Vec::new();
     let mut signers: Vec<jeth_core::UncompressedPublicKey> = Vec::new();
     for (i, t) in spec.txs.iter().enumerate() {

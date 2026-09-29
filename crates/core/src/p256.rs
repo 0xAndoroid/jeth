@@ -68,7 +68,6 @@ mod tests {
     use p256::{AffinePoint, ProjectivePoint, Scalar};
     use reth_evm::revm::precompile::secp256r1::verify_impl;
 
-    /// P-256 base field modulus p (big-endian).
     const P: U256 = U256::from_limbs(jolt_inlines_p256::P256_MODULUS);
 
     fn compare(msg: [u8; 32], sig: [u8; 64], pk: [u8; 64]) -> bool {
@@ -331,7 +330,6 @@ mod tests {
             assert!(compare([0; 32], sig, pk) && compare(N.to_be_bytes::<32>(), sig, pk));
         }
         assert!(valid > 150);
-        // Garbage inputs: random (msg, r, s, x, y).
         for _ in 0..200 {
             let (mut sig, mut pk) = ([0; 64], [0; 64]);
             sig[..32].copy_from_slice(&rng.bytes());

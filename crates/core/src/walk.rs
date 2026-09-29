@@ -57,7 +57,6 @@ impl NodeKind {
     }
 }
 
-/// One walk step's outcome within an authenticated entry.
 pub(crate) enum Step {
     /// Continue at a child digest: its four little-endian words, gathered from
     /// the parent's bytes ([`le_words_32`]).
@@ -143,7 +142,6 @@ fn validate_at(r: &mut &[u8]) -> Result<NodeKind> {
     let (mut p, rest) = r.split_at(h.payload_length);
     *r = rest;
 
-    // (item, is_list, payload length) of items 0 and 1.
     let mut first: [(&[u8], bool, usize); 2] = [(&[], false, 0); 2];
     let mut items = 0usize;
     let mut children = 0usize;
@@ -187,7 +185,6 @@ fn validate_at(r: &mut &[u8]) -> Result<NodeKind> {
                 return Err(alloy_rlp::Error::Custom("node is not an extension or leaf"));
             }
             let is_leaf = flag >= 2;
-            // item 1
             let (value, value_list, vlen) = first[1];
             if is_leaf {
                 // value must be a string (Bytes::decode parity); contents are
@@ -320,7 +317,6 @@ pub(crate) fn walk_entry(
                 }
                 let (list, hlen, plen) = item_header(p)?;
                 if list {
-                    // inline child — continue on the parent's bytes
                     span = &p[..hlen + plen];
                     kind = classify(span)?;
                     continue;

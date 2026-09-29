@@ -70,7 +70,6 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     let wrapped = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
-    // ---- native pass: tx metadata + per-tx gas from receipts ----------------
     /// (hash, to, selector, tx_type, input_len)
     type TxMeta = (String, Option<String>, Option<String>, u8, usize);
     let input = crate::trace::decode_input(&raw)?;
@@ -110,11 +109,9 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
         prev = receipt.cumulative_gas_used;
     }
 
-    // ---- guest pass: per-tx cycles via markers ------------------------------
     let capture = Capture::default();
     let subscriber = tracing_subscriber::registry().with(capture.clone());
 
-    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
     let tape = crate::trace::advice_pass1(variant, &features, skip_build, &wrapped, &[])?;
 
     println!("tracing with per-tx markers (execute-only streaming count)...");
@@ -231,7 +228,6 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
         );
     }
 
-    // Concentration summary (whale check).
     let n = rows.len().max(1);
     let share = |k: usize| -> f64 {
         100.0 * rows.iter().take(k).map(|r| r.cycles).sum::<u64>() as f64 / exec_total as f64

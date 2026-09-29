@@ -153,7 +153,6 @@ def parse_sym(sym: str) -> tuple[str, str]:
 # (field, regex, bucket, sub) — first match wins. field: "text" (root/trait/method),
 # "impl" (impl-type or fn generics), "full" (whole stripped name).
 RULES: list[tuple[str, str, str, str]] = [
-    # --- instrumentation / alloc (any group) ---
     (
         "text",
         r"jeth_phase_start|jeth_phase_end|keccak_stats|cycle_track|jolt_platform::.*print|^u64 as core::fmt|^core::fmt::",
@@ -166,13 +165,11 @@ RULES: list[tuple[str, str, str, str]] = [
         "f",
         "alloc",
     ),
-    # --- shared symbols without caller data ---
     ("text", r"^memcpy  ::", "f", "memcpy (no caller data)"),
     ("text", r"^memcmp  ::", "f", "memcmp (no caller data)"),
     ("text", r"^native_keccak256  ::", "f", "keccak (no caller data)"),
     ("text", r"^memset  ::", "f", "memset"),
     ("text", r"^memmove  ::|compiler_builtins", "f", "memmove/builtins"),
-    # --- (a) ---
     ("text", r"^jeth_core::walk::", "a", "walk: validate_at / match_path (once per node)"),
     (
         "text",
@@ -196,7 +193,6 @@ RULES: list[tuple[str, str, str, str]] = [
     ),
     ("text", r"^zeth_mpt::", "a", "MPT decode/resolve (zeth-mpt)"),
     ("text", r"^ruint::Uint as alloy_rlp::decode::Decodable", "a", "storage leaf value decode"),
-    # --- (b) ---
     (
         "text",
         r"^jeth_core::zeth_trie::SparseState as tries::StatelessTrie ::account",
@@ -251,7 +247,6 @@ RULES: list[tuple[str, str, str, str]] = [
         "hashbrown: journal + cache maps",
     ),
     ("text", r"^foldhash::|^hashbrown::raw::RawTableInner", "b", "hashbrown: journal + cache maps"),
-    # --- (d) ---
     (
         "text",
         r"^jeth_core::recovery_batch::|^jeth_core::recover::|^jeth_core::crypto::|^jolt_inlines_secp256k1::|^jeth_core::bn254::|jeth_ecrecover_prehash",
@@ -283,7 +278,6 @@ RULES: list[tuple[str, str, str, str]] = [
         "d",
         "signing hashes + sender derivation (sig_verify)",
     ),
-    # --- (c) ---
     (
         "text",
         r"^revm_interpreter::instructions::host::",
@@ -332,11 +326,9 @@ RULES: list[tuple[str, str, str, str]] = [
         "bytecode analysis (jump tables, once per code)",
     ),
     ("text", r"^ruint::Uint  ::|^ruint::", "c", "U256 arithmetic (ruint)"),
-    # --- (e) ---
     ("text", r"HashedPostState|HashedStorage|^reth_trie_common", "e", "hashed post state build"),
     ("text", r"^nybbles::|^alloy_trie::nodes::", "e", "post-root materialization"),
     ("impl", r"FixedBytes<32usize>, core::option::Option", "e", "post-root materialization"),
-    # --- (f) ---
     (
         "text",
         r"^jeth_core::container::|^jeth_core::from_container|^jeth_core::decode_container|^postcard|^serde",

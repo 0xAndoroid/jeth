@@ -46,7 +46,6 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
     // mismatched compute/proven ELF pair (~6 rows).
     jeth_core::advice::advice_smoke();
 
-    // Route the EVM ecrecover precompile through the secp256k1 inline.
     jeth_core::install_jolt_crypto();
 
     jolt::start_cycle_tracking("deserialize");
@@ -61,15 +60,12 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
         witness,
     } = input;
 
-    // Phase 1: verify tx signatures against host-supplied pubkeys, derive senders.
     keccak_stats("pre_sig");
     jolt::start_cycle_tracking("sig_verify");
     let recovered = jeth_core::recover_block(block, signers).expect("signature verification");
     jolt::end_cycle_tracking("sig_verify");
     keccak_stats("post_sig");
 
-    // Phase 2: ancestor-chain checks, witness reveal vs parent state root, full tx
-    // execution, post-execution consensus checks, post-state root == header root.
     jolt::start_cycle_tracking("validation");
     let result = jeth_core::validate_recovered(recovered, witness).expect("stateless validation");
     jolt::end_cycle_tracking("validation");

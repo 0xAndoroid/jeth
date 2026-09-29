@@ -104,7 +104,6 @@ impl Crypto for JoltCrypto {
         inline_ecrecover(sig, recid, msg).ok_or(PrecompileHalt::Secp256k1RecoverFailed)
     }
 
-    /// GLV scalar multiplication: half the doublings of revm's double-and-add.
     #[inline]
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
         crate::bn254::g1_mul(point, scalar)
@@ -513,7 +512,6 @@ mod tests {
         }
     }
 
-    /// The round inlines' tables are revm's.
     #[test]
     fn blake2f_round_inline_tables_match_revm() {
         use reth_evm::revm::precompile::blake2::algo;

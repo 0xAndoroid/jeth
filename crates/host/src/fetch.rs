@@ -18,7 +18,6 @@ pub fn run(
         rpc_list.unwrap_or_else(|| DEFAULT_ENDPOINTS.iter().map(|s| s.to_string()).collect());
     let client = RpcClient::new(endpoints);
 
-    // 1. Pick the target block.
     let target = if let Some(n) = block {
         n
     } else {
@@ -71,11 +70,9 @@ pub fn run(
         wit_stats.key_count,
     );
 
-    // 4. Recover per-tx uncompressed pubkeys (host-side; the guest only verifies).
     let signers = recover_signers(&block.body.transactions)?;
     println!("recovered {} tx pubkeys", signers.len());
 
-    // 5. Assemble + encode.
     let mut input = BlockInput {
         block,
         signers,
@@ -205,7 +202,6 @@ struct LibraryMeta<'a> {
     coverage: crate::library::Coverage,
 }
 
-/// ISO-ish UTC timestamp without pulling chrono.
 fn chrono_free_now() -> String {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(now) => format!("unix:{}", now.as_secs()),

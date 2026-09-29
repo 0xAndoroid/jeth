@@ -91,7 +91,6 @@ pub struct DbCounts {
     pub block_hash: u64,
 }
 
-/// State-touching opcode executions.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpCounts {
     pub steps: u64,

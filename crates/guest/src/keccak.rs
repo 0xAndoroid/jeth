@@ -153,8 +153,8 @@ unsafe fn merge_final_block<const XOR: bool>(dst: *mut u64, src: *const u8, rem:
         write_volatile(dst.add(RATE_WORDS - 1), 1 << 63);
     }
 
-    let t = rem >> 3; // whole stream words
-    let r = rem & 7; // stream bytes in word t
+    let t = rem >> 3;
+    let r = rem & 7;
     let off = src as usize & 7;
     let data = if off == 0 {
         copy_words::<XOR>(dst, src.cast(), t);
@@ -206,7 +206,7 @@ unsafe fn store_digest(state: *const u64, out: *mut u8) {
     // preserving the bytes outside it (each of the five holds digest bytes).
     let base = ((out as usize) & !7) as *mut u64;
     let s = (off * 8) as u32;
-    let below = (1u64 << s) - 1; // bytes of base[0] before the digest
+    let below = (1u64 << s) - 1;
     write_volatile(base, (read_volatile(base) & below) | (d[0] << s));
     for i in 1..DIGEST_WORDS {
         write_volatile(base.add(i), (d[i - 1] >> (64 - s)) | (d[i] << s));
