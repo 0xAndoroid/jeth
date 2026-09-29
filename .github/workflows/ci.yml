@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Fork PRs have no secrets; the jolt path deps below cannot be fetched there.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
       JOLT_WORKTREE: /Volumes/Dev/worktrees/jolt/jolt-inlines-b
@@ -60,19 +60,25 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2> /dev/null
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >> ~/.ssh/known_hosts
           sudo mkdir -p "$JOLT_WORKTREE"
           sudo chown "$USER" "$JOLT_WORKTREE"
           git -C "$JOLT_WORKTREE" init -q
           git -C "$JOLT_WORKTREE" fetch -q --depth 1 git@github.com:0xAndoroid/jolt-private.git "$JOLT_REV"
           git -C "$JOLT_WORKTREE" checkout -q --detach FETCH_HEAD
+          /bin/rm -f ~/.ssh/id_ed25519
+          # Cargo fingerprints path deps by mtime; a fresh clone must not look newer than the cached build.
+          stamp=$(TZ=UTC git -C "$JOLT_WORKTREE" log -1 --format=%cd --date=format-local:%Y%m%d%H%M.%S)
+          (cd "$JOLT_WORKTREE" && git ls-files -z | xargs -0 touch -t "$stamp")
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09-12
         with:
           toolchain: "1.95"
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          key: ${{ env.JOLT_REV }}
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all --all-targets -q --message-format=short -- -D warnings
       - if: always()
         run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
