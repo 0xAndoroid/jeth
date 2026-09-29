@@ -37,6 +37,46 @@ jobs:
       - if: always()
         run: echo "rustfmt wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Fork PRs have no secrets; the jolt path deps below cannot be fetched there.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      JOLT_WORKTREE: /Volumes/Dev/worktrees/jolt/jolt-inlines-b
+      JOLT_REV: 3158917254a645afd56f81b07eb8c6a26b4346b0
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Cargo.toml has path deps on this worktree (private mirror 0xAndoroid/jolt-private);
+      # recreate it at the same absolute path with a read-only deploy key.
+      - name: fetch jolt-inlines-b
+        env:
+          DEPLOY_KEY: ${{ secrets.JOLT_PRIVATE_DEPLOY_KEY }}
+        run: |
+          test -n "$DEPLOY_KEY" || { echo "::error::JOLT_PRIVATE_DEPLOY_KEY secret is missing (read-only deploy key for 0xAndoroid/jolt-private)"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2> /dev/null
+          sudo mkdir -p "$JOLT_WORKTREE"
+          sudo chown "$USER" "$JOLT_WORKTREE"
+          git -C "$JOLT_WORKTREE" init -q
+          git -C "$JOLT_WORKTREE" fetch -q --depth 1 git@github.com:0xAndoroid/jolt-private.git "$JOLT_REV"
+          git -C "$JOLT_WORKTREE" checkout -q --detach FETCH_HEAD
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09-12
+        with:
+          toolchain: "1.95"
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-on-failure: true
+      - run: cargo clippy --all --all-targets -q --message-format=short -- -D warnings
+      - if: always()
+        run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
   typos:
     name: typos
     runs-on: ubuntu-latest
