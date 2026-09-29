@@ -22,7 +22,6 @@ pub const SOPP2_NAME: &str = "BLS12_381_SOPP2";
 pub const FP2MUL_FUNCT3: u32 = 0x2;
 pub const FP2MUL_NAME: &str = "BLS12_381_FP2MUL";
 
-/// Number of 64-bit limbs of a field element.
 pub const LIMBS: usize = 6;
 
 /// p = 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab

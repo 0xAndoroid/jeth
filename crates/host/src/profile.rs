@@ -39,7 +39,6 @@ pub fn run(
     }
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
 
-    // Symbol table → sorted (addr, size, name).
     let obj = object::File::parse(&*elf).context("parsing guest ELF")?;
     let mut symbols: Vec<(u64, u64, String)> = obj
         .symbols()
@@ -63,7 +62,6 @@ pub fn run(
     let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
-    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
     let tape = crate::trace::advice_pass1(variant, &features, skip_build, &input_bytes, &[])?;
 
     let mut emulator = tracer::create_emulator(
@@ -77,7 +75,6 @@ pub fn run(
     );
 
     let lookup = |pc: u64, symbols: &[(u64, u64, String)]| -> usize {
-        // Index of the symbol containing pc (or nearest preceding).
         match symbols.binary_search_by(|(addr, _, _)| addr.cmp(&pc)) {
             Ok(i) => i,
             Err(0) => usize::MAX,
@@ -99,7 +96,6 @@ pub fn run(
         })
         .transpose()?;
 
-    // --pcs-of: per-PC row histogram inside one symbol (phase split of a function).
     let pc_range: Option<(u64, u64)> = pcs_of
         .as_deref()
         .map(|needle| -> Result<_> {
@@ -112,7 +108,6 @@ pub fn run(
         })
         .transpose()?;
     let mut pc_rows: HashMap<u64, u64> = HashMap::new();
-    // --entries: entry counts (PC == symbol start) of every matching symbol.
     let entry_syms: Vec<(u64, String)> = symbols
         .iter()
         .filter(|(_, _, n)| entries.iter().any(|e| n.contains(e)))
@@ -244,7 +239,6 @@ pub fn run(
     );
 
     if split_markers {
-        // Per-marker totals + top symbols inside each marker span.
         let mut per_label: HashMap<u16, u64> = HashMap::new();
         for ((label, _), n) in &marker_samples {
             *per_label.entry(*label).or_default() += n;
@@ -271,7 +265,6 @@ pub fn run(
         }
 
         if let Some(path) = json_out {
-            // Full (marker, symbol) matrix for offline analysis.
             let mut by_label: HashMap<u16, Vec<(usize, u64)>> = HashMap::new();
             for ((label, sym), n) in &marker_samples {
                 by_label.entry(*label).or_default().push((*sym, *n));

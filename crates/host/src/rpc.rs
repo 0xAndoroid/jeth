@@ -90,13 +90,11 @@ impl RpcClient {
     }
 }
 
-/// Decode a `0x…` hex quantity into u64.
 pub fn parse_quantity(v: &Value) -> Result<u64> {
     let s = v.as_str().context("quantity not a string")?;
     u64::from_str_radix(s.trim_start_matches("0x"), 16).context("bad hex quantity")
 }
 
-/// Decode a `0x…` hex blob into bytes.
 pub fn parse_hex_bytes(v: &Value) -> Result<Vec<u8>> {
     let s = v.as_str().context("hex blob not a string")?;
     alloy_primitives::hex::decode(s).context("bad hex blob")

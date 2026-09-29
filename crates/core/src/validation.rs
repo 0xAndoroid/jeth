@@ -69,7 +69,6 @@ pub struct ValidatedBlock {
 }
 
 /// Stateless validation with the tx loop expanded in-line (see module docs).
-// The enumerate index feeds the per-tx markers, which are feature-gated.
 #[expect(
     clippy::unused_enumerate_index,
     reason = "The transaction index is consumed only by guest instrumentation."
@@ -252,7 +251,6 @@ pub enum CodeMap {
 }
 
 impl CodeMap {
-    /// Build from witness codes + their (computed or trusted) hashes.
     pub fn build<'a>(codes: impl Iterator<Item = (B256, &'a Bytes)>) -> Self {
         #[cfg(feature = "lazy-analysis")]
         {

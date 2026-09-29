@@ -73,7 +73,6 @@ use reth_trie_common::HashedPostState;
 use revm_bytecode::Bytecode;
 use zeth_mpt::CachedTrie;
 
-/// Zero-overhead helper for tries that only contain RLP encoded data.
 #[derive(Debug, Clone, Default)]
 #[repr(transparent)]
 struct RlpTrie<T> {
@@ -90,8 +89,6 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
     }
 
     pub fn from_resolver(root: B256, resolver: &mut WitnessResolver) -> alloy_rlp::Result<Self> {
-        // jeth: zero-copy decode — leaf values reference the witness bytes;
-        // digests resolve through the advice-indexed resolver (no map).
         Ok(Self::new(CachedTrie::from_resolver_zc(root, resolver)?))
     }
 
@@ -126,24 +123,18 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
     }
 }
 
-/// Represents a sparse version of the Ethereum world state.
-/// This is significantly more performant than the Reth default.
-///
 /// Storage tries are never materialized for reads —
 /// `storage()` byte-walks raw witness RLP anchored at the account's
 /// `storage_root` (recorded by `account()`); tries exist only for WRITTEN
 /// accounts, created at post-root and hydrated on demand along dirty paths.
 #[derive(Debug, Clone)]
 pub struct SparseState {
-    /// state MPT containing all used accounts (still eagerly revealed)
     state: RlpTrie<TrieAccount>,
-    /// storage tries of written accounts — created at post-root only
     storages: B256IndexMap<RlpTrie<U256>>,
     /// hashed_address → storage_root (as words), recorded on every successful
     /// `account()` (pre-state leaves are immutable during execution, so
     /// re-records agree)
     storage_roots: RefCell<B256IndexMap<[u64; 4]>>,
-    /// advice-indexed digest→witness-slot resolver (replaces `rlp_by_digest`).
     resolver: RefCell<WitnessResolver>,
     address_hashes: RefCell<AddressMemo>,
     /// slot → keccak(slot): address-independent, so one entry serves every
@@ -156,7 +147,6 @@ pub struct SparseState {
 }
 
 impl SparseState {
-    /// Removes an account from the state.
     fn remove_account(&mut self, hashed_address: &B256) {
         self.state.remove(hashed_address);
         self.storages.swap_remove(hashed_address);
@@ -200,8 +190,6 @@ impl SparseState {
         #[cfg(feature = "premeasure")]
         crate::premeasure::STATE_BUILD.record();
 
-        // hash all the supplied bytecode (or adopt trusted hashes); analysis is
-        // deferred per the CodeMap policy.
         let codes = crate::validation::CodeMap::build(match trusted {
             Some((_, code_hashes)) => itertools_either::Either::Left(
                 code_hashes
@@ -251,7 +239,6 @@ mod itertools_either {
 }
 
 impl StatelessTrie for SparseState {
-    /// Initialize the stateless trie using the `ExecutionWitness`.
     fn new(
         witness: &ExecutionWitness,
         pre_state_root: B256,
@@ -260,18 +247,13 @@ impl StatelessTrie for SparseState {
             state_digests.len() == witness.state.len() && code_hashes.len() == witness.codes.len()
         });
 
-        // digest resolution goes through the advice-indexed resolver: no map
-        // build — self-verifying mode keccaks each witness entry at first
-        // resolve (memoized), trusted mode seeds the memo from the blob.
         let mut resolver = WitnessResolver::new(&witness.state, trusted.map(|(s, _)| s));
 
-        // construct the state trie from the witness data and the given state root
         let state = RlpTrie::from_resolver(pre_state_root, &mut resolver)
             .map_err(|_| StatelessTrieError::WitnessRevealFailed { pre_state_root })?;
         #[cfg(feature = "premeasure")]
         crate::premeasure::STATE_BUILD.record();
 
-        // hash all the supplied bytecode (or adopt trusted hashes)
         let bytecode = match trusted {
             Some((_, code_hashes)) => code_hashes
                 .iter()
@@ -303,7 +285,6 @@ impl StatelessTrie for SparseState {
         ))
     }
 
-    /// Returns the `TrieAccount` that corresponds to the `Address`.
     fn account(&self, address: Address) -> Result<Option<TrieAccount>, WitnessDbError> {
         let words = address_words(&address);
         let hashed_address = {
@@ -334,7 +315,6 @@ impl StatelessTrie for SparseState {
         }
     }
 
-    /// Returns the storage slot value that corresponds to the given (address, slot) tuple.
     fn storage(&self, address: Address, slot: U256) -> Result<U256, WitnessDbError> {
         // storage() is always called after account(), so the anchor must exist
         // (same revm-enforced invariant as the old trie-must-exist unwrap)
@@ -365,7 +345,6 @@ impl StatelessTrie for SparseState {
             .unwrap_or(U256::ZERO))
     }
 
-    /// Computes the new state root from the HashedPostState.
     fn calculate_state_root(&mut self, state: HashedPostState) -> Result<B256, StatelessTrieError> {
         #[cfg(feature = "premeasure")]
         crate::premeasure::EXEC_END.record();
@@ -386,19 +365,14 @@ impl StatelessTrie for SparseState {
         let mut accounts: Vec<_> = state.accounts.into_iter().collect();
         accounts.sort_unstable_by_key(|(hashed_address, _)| *hashed_address);
         for (hashed_address, account) in accounts {
-            // nonexisting accounts must be removed from the state
             let Some(account) = account else {
                 removed_accounts.push(hashed_address);
                 continue;
             };
 
-            // storage-trie creation rules
             let storage_root = match state.storages.get(&hashed_address) {
-                // no storage changes → cached root passthrough, zero work
                 None => match storage_roots.get(&hashed_address) {
                     Some(root) => b256_from_le_words(*root),
-                    // never read during execution: fall back to the (pre-state)
-                    // account leaf, exactly like the old storage_trie_mut
                     None => state_trie
                         .get(hashed_address)
                         .map_err(|_| StatelessTrieError::StatelessStateRootCalculationFailed)?
@@ -417,10 +391,6 @@ impl StatelessTrie for SparseState {
                         match storages.entry(hashed_address) {
                             Entry::Occupied(entry) => entry.into_mut(),
                             Entry::Vacant(entry) => {
-                                // anchor at the recorded root (or the pre-state
-                                // leaf); EMPTY_ROOT_HASH → empty trie, no
-                                // resolver call; everything else stays a stub
-                                // hydrated on demand by the mutations below
                                 let anchor = match storage_roots.get(&hashed_address) {
                                     Some(root) => b256_from_le_words(*root),
                                     None => state_trie
@@ -435,10 +405,8 @@ impl StatelessTrie for SparseState {
                         }
                     };
 
-                    // sort storage updates by hashed slot
                     let mut slots: Vec<_> = storage.storage.iter().collect();
                     slots.sort_unstable_by_key(|(hashed_key, _)| *hashed_key);
-                    // apply all state modifications
                     for &(hashed_key, value) in &slots {
                         if !value.is_zero() {
                             storage_trie.insert_with(hashed_key, *value, resolver);
@@ -456,7 +424,6 @@ impl StatelessTrie for SparseState {
                 }
             };
 
-            // update/insert the account after all changes have been processed
             let account = TrieAccount {
                 nonce: account.nonce,
                 balance: account.balance,

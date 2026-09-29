@@ -37,7 +37,6 @@ fn guest_target_dir() -> String {
     std::env::var("JETH_GUEST_TARGET_DIR").unwrap_or_else(|_| DEFAULT_GUEST_TARGET_DIR.to_string())
 }
 
-/// Guest entry point variant.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Variant {
     /// Committed input (fully self-verifying — the headline configuration).
@@ -306,7 +305,6 @@ pub fn run(
         ),
     };
 
-    // Advice two-pass: pass 1 populates the tape from the compute_advice ELF.
     let tape = advice_pass1(
         variant,
         extra_features,
@@ -357,7 +355,6 @@ pub fn run(
         trace_rows as f64 / result.gas_used as f64
     );
 
-    // Persist a machine-readable summary next to the input for report assembly.
     let summary = serde_json::json!({
         "input": input_path,
         "variant": variant.func(),

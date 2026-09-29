@@ -46,7 +46,6 @@ impl Montgomery {
         })
     }
 
-    /// Loads four limbs from `base + offset`.
     fn load(&mut self, base: u8, offset: i64) -> Result<Limbs, ExpansionError> {
         let regs: Limbs = self.asm.allocate_inline_array()?;
         for (i, reg) in regs.iter().enumerate() {

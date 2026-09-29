@@ -66,7 +66,6 @@ const fn le_words_const(bytes: [u8; 32]) -> [u64; 4] {
     words
 }
 
-/// [`EMPTY_ROOT_HASH`] as words.
 pub(crate) const EMPTY_ROOT_WORDS: [u64; 4] = le_words_const(EMPTY_ROOT_HASH.0);
 
 /// keccak(witness[i]) memo: 8-aligned `[u64; 4]` entries + presence bitmap —
@@ -74,7 +73,6 @@ pub(crate) const EMPTY_ROOT_WORDS: [u64; 4] = le_words_const(EMPTY_ROOT_HASH.0);
 /// load byte-expands 5–10× under Jolt's sub-word lowering).
 #[derive(Debug, Clone)]
 pub struct WitnessResolver {
-    /// Witness state entries in witness order (refcounted `Bytes` views).
     witness: Vec<Bytes>,
     verified: Vec<[u64; 4]>,
     verified_set: Vec<u64>,

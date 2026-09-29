@@ -71,7 +71,6 @@ impl<const K: usize> KeccakMemo<K> {
         (folded.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
     }
 
-    /// The digest memoized for `key`, or `digest()` recorded for it.
     #[inline(always)]
     fn get_or_insert_with(&mut self, key: [u64; K], digest: impl FnOnce() -> [u64; 4]) -> [u64; 4] {
         let mask = self.entries.len() - 1;
@@ -92,8 +91,6 @@ impl<const K: usize> KeccakMemo<K> {
         }
     }
 
-    /// Miss path, kept out of line so the hit path above stays a few
-    /// instructions with no frame of its own.
     #[cold]
     #[inline(never)]
     fn insert_at(
@@ -143,7 +140,6 @@ impl AlignedB256 {
         Self(b256_from_le_words(words))
     }
 
-    /// The four little-endian words (whole-word loads: the bytes are 8-aligned).
     #[inline(always)]
     pub(crate) fn words(&self) -> [u64; 4] {
         let bytes = &self.0 .0;
@@ -299,7 +295,6 @@ mod tests {
             bytes[8..16].copy_from_slice(&next().to_le_bytes());
             bytes[16..].copy_from_slice(&(next() as u32).to_le_bytes());
             addresses.push(Address::from(bytes));
-            // half small slot numbers, half hash-like
             slots.push(if i % 2 == 0 {
                 U256::from(i)
             } else {
@@ -318,7 +313,6 @@ mod tests {
         }
         assert!(address_memo.borrow().entries.len() >= 16_384);
         assert_eq!(core::mem::align_of::<AlignedB256>(), 8);
-        // every source alignment of the address bytes gathers the same words
         let mut buffer = [0u8; 28];
         for offset in 0..8 {
             buffer[offset..offset + 20].copy_from_slice(addresses[0].as_slice());
@@ -386,7 +380,6 @@ mod tests {
                 .collect()
         };
         let accounts = [
-            // changed account: read slots 0/7, plus slot 9 written without a read
             (
                 address(1),
                 BundleAccount::new(
@@ -400,7 +393,6 @@ mod tests {
                     AccountStatus::Changed,
                 ),
             ),
-            // created (never in the pre-state): slots never read; shares slot 0
             (
                 address(2),
                 BundleAccount::new(
@@ -410,7 +402,6 @@ mod tests {
                     AccountStatus::InMemoryChange,
                 ),
             ),
-            // destroyed: wiped storage, no slots
             (
                 address(3),
                 BundleAccount::new(
@@ -420,7 +411,6 @@ mod tests {
                     AccountStatus::Destroyed,
                 ),
             ),
-            // destroyed and recreated in the same block
             (
                 address(4),
                 BundleAccount::new(
@@ -430,7 +420,6 @@ mod tests {
                     AccountStatus::DestroyedChanged,
                 ),
             ),
-            // balance-only change
             (
                 address(5),
                 BundleAccount::new(
@@ -440,7 +429,6 @@ mod tests {
                     AccountStatus::Changed,
                 ),
             ),
-            // touched but non-existent
             (
                 address(6),
                 BundleAccount::new(

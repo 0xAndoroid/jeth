@@ -144,7 +144,6 @@ mod tests {
             check(point, &random_bytes(&mut state));
         }
 
-        // Rejections: off-curve point, non-canonical coordinate (x = p).
         let mut off_curve = [0u8; 64];
         off_curve[31] = 1;
         off_curve[63] = 1;

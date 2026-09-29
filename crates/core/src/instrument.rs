@@ -48,7 +48,6 @@ impl InstrumentedTrie {
         result.map(|(inner, codes)| (Self(inner), codes))
     }
 
-    /// [`crate::zeth_trie::SparseState::hashed_post_state`].
     pub fn hashed_post_state<'a>(
         &self,
         state: impl IntoIterator<Item = (&'a Address, &'a BundleAccount)>,
@@ -56,7 +55,6 @@ impl InstrumentedTrie {
         self.0.hashed_post_state(state)
     }
 
-    /// [`crate::zeth_trie::SparseState::hashed_address`].
     pub fn hashed_address(&self, address: Address) -> B256 {
         self.0.hashed_address(address)
     }

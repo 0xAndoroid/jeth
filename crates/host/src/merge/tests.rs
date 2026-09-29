@@ -61,7 +61,6 @@ fn rewritten_parent_makes_synthetic_header_valid() {
     ] {
         let (rewritten, rewrites) =
             rewrite_parent(&original, gas_limit, base_fee, excess_target, blob_params);
-        // Pre-state root and grandparent link survive the rewrite.
         assert_eq!(rewritten.state_root, original.state_root);
         assert_eq!(rewritten.parent_hash, original.parent_hash);
         assert_eq!(rewritten.number, original.number);

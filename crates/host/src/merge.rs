@@ -52,7 +52,6 @@ use tries::StatelessTrie;
 const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 /// BLOCKHASH ancestor window enforced by the stateless validator.
 const ANCESTOR_LIMIT: usize = 256;
-/// Default gas-limit rounding granularity.
 const GAS_LIMIT_STEP: u64 = 1_000_000;
 const MAX_PASSES: usize = 8;
 
@@ -64,7 +63,6 @@ struct Source {
     witness: ExecutionWitness,
 }
 
-/// A candidate transaction of the merged block.
 #[derive(Clone)]
 struct Cand {
     tx: TransactionSigned,

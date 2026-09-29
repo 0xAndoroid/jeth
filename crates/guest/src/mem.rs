@@ -64,7 +64,6 @@ unsafe fn gather(cur: u64, next: u64, shift: u32) -> u64 {
     (cur >> shift) | (next << (64 - shift))
 }
 
-/// Load the aligned word containing `p`.
 #[inline(always)]
 unsafe fn word_at(p: *const u8) -> u64 {
     read_volatile(((p as usize) & !7) as *const u64)
@@ -78,7 +77,7 @@ unsafe fn load_le_partial(s: *const u8, n: usize) -> u64 {
     debug_assert!(n >= 1 && n <= 8);
     let off = (s as usize) & 7;
     let lo = word_at(s) >> (off * 8);
-    let have = 8 - off; // bytes available from the first word
+    let have = 8 - off;
     let v = if n > have {
         // needed span crosses into the next aligned word (which then contains
         // live bytes) — combine.
@@ -101,10 +100,9 @@ unsafe fn store_le_partial(d: *mut u8, v: u64, n: usize) {
     debug_assert!(n >= 1 && n <= 8);
     let off = (d as usize) & 7;
     let base = ((d as usize) & !7) as *mut u64;
-    let fit = 8 - off; // bytes that land in the first word
+    let fit = 8 - off;
     let n0 = n.min(fit);
     {
-        // merge low n0 bytes of v at byte offset `off`
         let mask = if n0 == 8 {
             u64::MAX
         } else {
@@ -140,8 +138,6 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
         return dst;
     }
 
-    // n > 16: align the DESTINATION to 8 with one partial store, stream whole
-    // words, finish with one partial store.
     let mut d = dst;
     let mut s = src;
     let mut rem = n;
@@ -279,7 +275,6 @@ fn first_diff_sign(x: u64, y: u64) -> i32 {
 }
 
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
-    // Compare 8 bytes at a time. Sub-word accesses appear nowhere.
     let mut i = 0usize;
     // Co-aligned fast path (the common case: 32-byte hash equality between
     // 8-aligned heap objects): one aligned load per side per word after a
@@ -378,7 +373,6 @@ mod tests {
             expect[doff..doff + n].copy_from_slice(&src[soff..soff + n]);
             assert_eq!(dst, expect, "memcpy n={n} soff={soff} doff={doff}");
 
-            // memset
             let val = (xorshift(&mut rng) & 0xff) as i32;
             unsafe {
                 jmemset(dst.as_mut_ptr().add(doff), val, n);
@@ -386,7 +380,6 @@ mod tests {
             expect[doff..doff + n].fill(val as u8);
             assert_eq!(dst, expect, "memset n={n} doff={doff} val={val}");
 
-            // memcmp (equal + first-difference sign)
             let r = unsafe { jmemcmp(dst.as_ptr().add(doff), expect.as_ptr().add(doff), n) };
             assert_eq!(r, 0);
             if n > 0 {
