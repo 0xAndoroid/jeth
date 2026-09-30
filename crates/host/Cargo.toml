@@ -40,7 +40,7 @@ ureq.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# jolt tracer stack (path deps into the read-only keccak-9340a77 worktree).
+# jolt tracer stack.
 # jolt-inlines-keccak256 "host" registers the inline's opcode handler with the
 # tracer via inventory — without it the emulator panics on the guest's keccak insn.
 tracer.workspace = true

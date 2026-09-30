@@ -1331,6 +1331,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 [[package]]
 name = "common"
 version = "0.2.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
@@ -2474,6 +2475,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-bigint"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "jolt-inlines-sdk",
 ]
@@ -2481,6 +2483,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-blake2"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "jolt-inlines-sdk",
 ]
@@ -2488,6 +2491,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "jolt-inlines-sdk",
 ]
@@ -2495,6 +2499,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-p256"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
@@ -2507,6 +2512,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-sdk"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "inventory",
  "jolt-platform",
@@ -2520,6 +2526,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-secp256k1"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-secp256k1",
@@ -2532,6 +2539,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "jolt-inlines-sdk",
 ]
@@ -2539,6 +2547,7 @@ dependencies = [
 [[package]]
 name = "jolt-platform"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -2548,6 +2557,7 @@ dependencies = [
 [[package]]
 name = "jolt-program"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "common",
@@ -2560,6 +2570,7 @@ dependencies = [
 [[package]]
 name = "jolt-riscv"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "serde",
@@ -2570,6 +2581,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -2584,6 +2596,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "common",
  "proc-macro2",
@@ -4732,6 +4745,7 @@ dependencies = [
 [[package]]
 name = "tracer"
 version = "0.2.0"
+source = "git+https://github.com/a16z/jolt?rev=d4c3ca05db4664a004f13386219293841d01ba5a#d4c3ca05db4664a004f13386219293841d01ba5a"
 dependencies = [
  "addr2line",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",

@@ -30,7 +30,7 @@ const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
 const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
 const DEFAULT_GUEST_TARGET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/guest");
-const DEFAULT_JOLT_CLI: &str = "/Volumes/Dev/worktrees/jolt/jolt-inlines-b/target/release/jolt";
+const DEFAULT_JOLT_CLI: &str = "jolt";
 
 /// Guest target-dir prefix (this worktree's target/guest); `JETH_GUEST_TARGET_DIR` overrides it.
 fn guest_target_dir() -> String {
