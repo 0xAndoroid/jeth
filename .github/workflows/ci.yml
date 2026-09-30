@@ -25,10 +25,8 @@ jobs:
         with:
           toolchain: "1.95"
           components: rustfmt
-      # `cargo fmt` needs `cargo metadata`, which fails here: the workspace has
-      # path deps on a local jolt worktree that is not available on GitHub.
-      # Run rustfmt directly on first-party sources instead (vendor/ is
-      # upstream code with its own formatting and is excluded).
+      # rustfmt directly: covers the standalone crates/guest package too and
+      # needs no dependency fetch (vendor/ is upstream code and is excluded).
       - name: rustfmt --check
         run: |
           git ls-files 'crates/*.rs' ':!crates/vendor/**' \
@@ -36,6 +34,27 @@ jobs:
 
       - if: always()
         run: echo "rustfmt wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09-12
+        with:
+          toolchain: "1.95"
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --all --all-targets -q --message-format=short -- -D warnings
+      - if: always()
+        run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
   typos:
     name: typos
