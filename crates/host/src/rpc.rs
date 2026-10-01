@@ -22,9 +22,10 @@ impl RpcClient {
     pub fn new(endpoints: Vec<String>) -> Self {
         // Generous: a zeth-rpc-proxy witness rebuild re-executes the block against
         // upstream getProof/getCode and can take many minutes on free endpoints.
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_hours(1))
-            .build();
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_hours(1)))
+            .build()
+            .into();
         Self { endpoints, agent }
     }
 
@@ -65,14 +66,17 @@ impl RpcClient {
         let mut attempts = 0;
         let resp: Value = loop {
             attempts += 1;
-            match self
-                .agent
-                .post(endpoint)
-                .set("Content-Type", "application/json")
-                .send_json(body.clone())
-            {
-                Ok(resp) => break resp.into_json().context("invalid JSON response")?,
-                Err(ureq::Error::Status(429, _)) if attempts < 5 => {
+            match self.agent.post(endpoint).send_json(&body) {
+                // Witness responses exceed ureq's default 10 MiB body limit.
+                Ok(resp) => {
+                    break resp
+                        .into_body()
+                        .with_config()
+                        .limit(u64::MAX)
+                        .read_json()
+                        .context("invalid JSON response")?
+                }
+                Err(ureq::Error::StatusCode(429)) if attempts < 5 => {
                     tracing::warn!("429 from {endpoint}, backing off {}s", 2 * attempts);
                     std::thread::sleep(Duration::from_secs(2 * attempts));
                 }
