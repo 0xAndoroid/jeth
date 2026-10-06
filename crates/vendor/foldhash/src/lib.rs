@@ -290,42 +290,50 @@ unsafe fn load(bytes: &[u8], offset: usize) -> u64 {
 /// that contain them costs 1-2 `ld` + 3 ALU ops instead, and yields exactly the
 /// bytes the unaligned read would (native = little endian on the guest).
 ///
-/// Soundness of the over-read: see the module comment of the guest's
-/// `crates/guest/src/mem.rs`. Jolt guest RAM is one flat, word-granular address
-/// space whose regions all start 8-aligned, so the aligned word holding a live
-/// byte is always inside mapped memory, and only words containing at least one
-/// live byte of the caller's range are loaded. The loads are volatile, but LLVM
-/// assumes an 8-byte access never touches an allocation smaller than 8 bytes and
-/// may drop the stores filling one; every caller here reads 8 bytes of a slice
-/// with len >= 8, so the allocation always spans a word. Compiled for the
-/// guest target and for the host unit test only; native builds keep the
-/// upstream reads.
-#[cfg(any(target_arch = "riscv64", test))]
+/// Soundness of the over-read: the containing words reach up to 7 bytes past
+/// the caller's range, which no Rust memory access may touch, so each word is
+/// read by an inline-asm `ld` that the abstract machine and LLVM see only as an
+/// opaque read through the pointer; the bytes outside the range are shifted out.
+/// The machine-level load is in bounds because Jolt guest RAM is one flat,
+/// word-granular address space whose regions all start 8-aligned (see the
+/// module comment of the guest's `crates/guest/src/mem.rs`), and only words
+/// containing at least one live byte of the caller's range are loaded.
+/// Guest target only; native builds keep the upstream reads.
+#[cfg(target_arch = "riscv64")]
 mod gather {
+    use core::arch::asm;
+
     /// Read the `n` (4 or 8) bytes at `p` into the low bytes of a `u64`,
     /// little-endian, using only aligned word loads of words that contain
     /// live bytes of `p..p + n`. Bits above `8 * n` are unspecified.
     ///
     /// # Safety
     /// `p..p + n` must be readable, and the aligned words containing that
-    /// range must be mapped (true on the Jolt guest, see the module comment;
-    /// the host test provides an aligned buffer around the range).
+    /// range must be mapped (true on the Jolt guest, see the module comment).
     #[inline(always)]
     pub(crate) unsafe fn load_le(p: *const u8, n: usize) -> u64 {
         debug_assert!(n == 4 || n == 8);
         let addr = p as usize;
         let k = addr & 7;
         let a = (addr & !7) as *const u64;
+        let w0: u64;
         // SAFETY: `a` is the aligned word containing byte `p`, a live byte of
         // the caller's range (precondition), hence mapped.
-        let w0 = unsafe { core::ptr::read_volatile(a) };
+        unsafe {
+            asm!("ld {w}, 0({a})", a = in(reg) a, w = lateout(reg) w0,
+                 options(pure, readonly, nostack, preserves_flags));
+        }
         let s = (k * 8) as u32;
         if k + n <= 8 {
             return w0 >> s;
         }
+        let w1: u64;
         // SAFETY: k + n > 8, so `p..p + n` spills into the next aligned word,
         // which therefore holds live bytes of the range and is mapped.
-        let w1 = unsafe { core::ptr::read_volatile(a.add(1)) };
+        unsafe {
+            asm!("ld {w}, 8({a})", a = in(reg) a, w = lateout(reg) w1,
+                 options(pure, readonly, nostack, preserves_flags));
+        }
         (w0 >> s) | (w1 << (64 - s))
     }
 }
@@ -409,7 +417,7 @@ unsafe fn hash_bytes_long(mut v: &[u8], accumulator: u64, seeds: &[u64; 6]) -> u
     s0 ^ s1
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "riscv64"))]
 mod gather_tests {
     /// The gather must reproduce the unaligned read for every source alignment:
     /// 8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window.

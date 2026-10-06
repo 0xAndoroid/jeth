@@ -148,8 +148,6 @@ impl<const N: usize> Hasher for FbHasher<N> {
 
 #[inline(always)]
 fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
-    // jeth patch: gather only keys of at least one word (see `gather`).
-    let gather = bytes.len() >= 8;
     while let Some((chunk, rest)) = bytes.split_first_chunk() {
         hasher.write_usize(read_ne_usize(chunk));
         bytes = rest;
@@ -162,7 +160,7 @@ fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
     }
     if usize::BITS > 32 {
         if let Some((chunk, rest)) = bytes.split_first_chunk() {
-            hasher.write_u32(if gather { read_ne_u32(chunk) } else { u32::from_ne_bytes(*chunk) });
+            hasher.write_u32(read_ne_u32(chunk));
             bytes = rest;
         }
     }
@@ -183,7 +181,7 @@ fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
 }
 
 /// `usize::from_ne_bytes(*chunk)`, read through the containing-word gather on the guest.
-// Not `const`: the riscv64 branch is a volatile load (crate lint `missing_const_for_fn`).
+// Not `const`: the riscv64 branch is an inline-asm load (crate lint `missing_const_for_fn`).
 #[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
 fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
@@ -199,7 +197,7 @@ fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
 }
 
 /// `u32::from_ne_bytes(*chunk)`, read through the containing-word gather on the guest.
-// Not `const`: the riscv64 branch is a volatile load (crate lint `missing_const_for_fn`).
+// Not `const`: the riscv64 branch is an inline-asm load (crate lint `missing_const_for_fn`).
 #[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
 fn read_ne_u32(chunk: &[u8; 4]) -> u32 {
@@ -223,43 +221,49 @@ fn read_ne_u32(chunk: &[u8; 4]) -> u32 {
 /// or two aligned words that contain them costs 1-2 `ld` + 3 ALU ops instead, and yields
 /// exactly the bytes the byte-wise read would (native = little endian on the guest).
 ///
-/// Soundness of the over-read: see the module comment of the guest's
-/// `crates/guest/src/mem.rs`. Jolt guest RAM is one flat, word-granular address space
-/// whose regions all start 8-aligned, so the aligned word holding a live byte is always
-/// inside mapped memory, and only words containing at least one live byte of the caller's
-/// range are loaded. The loads are volatile, but once inlined LLVM still sees the key's
-/// allocation and assumes an 8-byte access never touches an object smaller than 8 bytes: it
-/// deletes the stores filling such a key (`FbHasher<4>` on a stack key hashed stale stack,
-/// rustc 1.95 riscv64), so `write_bytes_unrolled` gathers only keys of >= 8 bytes. Compiled
-/// for the guest target and for the host unit test only; native builds keep the upstream
-/// reads.
-#[cfg(any(target_arch = "riscv64", test))]
+/// Soundness of the over-read: the containing words reach up to 7 bytes past the key, which
+/// no Rust memory access may touch, so each word is read by an inline-asm `ld` that the
+/// abstract machine and LLVM see only as an opaque read through the pointer; the bytes
+/// outside the key are shifted out (or land in the unspecified high bits). The machine-level
+/// load is in bounds because Jolt guest RAM is one flat, word-granular address space whose
+/// regions all start 8-aligned (see the module comment of the guest's
+/// `crates/guest/src/mem.rs`), and only words containing at least one live byte of the
+/// caller's range are loaded. Guest target only; native builds keep the upstream reads.
+#[cfg(target_arch = "riscv64")]
 mod gather {
+    use core::arch::asm;
+
     /// Read the `n` (4 or 8) bytes at `p` into the low bytes of a `u64`, little-endian,
     /// using only aligned word loads of words that contain live bytes of `p..p + n`.
     /// Bits above `8 * n` are unspecified.
     ///
     /// # Safety
     /// `p..p + n` must be readable, and the aligned words containing that range must be
-    /// mapped (true on the Jolt guest, see the module comment; the host test provides an
-    /// aligned buffer around the range). The allocation holding `p..p + n` must be at least
-    /// 8 bytes (see the module comment).
+    /// mapped (true on the Jolt guest, see the module comment).
     #[inline(always)]
     pub(super) unsafe fn load_le(p: *const u8, n: usize) -> u64 {
         debug_assert!(n == 4 || n == 8);
         let addr = p as usize;
         let k = addr & 7;
         let a = (addr & !7) as *const u64;
+        let w0: u64;
         // SAFETY: `a` is the aligned word containing byte `p`, a live byte of the caller's
         // range (precondition), hence mapped.
-        let w0 = unsafe { core::ptr::read_volatile(a) };
+        unsafe {
+            asm!("ld {w}, 0({a})", a = in(reg) a, w = lateout(reg) w0,
+                 options(pure, readonly, nostack, preserves_flags));
+        }
         let s = (k * 8) as u32;
         if k + n <= 8 {
             return w0 >> s;
         }
+        let w1: u64;
         // SAFETY: k + n > 8, so `p..p + n` spills into the next aligned word, which
         // therefore holds live bytes of the range and is mapped.
-        let w1 = unsafe { core::ptr::read_volatile(a.add(1)) };
+        unsafe {
+            asm!("ld {w}, 8({a})", a = in(reg) a, w = lateout(reg) w1,
+                 options(pure, readonly, nostack, preserves_flags));
+        }
         (w0 >> s) | (w1 << (64 - s))
     }
 }
@@ -274,6 +278,7 @@ mod tests {
 
     /// jeth patch: the gather must reproduce the byte-wise read for every source
     /// alignment (8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window).
+    #[cfg(target_arch = "riscv64")]
     #[test]
     fn gather_matches_from_ne_bytes() {
         #[repr(align(8))]
@@ -292,6 +297,41 @@ mod tests {
                 assert_eq!(unsafe { gather::load_le(p, 4) } as u32, want4, "u32 at {at}");
             }
         }
+    }
+
+    /// jeth patch: on riscv64 `FbHasher::write` reads key chunks through `gather`; it must
+    /// feed the hasher the `from_ne_bytes` chunks at every key length and source alignment.
+    #[cfg(target_arch = "riscv64")]
+    #[test]
+    fn write_gather_matches_from_ne_bytes() {
+        fn check<const N: usize>(buf: &[u8; 48]) {
+            let build = FbBuildHasher::<N>::default();
+            for off in 0..8 {
+                let key = &buf[off..off + N];
+                let mut got = build.build_hasher();
+                got.write(key);
+                let mut want = build.build_hasher();
+                let mut rest = key;
+                while let Some((c, r)) = rest.split_first_chunk() {
+                    want.inner.write_usize(usize::from_ne_bytes(*c));
+                    rest = r;
+                }
+                if let Some((c, r)) = rest.split_first_chunk() {
+                    want.inner.write_u32(u32::from_ne_bytes(*c));
+                    rest = r;
+                }
+                if let Some((c, r)) = rest.split_first_chunk() {
+                    want.inner.write_u16(u16::from_ne_bytes(*c));
+                    rest = r;
+                }
+                if let Some(&b) = rest.first() {
+                    want.inner.write_u8(b);
+                }
+                assert_eq!(got.finish(), want.finish(), "N={N} off={off}");
+            }
+        }
+        let buf: [u8; 48] = core::array::from_fn(|i| (i as u8).wrapping_mul(0x9d) ^ 0x5a);
+        ruint::const_for!(N in [4, 5, 7, 8, 12, 15, 20, 31, 32] { check::<N>(&buf); });
     }
 
     #[test]
