@@ -8,13 +8,13 @@ default = []
 host = ["jolt-inlines-sdk/host"]
 
 [dependencies]
-jolt-inlines-sdk = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
+jolt-inlines-sdk = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
 
 [dev-dependencies]
 jeth-inlines-blake2f = { path = ".", features = ["host"] }
-jolt-inlines-sdk = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false, features = ["test-utils"] }
+jolt-inlines-sdk = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false, features = ["test-utils"] }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
-tracer = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", features = ["std", "test-utils"] }
+tracer = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", features = ["std", "test-utils"] }
 
 [lints]
 workspace = true
