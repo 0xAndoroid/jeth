@@ -38,14 +38,12 @@ revm-interpreter = { version = "35.0.1", default-features = false, features = ["
 # KECCAK256 opcode, address derivation) to our `native_keccak256` shim → Jolt inline.
 alloy-primitives = { version = "1.5", default-features = false, features = ["native-keccak"] }
 
-serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
-
 # once_cell(critical-section) inside reth-primitives-traits needs a provider on
 # bare metal; the Jolt guest is single-hart with no interrupts → no-op impl.
 critical-section = "1.2"
 
 # Word-wise Stack::exchange (SWAP1-16 measured at 16.9% of trace rows via the
-# untyped byte-swap codegen). One-function patch; see crates/vendor/README.
+# untyped byte-swap codegen). One-function patch.
 #
 # alloy-eip7702: EIP-7702 authority recovery routed through the Jolt secp256k1
 # inline via the guest's jeth_ecrecover_prehash hook (software k256 measured at

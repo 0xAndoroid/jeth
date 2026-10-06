@@ -49,7 +49,7 @@ HOST (jeth CLI, native)                          GUEST (Jolt RV64IMAC, no_std)
 | Trace w/o proving | `tracer::trace_lazy(...) -> impl Iterator<Item = Cycle>` — streaming, `.count()` materializes nothing. `Program::trace()` / macro `trace_{f}` materialize `Vec<Cycle>` at **96 B/cycle** (2^30 cycles ≈ 96+ GiB — do not). `trace_to_file` streams postcard batches. `analyze_{f}` → per-instruction histogram. | `tracer/src/lib.rs:79,162`, `tracer/src/instruction/mod.rs:2044` |
 | `max_trace_length` | **No effect on tracing** — only checked at prove time (`prover.rs:349-361`). No chunking needed for cycle counting. | `jolt-sdk/macros`, `crates/jolt-prover-legacy/src/zkvm/prover.rs` |
 | Cycle markers | Guest: `jolt::start_cycle_tracking("label")` / `end_cycle_tracking` → tracer logs `"{label}": {real} RV64IMAC cycles + {virtual} = {total}` via `tracing::info`. Caveat: marker string pointer truncated to u32 → keep guest address space < 4 GiB (0x80000000 + heap ≤ 1.5 GiB is safe). | `jolt-platform/src/cycle_tracking.rs`, `tracer/src/emulator/cpu.rs:1032-1074` |
-| **Tracer branch — REQUIRED** | PR #1717 (12–23× tracer) is **NOT on main**. Main's guest memory is `HashMap<usize,u64>` per doubleword — every access hashes; a ~1 GiB-heap guest would crawl. Use branch **`merge-1717-main` @ `af1c2aef5c`** (2026-08-06, = #1717 merged with current main; flat `Vec<u64>` memory, pre-decoded instruction cache, execute-only path, `TRACER_PARALLEL`). Existing read-only worktree: `/Volumes/Dev/worktrees/jolt/merge-1717-main` (same commit as `~/dev/jolt/.worktrees/tracer-100mhz`). Post-#1717 throughput: ~16–26 MHz on example guests (M4). Reference counting harness: `crates/jolt-prover-legacy/examples/trace_bench.rs` (branch-only). | `tracer/src/emulator/memory.rs`, branch commits `785edc12b5`, `b95f4726d1` |
+| **Tracer branch — REQUIRED** | PR #1717 (12–23× tracer) is **NOT on main**. Main's guest memory is `HashMap<usize,u64>` per doubleword — every access hashes; a ~1 GiB-heap guest would crawl. Use branch **`merge-1717-main` @ `af1c2aef5c`** (2026-08-06, = #1717 merged with current main; flat `Vec<u64>` memory, pre-decoded instruction cache, execute-only path, `TRACER_PARALLEL`). Post-#1717 throughput: ~16–26 MHz on example guests (M4). Reference counting harness: `crates/jolt-prover-legacy/examples/trace_bench.rs` (branch-only). | `tracer/src/emulator/memory.rs`, branch commits `785edc12b5`, `b95f4726d1` |
 | Keccak inline | **Exists:** `jolt-inlines-keccak256` (opcode 0x0B, funct3 0x00, funct7 0x01 = Keccak-f[1600]). Guest API: `Keccak256::{new, update, finalize, digest}`. Host must link the crate with `features=["host"]` (inventory registration) — works in **trace-only** mode, purely emulator-level. Cost: 64 B digest = 3,680 cycles vs 7,562 software; 2 KiB = 53,880 vs 131,971 (~2–2.5×). | `jolt-inlines/keccak256/`, `examples/sha3-chain/`, `examples/hash-bench/README.md` |
 | Other inlines | sha2, blake2, blake3, bigint (256-bit mul), **secp256k1** (field/point ops + `ecdsa_verify` — no ecrecover API), p256, grumpkin. No memcpy inline. | `jolt-inlines/`, `crates/jolt-riscv/src/profile.rs:34-43` |
 | No keccak patches exist | No `[patch.crates-io]`, no tiny-keccak/sha3/alloy shims anywhere in the Jolt repo — wiring revm's keccak to the inline is **jeth's job** (§2 D3). | repo-wide grep |
@@ -102,7 +102,7 @@ HOST (jeth CLI, native)                          GUEST (Jolt RV64IMAC, no_std)
 Why: no_std, purpose-built for zkVM guests, complete consensus validation (not just state root), proven inside risc0 by zeth 0.3, maintained by the reth team. Rejected: rsp-style custom `ClientExecutor` (own MPT + more surface to get wrong); raw revm + own witness DB (reimplements everything `tries` already does). Start from zeth's rev `6e55612`; bump only if Osaka-era mainnet blocks demand it (check first that the rev's reth pin executes Osaka; zeth runs it on mainnet today, so it does).
 
 **D2. Trace-only via streaming count on Jolt `merge-1717-main` @ `af1c2aef5c`.**
-Why: main's HashMap-backed guest memory makes GB-heap guests pathologically slow; #1717's flat-Vec memory + 12–23× tick loop is required for multi-billion-cycle traces. Streaming (`trace_lazy(...).count()` or the `trace_bench.rs` execute-only harness) avoids 96 B/cycle materialization (2^30 cycles would be ~100 GiB RAM). Cycle markers still fire in this mode (emulator-level `tracing::info` logs, counters from `cpu.trace_len`/`executed_instrs`). Consume Jolt via **path dependencies** into `/Volumes/Dev/worktrees/jolt/merge-1717-main` (read-only; never modify `~/dev/jolt`).
+Why: main's HashMap-backed guest memory makes GB-heap guests pathologically slow; #1717's flat-Vec memory + 12–23× tick loop is required for multi-billion-cycle traces. Streaming (`trace_lazy(...).count()` or the `trace_bench.rs` execute-only harness) avoids 96 B/cycle materialization (2^30 cycles would be ~100 GiB RAM). Cycle markers still fire in this mode (emulator-level `tracing::info` logs, counters from `cpu.trace_len`/`executed_instrs`). Consume Jolt as git dependencies on `a16z/jolt`, pinned by rev in the root `Cargo.toml`.
 
 **D3. Keccak → Jolt inline via alloy's `native-keccak` feature + one shim. (The keccak-inline answer: YES, Jolt has it; wiring is trivial.)**
 Guest crate:
@@ -216,7 +216,7 @@ jeth/
 Pins (start = zeth 0.3's proven set; deviate only with a reason written into RESULTS.md):
 - `stateless`, `tries`: git `paradigmxyz/stateless` rev `6e55612`
 - reth crates: git tag `v2.1.0`; `revm = 38`, `default-features = false`; `alloy` 2.0.x; `alloy-primitives` with `native-keccak` (version = whatever the reth pin resolves; the feature exists in the 1.5+/1.6 line)
-- `jolt-sdk`, `jolt-inlines-keccak256`: **path deps** → `/Volumes/Dev/worktrees/jolt/merge-1717-main` (commit `af1c2aef5c`; read-only)
+- `jolt-sdk`, `jolt-inlines-*`: git deps on `a16z/jolt`, pinned by rev in the root `Cargo.toml`
 - Host: `alloy-provider`/`alloy-rpc-client` (or raw `reqwest` + serde) for the two RPC calls; `postcard`, `clap`, `tracing-subscriber`
 - Toolchain: match Jolt's `rust-toolchain.toml` (1.95); guest built through the `jolt` CLI / macro machinery from that branch
 
@@ -267,7 +267,7 @@ secp256k1 inline for sig-verify (swap `verify_and_compute_signer_unchecked`'s k2
 
 ## 7. References
 
-- Jolt repo facts: local `~/dev/jolt` @ `fbb45f92e9` (paths inline above); branch `merge-1717-main` @ `af1c2aef5c`; worktree `/Volumes/Dev/worktrees/jolt/merge-1717-main`.
+- Jolt repo facts: local `~/dev/jolt` @ `fbb45f92e9` (paths inline above); branch `merge-1717-main` @ `af1c2aef5c`.
 - paradigmxyz/stateless — github.com/paradigmxyz/stateless (validation.rs, tries/src/lib.rs, README riscv64im note).
 - zeth — github.com/boundless-xyz/zeth (guest Cargo.toml = pin reference; crates/rpc-proxy; testdata fixture block 23,446,528).
 - rsp — github.com/succinctlabs/rsp (rpc-db preflight, custom.rs Crypto override, FAQ on eth_getProof providers).

@@ -1,4 +1,4 @@
-//! Synthetic-block harness (dev tool, `.journals/opcode-max-cg-2026-09.md`): build a synthetic block + full-trie witness
+//! Synthetic-block harness (dev tool): build a synthetic block + full-trie witness
 //! from a JSON spec, fix header fields from native validation errors, write
 //! witness.json / block.rlp / meta.json / receipts.json into --out.
 use alloy_consensus::{

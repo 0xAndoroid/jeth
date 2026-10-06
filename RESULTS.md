@@ -167,8 +167,8 @@ without the arena-repr gamble (was estimated 25–27 with it).
 ## Cycle-attribution deep dive (2026-08-06, `jeth txprofile` + `--split-markers`)
 
 Full report: `~/.pika/web/reports/jeth-cycle-attribution-2026-08.html`. New tooling:
-`jeth txprofile` (per-tx cycles × native receipts), `jeth profile --split-markers
---json` (exact marker × symbol row matrix), `scripts/aggregate_profile.py`.
+`jeth txprofile` (per-tx cycles × native receipts), `jeth profile --rows --split-markers
+--json <out.json>` (exact marker × symbol row matrix), `scripts/aggregate_profile.py`.
 
 **Phase × component matrix (25698189, self-verifying, 1,446M rows):**
 
@@ -314,9 +314,10 @@ not measurements.
 - **Inlines:** `jolt-inlines-keccak256` via alloy `native-keccak` shim;
   `jolt-inlines-secp256k1` for tx sig-verify AND the ecrecover precompile (revm
   `Crypto` override, k256-exact semantics incl. high-s normalize + recid flip).
-- **Patches (guest workspace only):** ZeroOS allocator → `crates/alloc-o1` (O(1)
-  size-class; upstreamed as [jolt#1746](https://github.com/a16z/jolt/pull/1746));
-  revm-interpreter 35.0.1 → `crates/vendor/revm-interpreter` (typed `Stack::exchange`).
+- **Patches (guest workspace only):** revm-interpreter 35.0.1 →
+  `crates/vendor/revm-interpreter` (typed `Stack::exchange`). The ZeroOS allocator patch
+  (`crates/alloc-o1`, O(1) size-class) was upstreamed as
+  [jolt#1746](https://github.com/a16z/jolt/pull/1746) and dropped; the crate stays as reference.
 - **Guest:** no_std RV64IMAC, 32 MiB input / 1.5 GiB heap / 32 MiB stack; JEF v1
   input views over block RLP, pubkeys, and witness; word-wise memcpy/memset/memcmp overrides;
   no-op critical-section provider.
@@ -336,9 +337,9 @@ cargo run --release -p jeth-host -- trace --input data/<N>/input.bin [--trusted-
 cargo run --release -p jeth-host -- profile --input data/<N>/input.bin --rows [--callers-of SYM]
 ```
 
-One-time: build the Jolt CLI from `merge-1717-main`
-(`CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/jolt-cli cargo build --release -p jolt`),
-or point `JOLT_PATH` at any `jolt` binary from that branch.
+One-time: install the Jolt CLI at the `a16z/jolt` rev pinned in the root `Cargo.toml`
+(`cargo install --locked --git https://github.com/a16z/jolt --rev <rev> jolt`),
+or point `JOLT_PATH` at a `jolt` binary built from that rev.
 
 ## Notes & caveats
 
