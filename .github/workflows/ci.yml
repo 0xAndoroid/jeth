@@ -80,8 +80,9 @@ jobs:
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
   riscv64:
-    # The vendored crates' riscv64-only word gathers (inline-asm loads) only
-    # compile for the guest arch: run their lib tests on riscv64 Linux under qemu.
+    # The riscv64-only containing-word accesses (inline-asm loads/stores) in the
+    # vendored crates and the guest shims only compile for the guest arch: run
+    # their lib tests on riscv64 Linux under qemu (optimized, assertions on).
     name: riscv64 vendored tests (qemu)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -89,6 +90,8 @@ jobs:
       CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
       CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-self-contained=yes -C target-feature=+crt-static
       CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUNNER: qemu-riscv64
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "true"
+      CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "true"
     steps:
       - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,15 +109,21 @@ jobs:
             crates/vendor/foldhash
             crates/vendor/hashbrown
             crates/vendor/alloy-primitives
+            crates/vendor/revm-interpreter
+            crates/vendor/zeth-mpt
+            crates/guest/native-tests
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: lib tests (riscv64gc-unknown-linux-musl)
         run: |
-          for c in foldhash hashbrown alloy-primitives; do
-            cargo nextest run --locked --lib --no-fail-fast \
-              --target riscv64gc-unknown-linux-musl \
-              --manifest-path "crates/vendor/$c/Cargo.toml"
+          run() {
+            cargo nextest run --locked --lib --no-fail-fast --release \
+              --target riscv64gc-unknown-linux-musl --manifest-path "crates/$1/Cargo.toml" "${@:2}"
+          }
+          for c in vendor/foldhash vendor/hashbrown vendor/alloy-primitives vendor/revm-interpreter guest/native-tests; do
+            run "$c"
           done
+          run vendor/zeth-mpt --features compute_advice
       - if: always()
         run: echo "riscv64 wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 

@@ -56,3 +56,17 @@ macro_rules! advice_assert_eq {
 }
 
 pub(super) use {advice_assert_eq, advice_u64};
+
+/// Stand-ins for jeth-core's hooks so the riscv64 lib tests link (qemu, CI job
+/// `riscv64`, built with `compute_advice`): the tape write is dropped and the
+/// seal is a plain assertion.
+#[cfg(all(test, target_arch = "riscv64"))]
+mod test_hooks {
+    #[no_mangle]
+    extern "C" fn jeth_advice_write_u64(_value: u64) {}
+
+    #[no_mangle]
+    extern "C" fn jeth_advice_assert_eq_u64(left: u64, right: u64) {
+        assert_eq!(left, right);
+    }
+}

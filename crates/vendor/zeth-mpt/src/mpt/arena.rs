@@ -20,6 +20,7 @@ use super::{
     children::Slot,
     memoize::Memoization,
     node::Node,
+    decode::load_word,
     rlp::{NodeRef, RlpNode, DIGEST_ITEM_PREFIX, DIGEST_RLP_LENGTH},
 };
 use alloy_primitives::B256;
@@ -114,9 +115,8 @@ fn write_str_item(buf: &mut Scratch, cursor: &mut usize, bytes: &[u8]) {
 /// read-modify-written (bytes below the cursor are preserved), the last one
 /// clobbers up to 7 bytes past the item — the scratch is fully owned and
 /// [`Scratch`] carries that slack. Sources are read as the aligned words that
-/// contain them (same argument as the guest `mem.rs` overrides: Jolt guest
-/// RAM is flat and word-granular, and a word holding a live byte is
-/// addressable; natively the containing word lies in the same page).
+/// contain them, through [`load_word`] (those words reach outside the source
+/// object).
 ///
 /// A "window" is the stream of `len` bytes starting at byte `so` (0..8) of a
 /// sequence of 8-byte little-endian words: word 0 is `w0` — a register value,
@@ -146,7 +146,7 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
         write_volatile(dst, merge(w0));
         let mut j = 1;
         while j < n_dst {
-            write_volatile(dst.add(j), read_volatile(rest.add(j - 1)));
+            write_volatile(dst.add(j), load_word::<0>(rest.add(j - 1)));
             j += 1;
         }
         return;
@@ -162,12 +162,12 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
             write_volatile(dst, merge(cur >> sr));
             return;
         }
-        let nxt = read_volatile(rest);
+        let nxt = load_word::<0>(rest);
         write_volatile(dst, merge((cur >> sr) | (nxt << sl)));
         cur = nxt;
         let mut j = 1;
         while j < full {
-            let nxt = read_volatile(rest.add(j));
+            let nxt = load_word::<0>(rest.add(j));
             write_volatile(dst.add(j), (cur >> sr) | (nxt << sl));
             cur = nxt;
             j += 1;
@@ -183,7 +183,7 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
         let mut cur = w0;
         let mut j = 1;
         while j < full {
-            let nxt = read_volatile(rest.add(j - 1));
+            let nxt = load_word::<0>(rest.add(j - 1));
             write_volatile(dst.add(j), (cur >> sr) | (nxt << sl));
             cur = nxt;
             j += 1;
@@ -252,15 +252,15 @@ unsafe fn put_raw(buf: &mut Scratch, cursor: &mut usize, src: *const u8, len: us
     let (dst, d) = dst_word(buf, *cursor);
     let so = src as usize & 7;
     let base = (src as usize & !7) as *const u64;
-    let w0 = read_volatile(base);
+    let w0 = load_word::<0>(base);
     let rest = base.add(1);
     if len == DIGEST_RLP_LENGTH {
         let v = [
             w0,
-            read_volatile(rest),
-            read_volatile(rest.add(1)),
-            read_volatile(rest.add(2)),
-            read_volatile(rest.add(3)),
+            load_word::<0>(rest),
+            load_word::<1>(rest),
+            load_word::<2>(rest),
+            load_word::<3>(rest),
         ];
         put_window33(dst, d, v, so);
     } else {
@@ -292,17 +292,17 @@ unsafe fn put_prefixed(
         0 => ((prefix as u64) << 56, base, 7),
         so => {
             let shift = 8 * (so - 1);
-            let w0 = (read_volatile(base) & !(0xff << shift)) | ((prefix as u64) << shift);
+            let w0 = (load_word::<0>(base) & !(0xff << shift)) | ((prefix as u64) << shift);
             (w0, base.add(1), so - 1)
         }
     };
     if len + 1 == DIGEST_RLP_LENGTH {
         let v = [
             w0,
-            read_volatile(rest),
-            read_volatile(rest.add(1)),
-            read_volatile(rest.add(2)),
-            read_volatile(rest.add(3)),
+            load_word::<0>(rest),
+            load_word::<1>(rest),
+            load_word::<2>(rest),
+            load_word::<3>(rest),
         ];
         put_window33(dst, d, v, so);
     } else {

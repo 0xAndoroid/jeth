@@ -17,10 +17,10 @@
 //!
 //! Layout dependency, not a language guarantee: those containing-word loads
 //! and the boundary read-modify-writes touch up to 7 bytes outside the
-//! caller's byte range, which is undefined behaviour in Rust's abstract
-//! machine. They are well-defined on the guest only because of the Jolt
-//! memory model, so `keccak.rs`, the vendored `revm-interpreter`
-//! (`interpreter/words.rs`), `zeth-mpt` (`mpt/rlp.rs`) and the key-hashing /
+//! caller's byte range, which no Rust memory access may do. They are
+//! well-defined on the guest only because of the Jolt memory model, so
+//! `keccak.rs`, the vendored `revm-interpreter` (`interpreter/words.rs`),
+//! `zeth-mpt` (`mpt/decode.rs` `load_word`) and the key-hashing /
 //! ctrl-group gathers in the vendored `foldhash` (`lib.rs` `gather`),
 //! `alloy-primitives` (`map/fixed.rs` `gather`) and `hashbrown`
 //! (`control/group/mod.rs` `load_gathered`) — which all cite this argument —
@@ -38,12 +38,12 @@
 //!   bytes (peak use on the benchmark set is ~58 MiB); pin it upstream
 //!   (`align_up(program_size, 8)` or a boot assert) before relying on more.
 //! * The overrides here make every such access volatile, through a pointer
-//!   rebuilt from `addr & !7`, behind an `extern "C"` boundary. The
-//!   `#[inline(always)]` hashing gathers have no such boundary: LLVM would see
-//!   the allocation and assume an 8-byte load never touches one under 8 bytes
-//!   (it deleted the stores filling `FbHasher<4>` stack keys under volatile
-//!   loads), so they load each word with an inline-asm `ld` instead, which
-//!   neither the abstract machine nor LLVM sees as an access to the object.
+//!   rebuilt from `addr & !7`, behind the `extern "C"` memcpy/memset/memcmp
+//!   symbols. Every other site above is inlined Rust where LLVM sees the
+//!   caller's allocation (it deleted the stores filling `FbHasher<4>` stack
+//!   keys under volatile loads), so those access each such word with an
+//!   inline-asm `ld`/`sd`, which neither the abstract machine nor LLVM sees as
+//!   an access to the object.
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests

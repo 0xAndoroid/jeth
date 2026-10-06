@@ -15,16 +15,68 @@
 //! Jolt guest skips the check: every word touched holds at least one byte of
 //! the 32-byte range, so the containing-word rule of the guest's `mem.rs`
 //! (flat, word-granular RAM) makes it addressable, and the edge RMW writes
-//! the outside bytes back unchanged. In Rust's abstract machine those accesses
-//! are undefined behaviour; they are volatile so LLVM emits them as written
-//! and infers nothing from them.
+//! the outside bytes back unchanged. No Rust memory access may touch those
+//! outside bytes, so on riscv64 the window words are inline-asm `ld`/`sd`
+//! ([`load_word`], [`store_word`]) that neither the abstract machine nor LLVM
+//! sees as accesses to the slice.
 
-use core::ptr::{read_volatile, write_volatile};
 use primitives::U256;
 
 /// Whether the five-word window is checked against the slice (see the module
 /// docs); `false` on the Jolt guest.
 const CHECK_WINDOW: bool = !cfg!(target_os = "none");
+
+/// Loads the 8-aligned word `I` words past `p` (the offset is an `ld`
+/// immediate), which may hold bytes outside the caller's range
+/// (containing-word read, see the module docs). Other targets read only
+/// windows checked to lie in the slice, or the tests' slack buffers.
+#[inline(always)]
+unsafe fn load_word<const I: usize>(p: *const u64) -> u64 {
+    #[cfg(target_arch = "riscv64")]
+    {
+        let w: u64;
+        core::arch::asm!(
+            "ld {w}, {off}({p})",
+            p = in(reg) p,
+            off = const I * 8,
+            w = lateout(reg) w,
+            options(pure, readonly, nostack, preserves_flags),
+        );
+        w
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    core::ptr::read_volatile(p.add(I))
+}
+
+/// [`load_word`] of word `i` (0..=4) of `p`; `i` is a constant after inlining
+/// and unrolling, so the match folds and the offset lands in the `ld` immediate.
+#[inline(always)]
+unsafe fn load_word_at(p: *const u64, i: usize) -> u64 {
+    match i {
+        0 => load_word::<0>(p),
+        1 => load_word::<1>(p),
+        2 => load_word::<2>(p),
+        3 => load_word::<3>(p),
+        _ => load_word::<4>(p),
+    }
+}
+
+/// Stores `v` to the 8-aligned word `I` words past `p`, which may hold bytes
+/// outside the caller's range (edge word of a read-modify-write, see the
+/// module docs).
+#[inline(always)]
+unsafe fn store_word<const I: usize>(p: *mut u64, v: u64) {
+    #[cfg(target_arch = "riscv64")]
+    core::arch::asm!(
+        "sd {v}, {off}({p})",
+        p = in(reg) p,
+        off = const I * 8,
+        v = in(reg) v,
+        options(nostack, preserves_flags),
+    );
+    #[cfg(not(target_arch = "riscv64"))]
+    core::ptr::write_volatile(p.add(I), v);
+}
 
 /// Reads the 32-byte big-endian word at `data[offset..offset + 32]` (MLOAD,
 /// CALLDATALOAD) with aligned `u64` loads.
@@ -60,11 +112,11 @@ pub(crate) fn read_u256_be(data: &[u8], offset: usize) -> U256 {
     // rule (module docs); natively the window was checked to lie in `data`.
     unsafe {
         let a = (p as usize & !7) as *const u64;
-        let w0 = read_volatile(a);
-        let w1 = read_volatile(a.add(1));
-        let w2 = read_volatile(a.add(2));
-        let w3 = read_volatile(a.add(3));
-        let w4 = read_volatile(a.add(4));
+        let w0 = load_word::<0>(a);
+        let w1 = load_word::<1>(a);
+        let w2 = load_word::<2>(a);
+        let w3 = load_word::<3>(a);
+        let w4 = load_word::<4>(a);
         // Little-endian target: `l0` is the LE u64 of bytes [p, p + 8), i.e.
         // the most significant 8 big-endian bytes.
         let l0 = (w0 >> sh) | (w1 << inv);
@@ -123,11 +175,11 @@ pub(crate) fn write_u256_be(data: &mut [u8], offset: usize, value: &U256) {
                                  // their values.
     unsafe {
         let a = (p as usize & !7) as *mut u64;
-        write_volatile(a, (read_volatile(a) & keep) | (v0 << sh));
-        write_volatile(a.add(1), (v0 >> inv) | (v1 << sh));
-        write_volatile(a.add(2), (v1 >> inv) | (v2 << sh));
-        write_volatile(a.add(3), (v2 >> inv) | (v3 << sh));
-        write_volatile(a.add(4), (read_volatile(a.add(4)) & !keep) | (v3 >> inv));
+        store_word::<0>(a, (load_word::<0>(a) & keep) | (v0 << sh));
+        store_word::<1>(a, (v0 >> inv) | (v1 << sh));
+        store_word::<2>(a, (v1 >> inv) | (v2 << sh));
+        store_word::<3>(a, (v2 >> inv) | (v3 << sh));
+        store_word::<4>(a, (load_word::<4>(a) & !keep) | (v3 >> inv));
     }
 }
 
@@ -194,11 +246,10 @@ pub(crate) fn bswap64(x: u64) -> u64 {
 /// `p` must point at `N` readable bytes. The loads touch only the 8-aligned
 /// words holding at least one of those bytes; on the Jolt guest (flat,
 /// word-granular RAM) such words are addressable — the containing-word rule of
-/// the guest's `mem.rs`/`keccak.rs`. In Rust's abstract machine the other
-/// bytes inside those words lie outside the caller's slice; the loads are
-/// volatile, so nothing is inferred from them, and the bits they contribute
-/// are shifted out. The native tests give every buffer a word of slack on
-/// both sides.
+/// the guest's `mem.rs`/`keccak.rs`. The other bytes inside those words lie
+/// outside the caller's slice, so the words are read with [`load_word`] and
+/// the bits they contribute are shifted out. The native tests give every
+/// buffer a word of slack on both sides.
 #[inline(always)]
 pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     const { assert!(1 <= N && N <= 32) };
@@ -218,10 +269,10 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     let c = N.div_ceil(8);
     let mut w = [0u64; 5];
     for (i, word) in w.iter_mut().enumerate().take(c) {
-        *word = read_volatile(base.add(i));
+        *word = load_word_at(base, i);
     }
     if s + N > 8 * c {
-        w[c] = read_volatile(base.add(c));
+        w[c] = load_word_at(base, c);
     }
     let sh = (s * 8) as u32;
     // Chunk m = stream bytes [8m, 8m + 8), little-endian; `<< (63 - sh) << 1`
