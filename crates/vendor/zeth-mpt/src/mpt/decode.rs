@@ -25,7 +25,7 @@ use alloc::boxed::Box;
 use alloy_primitives::{Bytes, B256};
 use alloy_rlp::{Header, EMPTY_STRING_CODE};
 use alloy_trie::Nibbles;
-use core::{mem::MaybeUninit, ptr::read_volatile};
+use core::mem::MaybeUninit;
 
 impl<M: Memoization> Node<M> {
     /// Decode `bytes` — the authenticated encoding of the [`Node::Digest`]
@@ -352,11 +352,8 @@ fn digest_item(item: &[u8]) -> Digest {
 ///
 /// # Safety of the containing-word reads
 /// Every word read holds at least one live byte of `bytes[..32]` (word 0
-/// holds byte 0, the last word holds byte 31), and by the flat-RAM argument
-/// of the guest `mem.rs` overrides — Jolt guest RAM is flat and
-/// word-granular; natively the containing word lies in the same allocation
-/// granule / page — the aligned word containing a live byte is readable.
-/// Every load address is a multiple of 8 by construction.
+/// holds byte 0, the last word holds byte 31), so it is mapped (see
+/// [`load_word`]). Every load address is a multiple of 8 by construction.
 #[inline(always)]
 pub fn le_words_32(bytes: &[u8]) -> [u64; 4] {
     assert!(bytes.len() >= 32);
@@ -364,14 +361,14 @@ pub fn le_words_32(bytes: &[u8]) -> [u64; 4] {
     let so = src & 7;
     let base = (src & !7) as *const u64;
     unsafe {
-        let w0 = u64::from_le(read_volatile(base));
-        let w1 = u64::from_le(read_volatile(base.add(1)));
-        let w2 = u64::from_le(read_volatile(base.add(2)));
-        let w3 = u64::from_le(read_volatile(base.add(3)));
+        let w0 = u64::from_le(load_word::<0>(base));
+        let w1 = u64::from_le(load_word::<1>(base));
+        let w2 = u64::from_le(load_word::<2>(base));
+        let w3 = u64::from_le(load_word::<3>(base));
         if so == 0 {
             [w0, w1, w2, w3]
         } else {
-            let w4 = u64::from_le(read_volatile(base.add(4)));
+            let w4 = u64::from_le(load_word::<4>(base));
             let sr = (8 * so) as u32;
             let sl = 64 - sr;
             [
@@ -382,6 +379,32 @@ pub fn le_words_32(bytes: &[u8]) -> [u64; 4] {
             ]
         }
     }
+}
+
+/// Loads the 8-aligned word `I` words past `p` with one machine load (the
+/// offset is an immediate). Containing-word reads ([`le_words_32`], the arena
+/// writer) load whole aligned words around a byte range, up to 7 bytes outside
+/// the object, which no Rust memory access may touch; this inline-asm load is
+/// opaque to the abstract machine and LLVM. At the machine level a word holding
+/// a live byte is mapped: Jolt guest RAM is flat and word-granular (the guest
+/// `mem.rs` argument), and natively an 8-aligned word never straddles a page.
+///
+/// # Safety
+/// `p` must be 8-aligned and word `I` past it must hold at least one readable
+/// byte.
+#[inline(always)]
+pub(super) unsafe fn load_word<const I: usize>(p: *const u64) -> u64 {
+    let w: u64;
+    #[cfg(target_arch = "riscv64")]
+    core::arch::asm!("ld {w}, {off}({p})", p = in(reg) p, off = const I * 8, w = lateout(reg) w,
+        options(pure, readonly, nostack, preserves_flags));
+    #[cfg(target_arch = "x86_64")]
+    core::arch::asm!("mov {w}, qword ptr [{p} + {off}]", p = in(reg) p, off = const I * 8, w = lateout(reg) w,
+        options(pure, readonly, nostack, preserves_flags));
+    #[cfg(target_arch = "aarch64")]
+    core::arch::asm!("ldr {w}, [{p}, #{off}]", p = in(reg) p, off = const I * 8, w = lateout(reg) w,
+        options(pure, readonly, nostack, preserves_flags));
+    w
 }
 
 /// [`decode_node_zc_into`] over the whole buffer, mirroring `alloy_rlp::decode_exact`.

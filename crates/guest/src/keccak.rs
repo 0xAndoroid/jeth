@@ -21,20 +21,18 @@
 //! copy/zero loops (the guest overrides those symbols) and from merging the
 //! zero stores; they cost the same one row per `LD`/`SD`.
 //!
-//! Containing-word reads: for a byte range `[p, p + n)` with `n >= 1` the
+//! Containing-word accesses: for a byte range `[p, p + n)` with `n >= 1` the
 //! aligned words touched are exactly those holding at least one live byte, so
 //! on the guest (flat, word-granular RAM — see `mem.rs`) they are addressable.
-//! In Rust's abstract machine those reads (and the five-word RMW of a
-//! misaligned digest slot) touch bytes outside the caller's slice, which is
-//! undefined behaviour: nothing in the language guarantees them. What keeps
-//! LLVM from exploiting that here is (1) every such access is a volatile op,
-//! which it must emit as written and may not reorder, widen or fold, and (2)
-//! the pointers arrive through the `extern "C"` boundary of `native_keccak256`
-//! (`#[inline(never)]`), so no provenance or allocation bound is visible to
-//! the optimiser. The native tests place every buffer inside an allocation
-//! with word-sized slack on both ends so the same code stays in bounds there;
-//! they live in `crates/guest/native-tests`.
+//! Those words also hold bytes outside the caller's slice (and the five-word
+//! RMW of a misaligned digest slot writes them back unchanged), which no Rust
+//! memory access may touch, so on riscv64 they are inline-asm `ld`/`sd`
+//! ([`load_word`], [`store_word`]) that neither the abstract machine nor LLVM
+//! sees as accesses to the caller's objects. Other targets build only the
+//! native tests (`crates/guest/native-tests`), whose buffers carry word-sized
+//! slack on both ends so the same accesses stay inside the allocation.
 
+use super::mem::{load_word, store_word};
 use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
 
@@ -129,9 +127,9 @@ unsafe fn copy_words<const XOR: bool>(mut dst: *mut u64, mut src: *const u64, n:
 unsafe fn gather_words<const XOR: bool>(dst: *mut u64, src: *const u8, n: usize) -> u64 {
     let s = ((src as usize & 7) * 8) as u32;
     let base = ((src as usize) & !7) as *const u64;
-    let mut cur = read_volatile(base);
+    let mut cur = load_word::<0>(base);
     for i in 0..n {
-        let next = read_volatile(base.add(i + 1));
+        let next = load_word::<1>(base.wrapping_add(i));
         put::<XOR>(dst.add(i), (cur >> s) | (next << (64 - s)));
         cur = next;
     }
@@ -160,7 +158,7 @@ unsafe fn merge_final_block<const XOR: bool>(dst: *mut u64, src: *const u8, rem:
         copy_words::<XOR>(dst, src.cast(), t);
         // The word at src + 8t holds stream bytes only when r > 0.
         if r != 0 {
-            read_volatile(src.cast::<u64>().add(t))
+            load_word::<0>(src.cast::<u64>().add(t))
         } else {
             0
         }
@@ -170,7 +168,7 @@ unsafe fn merge_final_block<const XOR: bool>(dst: *mut u64, src: *const u8, rem:
         let lo = gather_words::<XOR>(dst, src, t) >> s;
         // W[t + 1] holds stream bytes only when the partial word spills into it.
         if off + r > 8 {
-            lo | (read_volatile(base.add(t + 1)) << (64 - s))
+            lo | (load_word::<1>(base.wrapping_add(t)) << (64 - s))
         } else {
             lo
         }
@@ -207,13 +205,13 @@ unsafe fn store_digest(state: *const u64, out: *mut u8) {
     let base = ((out as usize) & !7) as *mut u64;
     let s = (off * 8) as u32;
     let below = (1u64 << s) - 1;
-    write_volatile(base, (read_volatile(base) & below) | (d[0] << s));
+    store_word::<0>(base, (load_word::<0>(base) & below) | (d[0] << s));
     for i in 1..DIGEST_WORDS {
-        write_volatile(base.add(i), (d[i - 1] >> (64 - s)) | (d[i] << s));
+        write_volatile(base.wrapping_add(i), (d[i - 1] >> (64 - s)) | (d[i] << s));
     }
-    write_volatile(
-        base.add(DIGEST_WORDS),
-        (read_volatile(base.add(DIGEST_WORDS)) & !below) | (d[DIGEST_WORDS - 1] >> (64 - s)),
+    store_word::<DIGEST_WORDS>(
+        base,
+        (load_word::<DIGEST_WORDS>(base) & !below) | (d[DIGEST_WORDS - 1] >> (64 - s)),
     );
 }
 
