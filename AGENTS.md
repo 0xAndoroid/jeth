@@ -2,7 +2,7 @@
 
 branch → PR → CI green (`.github/workflows/ci.yml`) → merge; no direct pushes to main.
 
-CI runs on GitHub-hosted runners: first-party rustfmt, Clippy (Jolt is a public
+CI: first-party rustfmt, Clippy and `cargo nextest run --workspace` (Jolt is a public
 git dependency pinned by rev), typos, and Python lint.
 `~/.git-hooks/pre-commit` runs Clippy with `-D warnings` and the workspace lint
 policy; its repository hook runs the Python gate when Python or lint config is staged.

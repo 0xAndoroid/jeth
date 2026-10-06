@@ -44,20 +44,20 @@ revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database-interface = { version = "11.0.1", default-features = false }
 revm-state = { version = "11.0.1", default-features = false }
 
-# a16z/jolt PR branch `feat/inline-extension-external` (main + `InlineExtension::External`), pinned by rev.
+# a16z/jolt main (includes `InlineExtension::External`, a16z/jolt#1975), pinned by rev.
 # No private commits: keccak θ/ρ fusion, `bump-alloc` and the secp256k1 sdk perf changes are not included.
-jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a" }
-jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
-jolt-inlines-secp256k1 = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
-jolt-inlines-sha2 = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
-jolt-inlines-blake2 = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
-jolt-inlines-p256 = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
-jolt-inlines-bigint = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
-jolt-inlines-sdk = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a", default-features = false }
+jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
+jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt-inlines-secp256k1 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt-inlines-sha2 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt-inlines-blake2 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt-inlines-p256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt-inlines-bigint = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt-inlines-sdk = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
 jeth-inlines-bls12-381 = { path = "crates/inlines/bls12-381", default-features = false }
-tracer = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a" }
-jolt-common = { package = "common", git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a" }
-jolt-program = { git = "https://github.com/a16z/jolt", rev = "d4c3ca05db4664a004f13386219293841d01ba5a" }
+tracer = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
+jolt-common = { package = "common", git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
+jolt-program = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
 
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = "1.0"
