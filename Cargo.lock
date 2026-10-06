@@ -2495,7 +2495,6 @@ dependencies = [
  "ark-ff 0.5.0",
  "aurora-engine-modexp",
  "jeth-inlines-blake2f",
- "jeth-inlines-bn254",
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
