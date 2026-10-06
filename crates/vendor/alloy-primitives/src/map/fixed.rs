@@ -6,7 +6,7 @@ use crate::{Address, B256, FixedBytes, Selector, U256};
 use cfg_if::cfg_if;
 use core::{
     fmt,
-    hash::{BuildHasher, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
 };
 
 /// [`HashMap`] optimized for hashing [fixed-size byte arrays](FixedBytes).
@@ -79,6 +79,13 @@ impl<const N: usize> BuildHasher for FbBuildHasher<N> {
     #[inline]
     fn build_hasher(&self) -> Self::Hasher {
         FbHasher { inner: self.inner.build_hasher(), _marker: core::marker::PhantomData }
+    }
+
+    #[inline]
+    fn hash_one<T: Hash>(&self, x: T) -> u64 {
+        let mut hasher = self.build_hasher();
+        x.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
