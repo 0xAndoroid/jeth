@@ -79,6 +79,45 @@ jobs:
       - if: always()
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
+  riscv64:
+    # The vendored crates' riscv64-only word gathers (inline-asm loads) only
+    # compile for the guest arch: run their lib tests on riscv64 Linux under qemu.
+    name: riscv64 vendored tests (qemu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+      CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-self-contained=yes -C target-feature=+crt-static
+      CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUNNER: qemu-riscv64
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master 2026-09-12
+        with:
+          toolchain: "1.95"
+          targets: riscv64gc-unknown-linux-musl
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: nextest
+      - run: sudo apt-get update -q && sudo apt-get install -yq qemu-user
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            crates/vendor/foldhash
+            crates/vendor/hashbrown
+            crates/vendor/alloy-primitives
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: lib tests (riscv64gc-unknown-linux-musl)
+        run: |
+          for c in foldhash hashbrown alloy-primitives; do
+            cargo nextest run --locked --lib --no-fail-fast \
+              --target riscv64gc-unknown-linux-musl \
+              --manifest-path "crates/vendor/$c/Cargo.toml"
+          done
+      - if: always()
+        run: echo "riscv64 wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+
   typos:
     name: typos
     runs-on: ubuntu-latest

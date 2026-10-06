@@ -49,8 +49,7 @@ pub(super) use self::imp::{BITMASK_ITER_MASK, BITMASK_STRIDE, BitMaskWord, NonZe
 
 /// jeth patch: containing-word load of an unaligned 8-byte ctrl group for the
 /// riscv64 Jolt guest (used by `generic::Group::load`; same helper as the vendored
-/// foldhash / alloy-primitives `gather`). Lives here, outside the `cfg_if!`
-/// implementation switch, so the host unit test below compiles on every target.
+/// foldhash / alloy-primitives `gather`).
 ///
 /// `read_unaligned::<u64>` lowers to 8 `lbu` + 14 shift/or on riscv64imac (no
 /// unaligned loads), and Jolt expands every `lbu` into a multi-row virtual
@@ -58,37 +57,45 @@ pub(super) use self::imp::{BITMASK_ITER_MASK, BITMASK_STRIDE, BitMaskWord, NonZe
 /// two aligned words that contain it costs 1-2 `ld` + 3 ALU ops and yields
 /// exactly the bytes the unaligned read would (little endian on the guest).
 ///
-/// Soundness of the over-read: see the module comment of jeth's
-/// `crates/guest/src/mem.rs`. Jolt guest RAM is one flat, word-granular address
-/// space whose regions all start 8-aligned, so the aligned word holding a live
-/// byte is always inside mapped memory, and only words containing at least one
-/// live byte of `p..p + 8` are loaded (the ctrl array always carries
-/// `Group::WIDTH` trailing mirror bytes, so those 8 bytes are live). The loads
-/// are volatile, but LLVM assumes an 8-byte access never touches an allocation
-/// smaller than 8 bytes and may drop the stores filling one; ctrl arrays hold
-/// at least `Group::WIDTH` bytes, so that never applies here.
-/// Compiled for the guest target and for the host unit test only; native
-/// builds keep the upstream read.
-#[cfg(any(target_arch = "riscv64", test))]
+/// Soundness of the over-read: the containing words reach up to 7 bytes past
+/// `p..p + 8`, which no Rust memory access may touch, so each word is read by an
+/// inline-asm `ld` that the abstract machine and LLVM see only as an opaque read
+/// through the pointer; the bytes outside the range are shifted out. The
+/// machine-level load is in bounds because Jolt guest RAM is one flat,
+/// word-granular address space whose regions all start 8-aligned (see the
+/// module comment of jeth's `crates/guest/src/mem.rs`), and only words
+/// containing at least one live byte of `p..p + 8` are loaded (the ctrl array
+/// always carries `Group::WIDTH` trailing mirror bytes, so those 8 bytes are
+/// live). Guest target only; native builds keep the upstream read.
+#[cfg(target_arch = "riscv64")]
 #[inline(always)]
 pub(crate) unsafe fn load_gathered(p: *const u8) -> u64 {
+    use core::arch::asm;
     let addr = p as usize;
     let k = addr & 7;
     let a = (addr & !7) as *const u64;
+    let w0: u64;
     // SAFETY: `a` is the aligned word containing byte `p`, a live byte of the
     // caller's range (precondition), hence mapped.
-    let w0 = unsafe { core::ptr::read_volatile(a) };
+    unsafe {
+        asm!("ld {w}, 0({a})", a = in(reg) a, w = lateout(reg) w0,
+             options(pure, readonly, nostack, preserves_flags));
+    }
     if k == 0 {
         return w0;
     }
     let s = (k * 8) as u32;
+    let w1: u64;
     // SAFETY: k > 0, so `p..p + 8` spills into the next aligned word, which
     // therefore holds live bytes of the range and is mapped.
-    let w1 = unsafe { core::ptr::read_volatile(a.add(1)) };
+    unsafe {
+        asm!("ld {w}, 8({a})", a = in(reg) a, w = lateout(reg) w1,
+             options(pure, readonly, nostack, preserves_flags));
+    }
     (w0 >> s) | (w1 << (64 - s))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "riscv64"))]
 mod gather_tests {
     /// The gather must reproduce the unaligned read at all 8 offsets inside an
     /// aligned 32-byte window.
