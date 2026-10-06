@@ -387,6 +387,13 @@ mod tests {
         *state
     }
 
+    /// Word-aligned buffer: the implementations access the containing 8-byte
+    /// words of `[p, p + n)`, which stay inside the buffer only if offsets are
+    /// relative to an 8-aligned base.
+    #[derive(Clone, Copy)]
+    #[repr(align(8))]
+    struct Words([u8; 144]);
+
     #[test]
     fn fuzz_memcpy_memset_memcmp() {
         let mut rng = 0x1234_5678_9abc_def0u64;
@@ -395,15 +402,16 @@ mod tests {
             let soff = (xorshift(&mut rng) % 16) as usize;
             let doff = (xorshift(&mut rng) % 16) as usize;
 
-            let mut src = [0u8; 144];
-            for b in src.iter_mut() {
+            let mut src = Words([0u8; 144]);
+            for b in src.0.iter_mut() {
                 *b = xorshift(&mut rng) as u8;
             }
-            let mut dst = [0u8; 144];
-            for b in dst.iter_mut() {
+            let mut dst = Words([0u8; 144]);
+            for b in dst.0.iter_mut() {
                 *b = xorshift(&mut rng) as u8;
             }
             let mut expect = dst;
+            let (src, dst, expect) = (&src.0, &mut dst.0, &mut expect.0);
 
             unsafe {
                 jmemcpy(dst.as_mut_ptr().add(doff), src.as_ptr().add(soff), n);
@@ -422,7 +430,8 @@ mod tests {
             assert_eq!(r, 0);
             if n > 0 {
                 let flip = (xorshift(&mut rng) as usize) % n;
-                let mut other = expect;
+                let mut other = Words(*expect);
+                let other = &mut other.0;
                 other[doff + flip] =
                     other[doff + flip].wrapping_add(1 + (xorshift(&mut rng) % 254) as u8);
                 for b in other[doff + flip + 1..doff + n].iter_mut() {
