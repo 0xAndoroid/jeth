@@ -21,14 +21,22 @@ extern "C" {
 /// One u64 of untrusted advice; `$body` is compiled out of the proven ELF.
 macro_rules! advice_u64 {
     ($body:expr) => {{
-        #[cfg(all(target_arch = "riscv64", target_os = "none", feature = "compute_advice"))]
+        #[cfg(all(
+            target_arch = "riscv64",
+            target_os = "none",
+            feature = "compute_advice"
+        ))]
         {
             let v: u64 = $body;
             // SAFETY: single-hart guest; the hook only appends to the tape.
             unsafe { $crate::mpt::advice::jeth_advice_write_u64(v) };
             v
         }
-        #[cfg(all(target_arch = "riscv64", target_os = "none", not(feature = "compute_advice")))]
+        #[cfg(all(
+            target_arch = "riscv64",
+            target_os = "none",
+            not(feature = "compute_advice")
+        ))]
         {
             // SAFETY: single-hart guest; the hook only reads the tape.
             unsafe { $crate::mpt::advice::jeth_advice_read_u64() }

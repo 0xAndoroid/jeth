@@ -18,9 +18,9 @@
 use super::{
     advice::{advice_assert_eq, advice_u64},
     children::Slot,
+    decode::load_word,
     memoize::Memoization,
     node::Node,
-    decode::load_word,
     rlp::{NodeRef, RlpNode, DIGEST_ITEM_PREFIX, DIGEST_RLP_LENGTH},
 };
 use alloy_primitives::B256;
