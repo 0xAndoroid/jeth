@@ -32,6 +32,7 @@
 //! native tests (`crates/guest/native-tests`), whose buffers carry word-sized
 //! slack on both ends so the same accesses stay inside the allocation.
 
+use super::mem::{load_word, store_word};
 use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
 
@@ -39,44 +40,6 @@ const RATE_BYTES: usize = 136;
 const RATE_WORDS: usize = RATE_BYTES / 8;
 const STATE_WORDS: usize = 25;
 const DIGEST_WORDS: usize = 4;
-
-/// Loads the 8-aligned word `I` words past `p` (the offset is an `ld`
-/// immediate), which may hold bytes outside the caller's range
-/// (containing-word read, see the module docs).
-#[inline(always)]
-unsafe fn load_word<const I: usize>(p: *const u64) -> u64 {
-    #[cfg(target_arch = "riscv64")]
-    {
-        let w: u64;
-        core::arch::asm!(
-            "ld {w}, {off}({p})",
-            p = in(reg) p,
-            off = const I * 8,
-            w = lateout(reg) w,
-            options(pure, readonly, nostack, preserves_flags)
-        );
-        w
-    }
-    #[cfg(not(target_arch = "riscv64"))]
-    read_volatile(p.add(I))
-}
-
-/// Stores `v` to the 8-aligned word `I` words past `p`, which may hold bytes
-/// outside the caller's range (edge word of a read-modify-write, see the
-/// module docs).
-#[inline(always)]
-unsafe fn store_word<const I: usize>(p: *mut u64, v: u64) {
-    #[cfg(target_arch = "riscv64")]
-    core::arch::asm!(
-        "sd {v}, {off}({p})",
-        p = in(reg) p,
-        off = const I * 8,
-        v = in(reg) v,
-        options(nostack, preserves_flags)
-    );
-    #[cfg(not(target_arch = "riscv64"))]
-    write_volatile(p.add(I), v);
-}
 
 /// Keccak-f[1600] on the 25 lanes at `state` (8-aligned).
 #[inline(always)]
@@ -166,7 +129,7 @@ unsafe fn gather_words<const XOR: bool>(dst: *mut u64, src: *const u8, n: usize)
     let base = ((src as usize) & !7) as *const u64;
     let mut cur = load_word::<0>(base);
     for i in 0..n {
-        let next = load_word::<1>(base.add(i));
+        let next = load_word::<1>(base.wrapping_add(i));
         put::<XOR>(dst.add(i), (cur >> s) | (next << (64 - s)));
         cur = next;
     }
@@ -205,7 +168,7 @@ unsafe fn merge_final_block<const XOR: bool>(dst: *mut u64, src: *const u8, rem:
         let lo = gather_words::<XOR>(dst, src, t) >> s;
         // W[t + 1] holds stream bytes only when the partial word spills into it.
         if off + r > 8 {
-            lo | (load_word::<1>(base.add(t)) << (64 - s))
+            lo | (load_word::<1>(base.wrapping_add(t)) << (64 - s))
         } else {
             lo
         }
@@ -244,7 +207,7 @@ unsafe fn store_digest(state: *const u64, out: *mut u8) {
     let below = (1u64 << s) - 1;
     store_word::<0>(base, (load_word::<0>(base) & below) | (d[0] << s));
     for i in 1..DIGEST_WORDS {
-        write_volatile(base.add(i), (d[i - 1] >> (64 - s)) | (d[i] << s));
+        write_volatile(base.wrapping_add(i), (d[i - 1] >> (64 - s)) | (d[i] << s));
     }
     store_word::<DIGEST_WORDS>(
         base,

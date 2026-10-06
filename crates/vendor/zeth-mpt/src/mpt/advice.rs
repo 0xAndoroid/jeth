@@ -6,12 +6,12 @@
 //! proven ELF reads it back; native builds run the body directly. Every
 //! consumed value is sealed locally at its consumption site.
 //!
-//! The tape intrinsics are not linked from here: on riscv64 the macros call
-//! the `jeth_advice_*` hooks that jeth-core exports over the jolt SDK
+//! On the bare-metal riscv64 guest, the macros call the `jeth_advice_*`
+//! hooks that jeth-core exports over the jolt SDK
 //! (`crates/core/src/advice.rs`), so this crate has no dependency on a jolt
 //! checkout and builds standalone.
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
 extern "C" {
     pub(super) fn jeth_advice_write_u64(value: u64);
     pub(super) fn jeth_advice_read_u64() -> u64;
@@ -21,34 +21,34 @@ extern "C" {
 /// One u64 of untrusted advice; `$body` is compiled out of the proven ELF.
 macro_rules! advice_u64 {
     ($body:expr) => {{
-        #[cfg(all(target_arch = "riscv64", feature = "compute_advice"))]
+        #[cfg(all(target_arch = "riscv64", target_os = "none", feature = "compute_advice"))]
         {
             let v: u64 = $body;
             // SAFETY: single-hart guest; the hook only appends to the tape.
             unsafe { $crate::mpt::advice::jeth_advice_write_u64(v) };
             v
         }
-        #[cfg(all(target_arch = "riscv64", not(feature = "compute_advice")))]
+        #[cfg(all(target_arch = "riscv64", target_os = "none", not(feature = "compute_advice")))]
         {
             // SAFETY: single-hart guest; the hook only reads the tape.
             unsafe { $crate::mpt::advice::jeth_advice_read_u64() }
         }
-        #[cfg(not(target_arch = "riscv64"))]
+        #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
         {
             $body
         }
     }};
 }
 
-/// 1-row `VirtualAssertEQ` on riscv64, `assert_eq!` natively.
+/// 1-row `VirtualAssertEQ` on the Jolt guest, `assert_eq!` natively.
 macro_rules! advice_assert_eq {
     ($a:expr, $b:expr) => {{
-        #[cfg(target_arch = "riscv64")]
+        #[cfg(all(target_arch = "riscv64", target_os = "none"))]
         {
             // SAFETY: the hook is a pure assertion on two register values.
             unsafe { $crate::mpt::advice::jeth_advice_assert_eq_u64($a, $b) }
         }
-        #[cfg(not(target_arch = "riscv64"))]
+        #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
         {
             assert_eq!($a, $b)
         }
@@ -56,17 +56,3 @@ macro_rules! advice_assert_eq {
 }
 
 pub(super) use {advice_assert_eq, advice_u64};
-
-/// Stand-ins for jeth-core's hooks so the riscv64 lib tests link (qemu, CI job
-/// `riscv64`, built with `compute_advice`): the tape write is dropped and the
-/// seal is a plain assertion.
-#[cfg(all(test, target_arch = "riscv64"))]
-mod test_hooks {
-    #[no_mangle]
-    extern "C" fn jeth_advice_write_u64(_value: u64) {}
-
-    #[no_mangle]
-    extern "C" fn jeth_advice_assert_eq_u64(left: u64, right: u64) {
-        assert_eq!(left, right);
-    }
-}

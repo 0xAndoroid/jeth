@@ -37,13 +37,10 @@
 //!   leave the traced range. That takes the 1.5 GiB heap full to within 7
 //!   bytes (peak use on the benchmark set is ~58 MiB); pin it upstream
 //!   (`align_up(program_size, 8)` or a boot assert) before relying on more.
-//! * The overrides here make every such access volatile, through a pointer
-//!   rebuilt from `addr & !7`, behind the `extern "C"` memcpy/memset/memcmp
-//!   symbols. Every other site above is inlined Rust where LLVM sees the
-//!   caller's allocation (it deleted the stores filling `FbHasher<4>` stack
-//!   keys under volatile loads), so those access each such word with an
-//!   inline-asm `ld`/`sd`, which neither the abstract machine nor LLVM sees as
-//!   an access to the object.
+//! * Containing-word accesses use inline-asm `ld`/`sd` on riscv64: neither
+//!   volatile operations nor the C ABI permit out-of-allocation Rust access.
+//!   The single-hart guest has no concurrent writer of the preserved edge
+//!   bytes. Native tests own and initialize the entire containing words.
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests
@@ -56,6 +53,46 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
+/// Loads the 8-aligned word `I` words past `p` (the offset is an `ld`
+/// immediate), which may hold bytes outside the caller's range
+/// (containing-word read, see the module docs). On other targets the
+/// native-test caller must own and initialize the whole word.
+#[inline(always)]
+pub(super) unsafe fn load_word<const I: usize>(p: *const u64) -> u64 {
+    #[cfg(target_arch = "riscv64")]
+    {
+        let w: u64;
+        core::arch::asm!(
+            "ld {w}, {off}({p})",
+            p = in(reg) p,
+            off = const I * 8,
+            w = lateout(reg) w,
+            options(pure, readonly, nostack, preserves_flags)
+        );
+        w
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    read_volatile(p.add(I))
+}
+
+/// Stores `v` to the 8-aligned word `I` words past `p`, which may hold bytes
+/// outside the caller's range (edge word of a read-modify-write, see the
+/// module docs). The caller must exclusively own the whole word, or run
+/// on the single-hart guest with no concurrent access to its edge bytes.
+#[inline(always)]
+pub(super) unsafe fn store_word<const I: usize>(p: *mut u64, v: u64) {
+    #[cfg(target_arch = "riscv64")]
+    core::arch::asm!(
+        "sd {v}, {off}({p})",
+        p = in(reg) p,
+        off = const I * 8,
+        v = in(reg) v,
+        options(nostack, preserves_flags)
+    );
+    #[cfg(not(target_arch = "riscv64"))]
+    write_volatile(p.add(I), v);
+}
+
 /// Gather the 8 source bytes for destination word position `i` when the
 /// source is relatively misaligned by `shift` bits: combines the aligned
 /// window words `w[i]` and `w[i+1]`.
@@ -67,7 +104,7 @@ unsafe fn gather(cur: u64, next: u64, shift: u32) -> u64 {
 
 #[inline(always)]
 unsafe fn word_at(p: *const u8) -> u64 {
-    read_volatile(((p as usize) & !7) as *const u64)
+    load_word::<0>(((p as usize) & !7) as *const u64)
 }
 
 /// Read `n` (1..=8) bytes starting at `s` (arbitrary alignment) into the low
@@ -109,14 +146,14 @@ unsafe fn store_le_partial(d: *mut u8, v: u64, n: usize) {
         } else {
             ((1u64 << (n0 * 8)) - 1) << (off * 8)
         };
-        let old = read_volatile(base);
-        write_volatile(base, (old & !mask) | ((v << (off * 8)) & mask));
+        let old = load_word::<0>(base);
+        store_word::<0>(base, (old & !mask) | ((v << (off * 8)) & mask));
     }
     if n > n0 {
         let rem = n - n0; // 1..=7 bytes into the next word
         let mask = (1u64 << (rem * 8)) - 1;
-        let old = read_volatile(base.add(1));
-        write_volatile(base.add(1), (old & !mask) | ((v >> (n0 * 8)) & mask));
+        let old = load_word::<1>(base);
+        store_word::<1>(base, (old & !mask) | ((v >> (n0 * 8)) & mask));
     }
 }
 
@@ -184,30 +221,30 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
         // instead of ~10 per 8 B.
         let shift = (src_misalign * 8) as u32;
         let mut sw = ((s as usize) & !7) as *const u64;
-        let mut cur = read_volatile(sw);
+        let mut cur = load_word::<0>(sw);
         while rem >= 32 {
-            let w1 = read_volatile(sw.add(1));
-            let w2 = read_volatile(sw.add(2));
-            let w3 = read_volatile(sw.add(3));
-            let w4 = read_volatile(sw.add(4));
+            let w1 = load_word::<1>(sw);
+            let w2 = load_word::<2>(sw);
+            let w3 = load_word::<3>(sw);
+            let w4 = load_word::<4>(sw);
             write_volatile(dw, gather(cur, w1, shift));
             write_volatile(dw.add(1), gather(w1, w2, shift));
             write_volatile(dw.add(2), gather(w2, w3, shift));
             write_volatile(dw.add(3), gather(w3, w4, shift));
             cur = w4;
-            sw = sw.add(4);
+            sw = sw.wrapping_add(4);
             dw = dw.add(4);
             rem -= 32;
         }
         while rem >= 8 {
-            let next = read_volatile(sw.add(1));
+            let next = load_word::<1>(sw);
             write_volatile(dw, gather(cur, next, shift));
             cur = next;
-            sw = sw.add(1);
+            sw = sw.wrapping_add(1);
             dw = dw.add(1);
             rem -= 8;
         }
-        s = (sw as *const u8).add(src_misalign);
+        s = (sw as *const u8).wrapping_add(src_misalign);
     }
     d = dw as *mut u8;
 

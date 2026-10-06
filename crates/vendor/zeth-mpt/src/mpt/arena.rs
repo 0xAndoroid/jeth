@@ -146,7 +146,7 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
         write_volatile(dst, merge(w0));
         let mut j = 1;
         while j < n_dst {
-            write_volatile(dst.add(j), load_word::<0>(rest.add(j - 1)));
+            write_volatile(dst.add(j), load_word::<0>(rest.wrapping_add(j - 1)));
             j += 1;
         }
         return;
@@ -167,7 +167,7 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
         cur = nxt;
         let mut j = 1;
         while j < full {
-            let nxt = load_word::<0>(rest.add(j));
+            let nxt = load_word::<0>(rest.wrapping_add(j));
             write_volatile(dst.add(j), (cur >> sr) | (nxt << sl));
             cur = nxt;
             j += 1;
@@ -183,7 +183,7 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
         let mut cur = w0;
         let mut j = 1;
         while j < full {
-            let nxt = load_word::<0>(rest.add(j - 1));
+            let nxt = load_word::<0>(rest.wrapping_add(j - 1));
             write_volatile(dst.add(j), (cur >> sr) | (nxt << sl));
             cur = nxt;
             j += 1;
@@ -253,7 +253,7 @@ unsafe fn put_raw(buf: &mut Scratch, cursor: &mut usize, src: *const u8, len: us
     let so = src as usize & 7;
     let base = (src as usize & !7) as *const u64;
     let w0 = load_word::<0>(base);
-    let rest = base.add(1);
+    let rest = base.wrapping_add(1);
     if len == DIGEST_RLP_LENGTH {
         let v = [
             w0,
@@ -293,7 +293,7 @@ unsafe fn put_prefixed(
         so => {
             let shift = 8 * (so - 1);
             let w0 = (load_word::<0>(base) & !(0xff << shift)) | ((prefix as u64) << shift);
-            (w0, base.add(1), so - 1)
+            (w0, base.wrapping_add(1), so - 1)
         }
     };
     if len + 1 == DIGEST_RLP_LENGTH {

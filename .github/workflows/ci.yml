@@ -118,12 +118,11 @@ jobs:
         run: |
           run() {
             cargo nextest run --locked --lib --no-fail-fast --release \
-              --target riscv64gc-unknown-linux-musl --manifest-path "crates/$1/Cargo.toml" "${@:2}"
+              --target riscv64gc-unknown-linux-musl --manifest-path "crates/$1/Cargo.toml"
           }
-          for c in vendor/foldhash vendor/hashbrown vendor/alloy-primitives vendor/revm-interpreter guest/native-tests; do
+          for c in vendor/foldhash vendor/hashbrown vendor/alloy-primitives vendor/revm-interpreter vendor/zeth-mpt guest/native-tests; do
             run "$c"
           done
-          run vendor/zeth-mpt --features compute_advice
       - if: always()
         run: echo "riscv64 wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
