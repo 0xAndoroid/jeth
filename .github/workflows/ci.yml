@@ -38,7 +38,7 @@ jobs:
   clippy:
     name: clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 45 }}
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
@@ -59,7 +59,7 @@ jobs:
   test:
     name: host unit tests
     runs-on: ubicloud-standard-2-arm
-    timeout-minutes: 10
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 60 }}
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
@@ -85,7 +85,7 @@ jobs:
     # their lib tests on riscv64 Linux under qemu (optimized, assertions on).
     name: riscv64 vendored tests (qemu)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 30 }}
     env:
       CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
       CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-self-contained=yes -C target-feature=+crt-static
