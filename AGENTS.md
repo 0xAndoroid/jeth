@@ -14,6 +14,7 @@ The root `justfile` wraps these commands; `just` lists its recipes.
 - Python: `scripts/lint/python.sh` (Ruff 0.15.7 check + format check via uv)
 - Spelling: `typos`
 - All linters: `just lint` (Clippy, `scripts/lint/python.sh`, `typos`)
+- Host CLI: `just build` builds `jeth-host` in release mode; `just jeth <subcommand>` builds and runs it
 - Hook: `scripts/pre-commit.sh` (runs when relevant files are staged)
 
 Vendor crates are excluded. Guest lint: skip; guest built only via Jolt CLI.
