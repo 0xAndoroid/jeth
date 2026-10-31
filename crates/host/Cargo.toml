@@ -2,6 +2,7 @@
 name = "jeth-host"
 version.workspace = true
 edition.workspace = true
+default-run = "jeth"
 
 [[bin]]
 name = "jeth"
