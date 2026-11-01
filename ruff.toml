@@ -17,6 +17,7 @@ ignore = [
     "D213", # Conflicts with D212.
     "COM812", # Ruff's formatter owns trailing commas.
     "ISC001", # Ruff's formatter owns adjacent string layout.
+    "CPY001", # The repository has no per-file copyright or license headers.
 ]
 
 [lint.per-file-ignores]

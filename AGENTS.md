@@ -11,7 +11,7 @@ The root `justfile` wraps these commands; `just` lists its recipes.
 
 - Rust: `just clippy -j 6`; `just fix` applies Clippy's suggested fixes
 - Formatting: `just fmt-check` (rustfmt on `crates/` minus `crates/vendor/`, Ruff format on `scripts/`); `just fmt` rewrites
-- Python: `scripts/lint/python.sh` (Ruff 0.15.7 check + format check via uv)
+- Python: `scripts/lint/python.sh` (Ruff 0.17.3 check + format check via uv)
 - Spelling: `typos`
 - All linters: `just lint` (Clippy, `scripts/lint/python.sh`, `typos`)
 - Host CLI: `just build` builds `jeth-host` in release mode; `just jeth <subcommand>` builds and runs it

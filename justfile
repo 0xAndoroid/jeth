@@ -10,12 +10,12 @@ default:
 # Format Rust under crates/ (vendor/ excluded) and the Python scripts.
 fmt:
     git ls-files 'crates/*.rs' ':!crates/vendor/**' | xargs rustfmt --edition 2021
-    uv tool run ruff@0.15.7 format scripts
+    uv tool run ruff@0.17.3 format scripts
 
 # Check formatting as CI does, without rewriting files.
 fmt-check:
     git ls-files 'crates/*.rs' ':!crates/vendor/**' | xargs rustfmt --check --edition 2021
-    uv tool run ruff@0.15.7 format --check scripts
+    uv tool run ruff@0.17.3 format --check scripts
 
 # Clippy with warnings denied, as CI runs it.
 clippy *args:
