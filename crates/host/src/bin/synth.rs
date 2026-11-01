@@ -6,6 +6,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{b256, keccak256, Address, Bytes, TxKind, B256, U256};
 use anyhow::{Context, Result};
+use k256::elliptic_curve::scalar::IsHigh;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -131,7 +132,7 @@ fn main() -> Result<()> {
 
     let sk = k256::ecdsa::SigningKey::from_bytes(&[0x11u8; 32].into())?;
     let vk = sk.verifying_key();
-    let pk_point = vk.to_encoded_point(false);
+    let pk_point = vk.to_sec1_point(false);
     let pk_bytes: [u8; 65] = pk_point.as_bytes().try_into()?;
     let sender = Address::from_slice(&keccak256(&pk_bytes[1..])[12..]);
 
@@ -284,13 +285,14 @@ fn main() -> Result<()> {
             input: t.data.clone(),
         };
         let hash = tx.signature_hash();
-        let (sig, recid) = sk.sign_prehash_recoverable(hash.as_slice())?;
-        let (sig, recid) = match sig.normalize_s() {
-            Some(n) => (
-                n,
+        let (sig, recid) = sk.sign_prehash_recoverable(hash.as_slice());
+        let (sig, recid) = if bool::from(sig.s().is_high()) {
+            (
+                sig.normalize_s(),
                 k256::ecdsa::RecoveryId::new(!recid.is_y_odd(), recid.is_x_reduced()),
-            ),
-            None => (sig, recid),
+            )
+        } else {
+            (sig, recid)
         };
         let r = U256::from_be_slice(&sig.r().to_bytes());
         let s = U256::from_be_slice(&sig.s().to_bytes());

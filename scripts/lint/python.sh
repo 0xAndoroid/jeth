@@ -11,5 +11,5 @@ if [[ "${1:-}" == --staged ]]; then
     command -v uv >/dev/null 2>&1 || exit 0
 fi
 
-uv tool run ruff@0.15.7 check scripts
-uv tool run ruff@0.15.7 format --check scripts
+uv tool run ruff@0.17.3 check scripts
+uv tool run ruff@0.17.3 format --check scripts

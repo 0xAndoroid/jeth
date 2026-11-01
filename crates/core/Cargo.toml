@@ -94,7 +94,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e53
 
 [build-dependencies]
 # Recomputes the code-library id over the embedded artifacts.
-sha3 = { version = "0.11", default-features = false }
+sha3 = { version = "0.12", default-features = false }
 
 [dev-dependencies]
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
@@ -103,7 +103,7 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
 sha2 = { version = "0.11", default-features = false }
 jolt-inlines-p256 = { workspace = true, features = ["host"] }
-p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa"] }
 jolt-inlines-bigint = { workspace = true, features = ["host"] }
 aurora-engine-modexp = "1.2"
 k256 = { workspace = true, features = ["ecdsa"] }

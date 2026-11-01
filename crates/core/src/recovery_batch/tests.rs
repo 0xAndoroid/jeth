@@ -165,7 +165,7 @@ fn transcript_binds_count_order_and_every_component() {
 }
 
 fn key_point(key: &VerifyingKey) -> Secp256k1Point {
-    let bytes = key.to_encoded_point(false);
+    let bytes = key.to_sec1_point(false);
     let bytes = bytes.as_bytes();
     let mut limbs = [0; 8];
     limbs[..4].copy_from_slice(U256::from_be_slice(&bytes[1..33]).as_limbs());
@@ -191,7 +191,7 @@ fn recovered_equation(i: u64) -> Equation {
 /// signing key share their key point.
 fn signed_equation(signing_key: &SigningKey, z: u64) -> Equation {
     let msg = U256::from(z).to_be_bytes();
-    let (sig, recid) = signing_key.sign_prehash_recoverable(&msg).unwrap();
+    let (sig, recid) = signing_key.sign_prehash_recoverable(&msg);
     let sig: [u8; 64] = sig.to_bytes().into();
     let mut equation = prepare_recovery(&sig, recid.to_byte(), &msg).unwrap();
     equation.key = key_point(signing_key.verifying_key());

@@ -62,7 +62,7 @@ mod tests {
     use p256::elliptic_curve::{
         ops::Reduce,
         point::{AffineCoordinates, DecompressPoint},
-        sec1::ToEncodedPoint,
+        sec1::ToSec1Point,
         subtle::Choice,
     };
     use p256::{AffinePoint, ProjectivePoint, Scalar};
@@ -86,7 +86,7 @@ mod tests {
 
     fn keypair(scalar: U256) -> (SigningKey, [u8; 64]) {
         let key = SigningKey::from_bytes(&scalar.to_be_bytes::<32>().into()).unwrap();
-        let point = key.verifying_key().to_encoded_point(false);
+        let point = key.verifying_key().to_sec1_point(false);
         let mut pk = [0; 64];
         pk.copy_from_slice(&point.as_bytes()[1..]);
         (key, pk)
@@ -198,7 +198,7 @@ mod tests {
     fn forge(q: &AffinePoint, u1: u64, u2: u64) -> ([u8; 32], [u8; 64]) {
         let (u1, u2) = (Scalar::from(u1), Scalar::from(u2));
         let big_r = (ProjectivePoint::GENERATOR * u1 + ProjectivePoint::from(*q) * u2).to_affine();
-        let r = <Scalar as Reduce<p256::U256>>::reduce_bytes(&big_r.x());
+        let r = <Scalar as Reduce<p256::FieldBytes>>::reduce(&big_r.x());
         let s = r * u2.invert().unwrap();
         let mut sig = [0; 64];
         sig[..32].copy_from_slice(&r.to_bytes());
@@ -220,7 +220,7 @@ mod tests {
         // The coordinate that still fits in 256 bits after adding p.
         for (q, coord) in [(q0, 0..32), (q1, 32..64)] {
             let mut pk = [0; 64];
-            pk.copy_from_slice(&q.to_encoded_point(false).as_bytes()[1..]);
+            pk.copy_from_slice(&q.to_sec1_point(false).as_bytes()[1..]);
             let mut alias = pk;
             let aliased = U256::from_be_slice(&pk[coord.clone()])
                 .checked_add(P)
