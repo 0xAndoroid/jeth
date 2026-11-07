@@ -286,14 +286,14 @@ mod tests {
             block_env: BlockEnv::default(),
             cfg_env: CfgEnv::default(),
         };
-        let mut normal = EthEvmFactory.create_evm(
+        let mut normal = EthEvmFactory::default().create_evm(
             State::builder()
                 .with_database(db.clone())
                 .with_bundle_update()
                 .build(),
             env.clone(),
         );
-        let mut retained = EthEvmFactory.create_evm(BlockOverlay::new(db, 3), env);
+        let mut retained = EthEvmFactory::default().create_evm(BlockOverlay::new(db, 3), env);
         retained.retain_transactions();
         for (nonce, (address, value)) in [(target, 1), (reverting, 2), (target, 3), (target, 3)]
             .into_iter()
