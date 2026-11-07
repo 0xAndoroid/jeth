@@ -24,6 +24,8 @@ mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
 mod keccak_memo;
+#[cfg(any(all(feature = "secp-inline", target_arch = "riscv64"), test))]
+mod kzg;
 #[cfg(any(all(feature = "p256-inline", target_arch = "riscv64"), test))]
 mod p256;
 #[cfg(feature = "premeasure")]
