@@ -83,6 +83,7 @@ zeth-mpt = { path = "crates/vendor/zeth-mpt" }
 # jeth-core); the a16z fork used by the jolt crates is a different source and is untouched.
 [patch.crates-io]
 alloy-evm = { path = "crates/vendor/alloy-evm" }
+revm-context-interface = { path = "crates/vendor/revm-context-interface" }
 ark-ff = { path = "crates/vendor/ark-ff" }
 
 [workspace.lints.rust]
