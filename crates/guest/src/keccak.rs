@@ -75,6 +75,19 @@ unsafe fn f1600(state: *mut u64) {
 /// Both pointers 8-aligned and non-overlapping.
 #[inline(always)]
 unsafe fn absorb_permute(state: *mut u64, block: *const u64) {
+    // PCALL ports must address RAM, whereas an upstream middle block may
+    // point directly into the public input region. Stage only the ON path
+    // through aligned stack RAM; volatile words preserve the copy boundary.
+    #[cfg(feature = "pcall-keccakf")]
+    let mut ram_block = MaybeUninit::<[u64; RATE_WORDS]>::uninit();
+    #[cfg(feature = "pcall-keccakf")]
+    let block = {
+        let scratch = ram_block.as_mut_ptr().cast::<u64>();
+        for i in 0..RATE_WORDS {
+            write_volatile(scratch.add(i), read_volatile(block.add(i)));
+        }
+        scratch.cast_const()
+    };
     #[cfg(feature = "guest")]
     jolt_inlines_keccak256::keccak256_absorb_permute(state, block.cast());
     #[cfg(not(feature = "guest"))]
