@@ -225,6 +225,7 @@ pub(crate) fn hashed_post_state<'a>(
                 account
                     .storage
                     .iter()
+                    .filter(|(_, value)| value.is_changed())
                     .map(|(slot, value)| (hash_slot(*slot, slot_hashes).0, value.present_value)),
             );
             (

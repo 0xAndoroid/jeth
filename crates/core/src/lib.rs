@@ -12,6 +12,7 @@ extern crate alloc;
 pub mod advice;
 #[cfg(any(feature = "bigint-inline", test))]
 pub mod bigint;
+mod block_overlay;
 #[cfg(feature = "secp-inline")]
 mod bn254;
 #[cfg(feature = "census")]

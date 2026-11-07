@@ -50,6 +50,7 @@ critical-section = "1.2"
 # inline via the guest's jeth_ecrecover_prehash hook (software k256 measured at
 # ~1.5M rows/authorization — 16% of block 25698070; the inline is ~230k).
 [patch.crates-io]
+alloy-evm = { path = "../vendor/alloy-evm" }
 revm-interpreter = { path = "../vendor/revm-interpreter" }
 alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 # Fixed foldhash seeds (design law L5): hashbrown iteration order must be

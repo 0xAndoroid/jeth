@@ -22,7 +22,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{
     keccak256,
-    map::{AddressMap, B256IndexMap, B256Map},
+    map::{B256IndexMap, B256Map},
     Address, Bloom, Bytes, B256, U256,
 };
 #[cfg(feature = "lazy-analysis")]
@@ -30,14 +30,10 @@ use core::cell::RefCell;
 use reth_consensus::{Consensus, HeaderValidator};
 use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus};
 use reth_ethereum_primitives::{Block, EthereumReceipt};
-use reth_evm::{
-    execute::{BlockExecutionOutput, BlockExecutor},
-    revm::database::{states::bundle_state::BundleRetention, CacheState, State},
-    ConfigureEvm,
-};
+use reth_evm::{block::BlockExecutorFactory, execute::BlockExecutor, ConfigureEvm, Evm};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use revm_bytecode::Bytecode;
-use revm_database_interface::Database;
+use revm_database_interface::{Database, DatabaseCommit};
 use revm_state::AccountInfo;
 use stateless::{validation::StatelessValidationError, ExecutionWitness, StatelessTrie};
 use tries::WitnessDbError;
@@ -110,29 +106,23 @@ pub fn validate_recovered_pertx(
     let (mut trie, bytecode) = crate::Trie::new_with_codes(&witness, parent.state_root)?;
 
     let db = WitnessDatabase::new(&trie, bytecode, ancestor_hashes);
-    // Presize revm's block cache from the witness node count: every existing
-    // account it can hold is a leaf of the revealed state trie (13x over on
-    // 25905781, where the table's growth path cost ~220k rows of rehash and a
-    // presized 32k-bucket table ~4k rows of ctrl memset). Non-existing accounts
-    // (exclusion proofs, coinbase, precompiles) also get entries but are few;
-    // exceeding the bound only costs the ordinary rehash, never correctness.
-    let cache = CacheState {
-        accounts: AddressMap::with_capacity_and_hasher(witness.state.len(), Default::default()),
-        contracts: B256Map::default(),
-    };
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .with_cached_prestate(cache)
-        .build();
-
-    let mut executor = evm_config
-        .executor_for_block(&mut state, current_block.sealed_block())
+    let mut state = crate::block_overlay::BlockOverlay::new(db, witness.state.len());
+    let evm = evm_config
+        .evm_for_block(&mut state, current_block.header())
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
+    let context = evm_config
+        .context_for_block(current_block.sealed_block())
+        .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
+    let mut executor = evm_config
+        .block_executor_factory()
+        .create_executor(evm, context);
 
     executor
         .apply_pre_execution_changes()
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
+
+    // This fixed receipt builder uses only execution results; no state hook is installed.
+    executor.evm_mut().retain_transactions();
 
     #[cfg(feature = "pertx-markers")]
     let mut label_buf = *b"tx0000";
@@ -146,30 +136,29 @@ pub fn validate_recovered_pertx(
         crate::instrument::phase_end_dyn(tx_label(_i, &mut label_buf));
     }
 
+    // Apply the retained final values before withdrawals and post-block calls.
+    // The overlay owns block originals, so it consumes all present slots.
+    let evm = executor.evm_mut();
+    let changes = evm.take_retained_state();
+    evm.db_mut().commit(changes);
+
     let result = executor
         .apply_post_execution_changes()
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
 
-    state.merge_transitions(BundleRetention::Reverts);
-    let output = BlockExecutionOutput {
-        state: state.take_bundle(),
-        result,
-    };
-    // Single-shot process: leak the block state instead of tearing it down.
+    let accounts = core::mem::take(&mut state.accounts);
+    // Single-shot process: leak the block cache instead of tearing it down.
     core::mem::forget(state);
 
-    let root_bloom = receipt_root_bloom(&output.result.receipts, |address| {
-        trie.hashed_address(address)
-    });
-    validate_block_post_execution(
-        &current_block,
-        &chain_spec,
-        &output.result,
-        Some(root_bloom),
-    )
-    .map_err(StatelessValidationError::ConsensusValidationFailed)?;
+    let root_bloom = receipt_root_bloom(&result.receipts, |address| trie.hashed_address(address));
+    validate_block_post_execution(&current_block, &chain_spec, &result, Some(root_bloom))
+        .map_err(StatelessValidationError::ConsensusValidationFailed)?;
 
-    let hashed_state = trie.hashed_post_state(&output.state.state);
+    let hashed_state = trie.hashed_post_state(
+        accounts
+            .iter()
+            .filter(|(_, account)| crate::block_overlay::is_changed(account)),
+    );
     let state_root = trie.calculate_state_root(hashed_state)?;
     if state_root != current_block.state_root {
         return Err(StatelessValidationError::PostStateRootMismatch {
@@ -180,11 +169,11 @@ pub fn validate_recovered_pertx(
 
     let validated = ValidatedBlock {
         block_hash: current_block.hash_slow(),
-        gas_used: output.result.gas_used,
-        receipts: output.result.receipts,
+        gas_used: result.gas_used,
+        receipts: result.receipts,
     };
     core::mem::forget(trie);
-    core::mem::forget(output.state);
+    core::mem::forget(accounts);
     core::mem::forget(witness);
     core::mem::forget(current_block);
     Ok(validated)
