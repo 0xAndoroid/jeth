@@ -349,6 +349,37 @@ impl<T: StatelessTrie> Database for WitnessDatabase<'_, T> {
     }
 }
 
+#[derive(Default)]
+struct WordBloom([u64; 32]);
+
+impl WordBloom {
+    #[inline]
+    fn accrue_hash(&mut self, hash: &B256) {
+        for i in [0, 2, 4] {
+            let bit = usize::from(u16::from_be_bytes([hash[i], hash[i + 1]])) & 2047;
+            let offset = (bit & 63)
+                ^ if cfg!(target_endian = "little") {
+                    56
+                } else {
+                    0
+                };
+            self.0[31 - bit / 64] |= 1 << offset;
+        }
+    }
+
+    fn accrue_bloom(&mut self, other: &Self) {
+        for (dst, src) in self.0.iter_mut().zip(&other.0) {
+            *dst |= *src;
+        }
+    }
+
+    fn into_bloom(self) -> Bloom {
+        // SAFETY: Both arrays occupy 256 bytes with no padding or invalid bit patterns.
+        // accrue_hash places bits in the bloom's byte order on either endianness.
+        Bloom::from(unsafe { core::mem::transmute::<[u64; 32], [u8; 256]>(self.0) })
+    }
+}
+
 /// Receipt root + block bloom; `hash_address` supplies `keccak256(address)`
 /// for log emitters (the trie's execution-time memo), topics are memoized here.
 pub(crate) fn receipt_root_bloom(
@@ -362,28 +393,27 @@ pub(crate) fn receipt_root_bloom(
         .map(|log| log.topics().len())
         .sum();
     let mut topics = B256Map::with_capacity_and_hasher(topic_count, Default::default());
+    let mut bloom = WordBloom::default();
     let receipts: Vec<_> = receipts
         .iter()
         .map(|receipt| {
-            let mut logs_bloom = Bloom::ZERO;
+            let mut logs_bloom = WordBloom::default();
             for log in receipt.logs() {
-                logs_bloom.m3_2048_hashed(&hash_address(log.address));
+                logs_bloom.accrue_hash(&hash_address(log.address));
                 for &topic in log.topics() {
                     let hash = topics.entry(topic).or_insert_with(|| keccak256(topic));
-                    logs_bloom.m3_2048_hashed(hash);
+                    logs_bloom.accrue_hash(hash);
                 }
             }
+            bloom.accrue_bloom(&logs_bloom);
             ReceiptWithBloom {
                 receipt,
-                logs_bloom,
+                logs_bloom: logs_bloom.into_bloom(),
             }
         })
         .collect();
     let root = calculate_receipt_root(&receipts);
-    let bloom = receipts
-        .iter()
-        .fold(Bloom::ZERO, |bloom, r| bloom | r.logs_bloom);
-    (root, bloom)
+    (root, bloom.into_bloom())
 }
 
 #[cfg(test)]
@@ -391,6 +421,22 @@ mod tests {
     use super::*;
     use alloy_consensus::TxType;
     use alloy_primitives::Log;
+
+    #[test]
+    fn word_bloom_sets_each_protocol_bit() {
+        for bit in 0..2048u16 {
+            let pair = bit.to_be_bytes();
+            let mut hash = B256::ZERO;
+            for i in [0, 2, 4] {
+                hash[i..i + 2].copy_from_slice(&pair);
+            }
+            let mut bloom = WordBloom::default();
+            bloom.accrue_hash(&hash);
+            let mut expected = Bloom::ZERO;
+            expected[255 - usize::from(bit / 8)] = 1 << (bit % 8);
+            assert_eq!(bloom.into_bloom(), expected);
+        }
+    }
 
     #[test]
     fn receipt_root_bloom_matches_direct_hashing() {
