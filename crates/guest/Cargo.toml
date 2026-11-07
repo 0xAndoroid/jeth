@@ -12,6 +12,7 @@ edition = "2021"
 [features]
 default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
+pcall-keccakf = ["jolt-inlines-keccak256/pcall-keccakf"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
 # normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
 # 21 rows per keccak call; `--no-default-features` drops it.
@@ -25,8 +26,8 @@ lazy = ["jeth-core/lazy-analysis"]
 compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
-jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
+jolt = { package = "jolt-sdk", path = "../../../jolt/jolt-sdk" }
+jolt-inlines-keccak256 = { path = "../../../jolt/jolt-inlines/keccak256", default-features = false }
 
 jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "blake2f-inline", "p256-inline", "bigint-inline", "bn254-inline", "bls12-381-inline", "guest-instrument"] }
 # Direct dependency only to reach the vendored crate's `bigint-inline` feature:
@@ -92,3 +93,9 @@ name = "jeth-guest"
 path = "src/main.rs"
 test = false
 bench = false
+
+[patch."https://github.com/a16z/jolt"]
+jolt-field = { path = "../../../jolt/crates/jolt-field" }
+jolt-poly = { path = "../../../jolt/crates/jolt-poly" }
+jolt-transcript = { path = "../../../jolt/crates/jolt-transcript" }
+jolt-inlines-ntt = { path = "../../../jolt/jolt-inlines/ntt" }

@@ -46,7 +46,11 @@ const DIGEST_WORDS: usize = 4;
 unsafe fn permute(state: *mut u64) {
     #[cfg(feature = "guest")]
     {
-        use jolt_inlines_keccak256::{INLINE_OPCODE, KECCAK256_FUNCT3, KECCAK256_FUNCT7};
+        #[cfg(not(feature = "pcall-keccakf"))]
+        use jolt_inlines_keccak256::KECCAK256_FUNCT7;
+        use jolt_inlines_keccak256::{INLINE_OPCODE, KECCAK256_FUNCT3};
+        #[cfg(feature = "pcall-keccakf")]
+        const KECCAK256_FUNCT7: u32 = 0x0a;
         // `Keccak256Permutation` (sequence_builder.rs): rs1 = state, rs2 unused.
         core::arch::asm!(
             ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, x0",

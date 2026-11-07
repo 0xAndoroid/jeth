@@ -20,6 +20,7 @@ publish = false
 # never enabled (the guest paths need the riscv target and the Jolt inlines).
 [features]
 guest = []
+pcall-keccakf = []
 
 [lib]
 path = "src/lib.rs"
