@@ -85,6 +85,18 @@ fn validate_block(input: &[u8]) -> ValidationResult {
     run_validation(input)
 }
 
+/// Same validation with a smaller committed-input region. Select explicitly
+/// for serialized inputs that fit 16 MiB; validate_block retains the 128 MiB limit.
+#[jolt::provable(
+    max_input_size = 16777216,
+    max_output_size = 4096,
+    heap_size = 1610612736,
+    stack_size = 33554432
+)]
+fn validate_block_16m(input: &[u8]) -> ValidationResult {
+    run_validation(input)
+}
+
 /// Advice path: the same bytes arrive as TRUSTED ADVICE instead of committed
 /// input. Prover-side this skips input commitment costs; soundness is unaffected
 /// for the witness because the guest verifies it against the parent state root
