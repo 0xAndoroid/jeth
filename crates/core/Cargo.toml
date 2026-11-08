@@ -20,8 +20,8 @@ blake2-inline = ["secp-inline", "dep:jolt-inlines-blake2"]
 blake2f-inline = ["blake2-inline", "dep:jeth-inlines-blake2f"]
 # RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
 p256-inline = ["secp-inline", "dep:jolt-inlines-p256"]
-# EVM MULMOD (the guest hooks `bigint.rs` into revm-interpreter) and MODEXP for odd moduli of
-# 9..=32 significant bytes on the BIGINT256_MUL inline (guest builds only, like the above).
+# Guest arithmetic hooks: EVM MULMOD uses ruint; MODEXP for odd moduli of
+# 9..=32 significant bytes uses BIGINT256_MUL in its Montgomery ladder.
 bigint-inline = ["secp-inline", "dep:jolt-inlines-bigint"]
 # bn254 Fq multiplication (ecadd/ecmul/pairing precompiles) through the BN254_* inlines: the
 # vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.

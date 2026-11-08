@@ -1,5 +1,4 @@
-//! U256 arithmetic on the Jolt BIGINT256_MUL inline (256×256→512-bit product,
-//! 141 rows; `jolt-inlines/bigint`).
+//! U256 modular arithmetic and MODEXP.
 
 #![expect(
     clippy::inline_always,
@@ -10,29 +9,15 @@
     reason = "Limb variables follow Montgomery multiplication notation."
 )]
 use alloc::vec::Vec;
-use alloy_primitives::{ruint::algorithms, U256};
+use alloy_primitives::U256;
 use jolt_inlines_bigint::bigint256_mul_inline;
 
-/// `(a * b) % modulus`, written over `modulus`; zero when the modulus is zero
-/// (EVM MULMOD semantics, identical to ruint's `mul_mod`). The 512-bit product
-/// comes from the inline, the 512/256 reduction stays ruint's Knuth division.
+/// `(a * b) % modulus`, written over `modulus`; zero when the modulus is zero.
+/// Use ruint's specialized remainder paths. An inline product followed by
+/// generic division bypasses its normalized and all-ones-modulus reductions.
 #[inline(always)]
 pub fn mul_mod(a: &U256, b: &U256, modulus: &mut U256) {
-    if modulus.is_zero() {
-        return;
-    }
-    let mut product = [0u64; 8];
-    // SAFETY: `Uint` is `repr(transparent)` over `[u64; 4]` (8-byte aligned);
-    // the inline reads 32 bytes from each operand and writes 64 bytes to
-    // `product`. U256 has no padding bits, so raw limb writes keep it canonical.
-    unsafe {
-        bigint256_mul_inline(
-            a.as_limbs().as_ptr(),
-            b.as_limbs().as_ptr(),
-            product.as_mut_ptr(),
-        );
-        algorithms::div(&mut product, modulus.as_limbs_mut());
-    }
+    *modulus = a.mul_mod(*b, *modulus);
 }
 
 /// MODEXP precompile arithmetic (`base^exp mod modulus`, big-endian operands)
@@ -87,7 +72,8 @@ pub fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
 #[inline(always)]
 fn mont_mul(a: &U256, b: &U256, n: &U256, n_prime: u64) -> U256 {
     let mut t = [0u64; 9];
-    // SAFETY: as in `mul_mod`; `t` has room for the 8 product limbs.
+    // SAFETY: U256 is transparent over four aligned u64 limbs; `t` has
+    // room for the eight product limbs written by the inline.
     unsafe {
         bigint256_mul_inline(a.as_limbs().as_ptr(), b.as_limbs().as_ptr(), t.as_mut_ptr());
     }
@@ -121,12 +107,22 @@ fn mont_mul(a: &U256, b: &U256, n: &U256, n_prime: u64) -> U256 {
 mod tests {
     use super::*;
     use alloc::vec;
-    use alloy_primitives::hex;
+    use alloy_primitives::{hex, U512};
 
     fn check(a: U256, b: U256, m: U256) {
         let mut got = m;
         mul_mod(&a, &b, &mut got);
-        assert_eq!(got, a.mul_mod(b, m), "a={a:#x} b={b:#x} m={m:#x}");
+        let expected = if m.is_zero() {
+            U256::ZERO
+        } else {
+            // Independent of U256::mul_mod: form the full product and use
+            // ordinary U512 division to obtain the remainder.
+            let product: U512 = a.widening_mul(b);
+            let remainder = product % U512::from(m);
+            let limbs = remainder.as_limbs();
+            U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
+        };
+        assert_eq!(got, expected, "a={a:#x} b={b:#x} m={m:#x}");
     }
 
     fn edge_values() -> [U256; 16] {
@@ -201,6 +197,17 @@ mod tests {
             if !m.is_zero() {
                 check(a % m, b % m, m);
             }
+        }
+    }
+
+    #[test]
+    fn full_width_products_across_normalization_shifts() {
+        for shift in 0..64 {
+            let modulus = U256::from_limbs([17, u64::MAX, 0, u64::MAX >> shift]);
+            check(U256::MAX, U256::MAX, modulus);
+            let reduced = modulus - U256::from(1);
+            check(reduced, reduced, modulus);
+            check(U256::MAX, modulus, modulus);
         }
     }
 
