@@ -1,0 +1,52 @@
+{
+  "scope": "Matched full-block expanded trace counts; not end-to-end prover timings.",
+  "base_jeth": "dac77ea4ae4b1b67997b64701623e796093d0b23",
+  "guest_dependency_pin": "8e536f199735ac8187156aa589ed1387722a079a",
+  "build_only_jolt_overlay": "9407f93fb5d908a9967235017f7ac3e2d2d6d3f2",
+  "compiler": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+  "dependency_lock_identical": true,
+  "features": [
+    "guest",
+    "keccak-census"
+  ],
+  "candidate_additional_feature": "keccak-cache",
+  "advice_additional_feature": "compute_advice",
+  "heap_bytes": 1610612736,
+  "stack_bytes": 33554432,
+  "results": [
+    {
+      "block": 26235156,
+      "rows": 91017496,
+      "baseline_rows": 91740474,
+      "saving_percent": 0.7880687427012858,
+      "instructions": 27993562,
+      "block_hash": "0xa9533744986888244d786721fc0506984585de242dc3d4e0db6d8337abe75bc4",
+      "gas_used": 5443474
+    },
+    {
+      "block": 26235168,
+      "rows": 543310961,
+      "baseline_rows": 548807433,
+      "saving_percent": 1.0015301669574872,
+      "instructions": 212332124,
+      "block_hash": "0x07cddb3b33def263e86256977358a0313899e16a31aaae2e3444368e68da60c9",
+      "gas_used": 29142059
+    },
+    {
+      "block": 26235159,
+      "rows": 906616024,
+      "baseline_rows": 919744990,
+      "saving_percent": 1.4274571911503426,
+      "instructions": 365137046,
+      "block_hash": "0xef2d2364841157023002e46411735a80b93c21c68aaf3f5f45118d4aa6ce3ef3",
+      "gas_used": 57734946
+    }
+  ],
+  "correctness": "Canonical hash and gas checked for each block. Ten native tests pass, including full index-hash collisions, input/output alignment, overlapping output, and output guard preservation.",
+  "limits": [
+    "Existing Keccak census counters enabled in both variants.",
+    "The small arithmetic/memory cost of cache lookup can regress all-miss workloads.",
+    "RISC-V guest builds used the same Jolt build-only overlay in both arms, rather than changing the dependency pin in this PR.",
+    "No CUDA or CPU end-to-end prover timing claim."
+  ]
+}

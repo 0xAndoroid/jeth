@@ -26,5 +26,6 @@ path = "src/lib.rs"
 doctest = false
 
 [dependencies]
+fixed-cache = { version = "0.1.11", default-features = false }
 keccak = "0.2"
 sha3 = { version = "0.12", default-features = false }

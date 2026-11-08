@@ -16,6 +16,8 @@ guest = ["jeth-core/code-library"]
 # normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
 # 21 rows per keccak call; `--no-default-features` drops it.
 keccak-census = []
+# Optional bounded cache for repeated 32-/64-byte Keccak inputs. Misses add work.
+keccak-cache = ["dep:fixed-cache"]
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
@@ -25,6 +27,7 @@ lazy = ["jeth-core/lazy-analysis"]
 compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
+fixed-cache = { version = "0.1.11", default-features = false, optional = true }
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
 jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
 

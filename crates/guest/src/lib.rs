@@ -18,6 +18,8 @@ extern crate alloc;
 // crates/guest/native-tests/Cargo.toml`), which includes these files by path.
 #[cfg(feature = "guest")]
 mod keccak;
+#[cfg(all(feature = "guest", feature = "keccak-cache"))]
+mod keccak_cache;
 #[cfg(feature = "guest")]
 mod mem;
 
@@ -171,6 +173,25 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 #[no_mangle]
 #[inline(never)]
 pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
+    #[cfg(feature = "keccak-cache")]
+    if len == 32 || len == 64 {
+        // SAFETY: inherited from this native-keccak entry point's input contract.
+        let input = core::slice::from_raw_parts(bytes, len);
+        let digest = keccak_cache::compute(input, |input| {
+            let mut result = [0u64; 4];
+            keccak_uncached(input.as_ptr(), input.len(), result.as_mut_ptr().cast());
+            result
+        });
+        keccak::store_digest(digest.as_ptr(), output);
+        return;
+    }
+    keccak_uncached(bytes, len, output);
+}
+
+// Counters describe actual hashing work, so cached hits do not count as permutations.
+#[cfg(feature = "guest")]
+#[inline(always)]
+unsafe fn keccak_uncached(bytes: *const u8, len: usize, output: *mut u8) {
     #[cfg(feature = "keccak-census")]
     {
         KECCAK_CALLS += 1;
