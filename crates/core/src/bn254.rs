@@ -1,16 +1,8 @@
-//! bn254 G1 scalar multiplication for the ecmul precompile (0x07).
-//!
-//! revm's arkworks backend multiplies through `Affine::mul_bigint`: plain
-//! double-and-add over the full 254-bit scalar (~254 doublings + ~127 mixed
-//! additions). ark-bn254 ships GLV parameters for G1, so k = k1 + λ·k2 with
-//! |k1|, |k2| < 2^128 halves the doublings (128 doublings + ~96 additions from
-//! the {P, φ(P), P+φ(P)} table). Same group element, same canonical affine
-//! output. Parsing and encoding mirror revm-precompile's `bn254::arkworks`
-//! byte for byte, including the two rejection variants.
+//! BN254 G1 scalar multiplication with a signed-window GLV loop.
 
-use ark_bn254::{g1::Config, Fq, Fr, G1Affine};
-use ark_ec::{scalar_mul::glv::GLVConfig, AffineRepr};
-use ark_ff::{BigInt, PrimeField, Zero};
+use ark_bn254::{g1::Config, Fq, Fr, G1Affine, G1Projective};
+use ark_ec::{scalar_mul::glv::GLVConfig, AffineRepr, CurveGroup};
+use ark_ff::{AdditiveGroup, BigInt, BigInteger, PrimeField, Zero};
 use reth_evm::revm::precompile::PrecompileHalt;
 
 /// Canonical (< p) big-endian field element; revm's `read_fq` rejection.
@@ -43,13 +35,63 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], Precompile
         p
     };
     let k = Fr::from_be_bytes_mod_order(scalar);
-    let product = Config::glv_mul_affine(p, k);
+    let product = windowed_glv(p, k);
     let mut out = [0u8; 64];
     if let Some((x, y)) = product.xy() {
         write_fq(&mut out[..32], x);
         write_fq(&mut out[32..], y);
     }
     Ok(out)
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "literal width four is accepted by find_wnaf"
+)]
+fn windowed_glv(point: G1Affine, scalar: Fr) -> G1Affine {
+    if point.is_zero() || scalar.is_zero() {
+        return G1Affine::identity();
+    }
+    let ((positive_1, k1), (positive_2, k2)) = Config::scalar_decomposition(scalar);
+    let digits_1 = k1.into_bigint().find_wnaf(4).expect("valid window width");
+    let digits_2 = k2.into_bigint().find_wnaf(4).expect("valid window width");
+    // Width four uses at most P, 3P, 5P, 7P. Small scalars need only a
+    // prefix; normalize it together for mixed additions in the loop.
+    let table_len = digits_1
+        .iter()
+        .chain(&digits_2)
+        .map(|digit| digit.unsigned_abs() as usize / 2 + 1)
+        .max()
+        .unwrap_or(1);
+    let mut odd = [point.into_group(); 4];
+    let twice = odd[0].double();
+    for i in 1..table_len {
+        odd[i] = odd[i - 1] + twice;
+    }
+    let first = G1Projective::normalize_batch(&odd[..table_len]);
+    let second = first
+        .iter()
+        .map(Config::endomorphism_affine)
+        .collect::<alloc::vec::Vec<_>>();
+    let mut result = G1Projective::zero();
+    for bit in (0..digits_1.len().max(digits_2.len())).rev() {
+        result.double_in_place();
+        for (digits, table, positive) in [
+            (&digits_1, &first, positive_1),
+            (&digits_2, &second, positive_2),
+        ] {
+            let digit = digits.get(bit).copied().unwrap_or(0);
+            if digit != 0 {
+                let addend = table[(digit.unsigned_abs() / 2) as usize];
+                result += if (digit > 0) == positive {
+                    addend
+                } else {
+                    -addend
+                };
+            }
+        }
+    }
+    result.into_affine()
 }
 
 #[cfg(test)]
