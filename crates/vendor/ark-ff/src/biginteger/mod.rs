@@ -29,8 +29,20 @@ use zeroize::Zeroize;
 #[macro_use]
 pub mod arithmetic;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Zeroize)]
+#[derive(Copy, Clone, Eq, Hash, Zeroize)]
 pub struct BigInt<const N: usize>(pub [u64; N]);
+
+impl<const N: usize> PartialEq for BigInt<N> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        // Keep fixed-width limb comparisons out of the guest's generic memcmp.
+        self.0
+            .iter()
+            .zip(&other.0)
+            .fold(0, |diff, (a, b)| diff | (a ^ b))
+            == 0
+    }
+}
 
 impl<const N: usize> Default for BigInt<N> {
     fn default() -> Self {
