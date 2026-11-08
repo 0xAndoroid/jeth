@@ -3,8 +3,14 @@ name = "jeth-core"
 version.workspace = true
 edition.workspace = true
 
+[[example]]
+name = "native-advice"
+required-features = ["native-advice", "secp-inline", "code-library"]
+
 [features]
 std = []
+# Record untrusted advice while executing the validation logic natively.
+native-advice = ["std", "zeth-mpt/native-advice", "jolt-inlines-secp256k1?/host"]
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode
 # inspector around the same validation loop. Never enabled by the guest.
 census = ["std"]
