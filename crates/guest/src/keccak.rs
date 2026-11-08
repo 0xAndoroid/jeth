@@ -187,7 +187,7 @@ unsafe fn merge_final_block<const XOR: bool>(dst: *mut u64, src: *const u8, rem:
 
 /// Writes the four digest lanes to the 32 bytes at `out` (any alignment).
 #[inline(always)]
-unsafe fn store_digest(state: *const u64, out: *mut u8) {
+pub(crate) unsafe fn store_digest(state: *const u64, out: *mut u8) {
     let mut d = [0u64; DIGEST_WORDS];
     for (i, lane) in d.iter_mut().enumerate() {
         *lane = read_volatile(state.add(i));
