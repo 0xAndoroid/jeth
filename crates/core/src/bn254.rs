@@ -1,16 +1,8 @@
-//! bn254 G1 scalar multiplication for the ecmul precompile (0x07).
-//!
-//! revm's arkworks backend multiplies through `Affine::mul_bigint`: plain
-//! double-and-add over the full 254-bit scalar (~254 doublings + ~127 mixed
-//! additions). ark-bn254 ships GLV parameters for G1, so k = k1 + λ·k2 with
-//! |k1|, |k2| < 2^128 halves the doublings (128 doublings + ~96 additions from
-//! the {P, φ(P), P+φ(P)} table). Same group element, same canonical affine
-//! output. Parsing and encoding mirror revm-precompile's `bn254::arkworks`
-//! byte for byte, including the two rejection variants.
+//! BN254 G1 scalar multiplication with a signed-window GLV loop.
 
 use ark_bn254::{g1::Config, Fq, Fr, G1Affine};
 use ark_ec::{scalar_mul::glv::GLVConfig, AffineRepr};
-use ark_ff::{BigInt, PrimeField, Zero};
+use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField, Zero};
 use reth_evm::revm::precompile::PrecompileHalt;
 
 /// Canonical (< p) big-endian field element; revm's `read_fq` rejection.
@@ -43,7 +35,7 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], Precompile
         p
     };
     let k = Fr::from_be_bytes_mod_order(scalar);
-    let product = Config::glv_mul_affine(p, k);
+    let product = windowed_glv(p, k);
     let mut out = [0u8; 64];
     if let Some((x, y)) = product.xy() {
         write_fq(&mut out[..32], x);
@@ -52,12 +44,144 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], Precompile
     Ok(out)
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "literal width four is accepted by find_wnaf"
+)]
+fn windowed_glv(point: G1Affine, scalar: Fr) -> G1Affine {
+    if point.is_zero() || scalar.is_zero() {
+        return G1Affine::identity();
+    }
+    let ((positive_1, k1), (positive_2, k2)) = Config::scalar_decomposition(scalar);
+    let digits_1 = k1.into_bigint().find_wnaf(4).expect("valid window width");
+    let digits_2 = k2.into_bigint().find_wnaf(4).expect("valid window width");
+    // Width four uses at most P, 3P, 5P, 7P. Small scalars need only a
+    // prefix. Affine additions check an advised slope locally.
+    let table_len = digits_1
+        .iter()
+        .chain(&digits_2)
+        .map(|digit| digit.unsigned_abs() as usize / 2 + 1)
+        .max()
+        .unwrap_or(1);
+    let mut first = [point; 4];
+    let twice = affine_add(point, point);
+    for i in 1..table_len {
+        first[i] = affine_add(first[i - 1], twice);
+    }
+    let second = first.map(|point| Config::endomorphism_affine(&point));
+    let mut result = G1Affine::identity();
+    for bit in (0..digits_1.len().max(digits_2.len())).rev() {
+        result = affine_add(result, result);
+        for (digits, table, positive) in [
+            (&digits_1, &first, positive_1),
+            (&digits_2, &second, positive_2),
+        ] {
+            let digit = digits.get(bit).copied().unwrap_or(0);
+            if digit != 0 {
+                let addend = table[(digit.unsigned_abs() / 2) as usize];
+                result = affine_add(
+                    result,
+                    if (digit > 0) == positive {
+                        addend
+                    } else {
+                        -addend
+                    },
+                );
+            }
+        }
+    }
+    result
+}
+
+/// Both inputs are valid curve points. Handle infinity, inverse pairs, and
+/// doubling before consuming advice, so every advised denominator is nonzero.
+fn affine_add(p: G1Affine, q: G1Affine) -> G1Affine {
+    if p.is_zero() {
+        return q;
+    }
+    if q.is_zero() {
+        return p;
+    }
+    let (numerator, denominator) = if p.x == q.x {
+        if p.y != q.y || p.y.is_zero() {
+            return G1Affine::identity();
+        }
+        let xx = p.x.square();
+        (xx.double() + xx, p.y.double())
+    } else {
+        (q.y - p.y, q.x - p.x)
+    };
+    let slope = advised_slope(numerator, denominator);
+    let x = slope.square() - p.x - q.x;
+    let y = slope * (p.x - x) - p.y;
+    G1Affine::new_unchecked(x, y)
+}
+
+#[cfg_attr(
+    any(feature = "compute_advice", not(target_arch = "riscv64")),
+    expect(clippy::expect_used, reason = "affine_add excludes zero denominators")
+)]
+fn advised_slope(numerator: Fq, denominator: Fq) -> Fq {
+    use crate::advice::advice_u64;
+    #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
+    let slope = (numerator * denominator.inverse().expect("nonzero slope denominator"))
+        .0
+         .0;
+    let raw = BigInt(core::array::from_fn(|i| {
+        let _ = i;
+        advice_u64!(slope[i])
+    }));
+    checked_slope(numerator, denominator, raw)
+}
+
+/// The caller establishes denominator != 0. This equation then uniquely
+/// determines the slope; no batch challenge or deferred check is involved.
+fn checked_slope(numerator: Fq, denominator: Fq, raw: BigInt<4>) -> Fq {
+    // The tape carries the Montgomery residue, not the canonical integer value.
+    assert!(raw < Fq::MODULUS, "noncanonical slope advice");
+    let slope = Fq::new_unchecked(raw);
+    assert!(slope * denominator == numerator, "invalid slope advice");
+    slope
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec;
     use ark_ec::CurveGroup;
     use reth_evm::revm::precompile::{Crypto, DefaultCrypto};
+
+    #[test]
+    fn affine_add_handles_group_edge_cases() {
+        let g = G1Affine::generator();
+        let zero = G1Affine::identity();
+        assert_eq!(affine_add(zero, zero), zero);
+        assert_eq!(affine_add(zero, g), g);
+        assert_eq!(affine_add(g, zero), g);
+        assert_eq!(affine_add(g, -g), zero);
+        assert_eq!(affine_add(g, g), g.into_group().double().into_affine());
+        assert_eq!(affine_add(-g, -g), (-g).into_group().double().into_affine());
+    }
+
+    #[test]
+    fn zero_slope_is_valid_when_numerator_is_zero() {
+        assert_eq!(
+            checked_slope(Fq::zero(), Fq::from(7u64), BigInt::new([0; 4])),
+            Fq::zero()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid slope advice")]
+    fn wrong_canonical_slope_is_rejected() {
+        checked_slope(Fq::from(1u64), Fq::from(2u64), BigInt::new([0; 4]));
+    }
+
+    #[test]
+    #[should_panic(expected = "noncanonical slope advice")]
+    fn noncanonical_slope_is_rejected() {
+        checked_slope(Fq::zero(), Fq::from(2u64), Fq::MODULUS);
+    }
 
     fn xorshift(state: &mut u64) -> u64 {
         *state ^= *state << 13;
