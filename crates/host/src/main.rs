@@ -86,6 +86,10 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
+        /// Use a 16 MiB committed-input guest instead of the 128 MiB default.
+        /// The serialized input, including its length prefix, must fit.
+        #[arg(long, conflicts_with_all = ["advice", "trusted_digests"])]
+        small_input: bool,
         /// Deliver the payload as TRUSTED ADVICE instead of committed input.
         #[arg(long)]
         advice: bool,
@@ -231,6 +235,7 @@ fn main() -> Result<()> {
         Command::Trace {
             input,
             skip_build,
+            small_input,
             advice,
             trusted_digests,
             guest_features,
@@ -238,6 +243,7 @@ fn main() -> Result<()> {
             let variant = match (advice, trusted_digests) {
                 (_, true) => trace::Variant::Trusted,
                 (true, _) => trace::Variant::Advice,
+                _ if small_input => trace::Variant::Input16,
                 _ => trace::Variant::Input,
             };
             let features: Vec<&str> = guest_features
@@ -382,4 +388,18 @@ pub(crate) fn run_native(input_path: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn small_input_is_only_available_with_committed_input() {
+        let base = ["jeth", "trace", "--input", "input.bin", "--small-input"];
+        assert!(Cli::try_parse_from(base).is_ok());
+        for incompatible in ["--advice", "--trusted-digests"] {
+            assert!(Cli::try_parse_from(base.into_iter().chain([incompatible])).is_err());
+        }
+    }
 }

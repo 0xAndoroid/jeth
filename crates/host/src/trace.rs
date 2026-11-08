@@ -20,6 +20,7 @@ extern crate jolt_inlines_sha2 as _;
 
 /// Must match the `#[jolt::provable(...)]` attributes in crates/guest/src/lib.rs.
 const MAX_INPUT_SIZE: u64 = 134_217_728; // 128 MiB (multi-block synthetic inputs)
+const SMALL_INPUT_SIZE: u64 = 16_777_216; // validate_block_16m
 const MAX_OUTPUT_SIZE: u64 = 4096;
 const HEAP_SIZE: u64 = 1_610_612_736; // 1.5 GiB
 const STACK_SIZE: u64 = 33_554_432; // 32 MiB
@@ -41,6 +42,8 @@ fn guest_target_dir() -> String {
 pub enum Variant {
     /// Committed input (fully self-verifying — the headline configuration).
     Input,
+    /// Same committed-input validation, with an explicit 16 MiB payload limit.
+    Input16,
     /// Whole payload via trusted advice (prover-side commitment savings only).
     Advice,
     /// Committed input + pre-computed witness digests via trusted advice
@@ -49,9 +52,25 @@ pub enum Variant {
 }
 
 impl Variant {
+    fn payload_capacity(self) -> u64 {
+        match self {
+            Self::Input16 => SMALL_INPUT_SIZE,
+            _ => MAX_INPUT_SIZE,
+        }
+    }
+
+    fn check_payload_len(self, len: usize) -> Result<()> {
+        let capacity = self.payload_capacity();
+        if len as u64 > capacity {
+            bail!("serialized input {len} bytes exceeds guest size budget {capacity}");
+        }
+        Ok(())
+    }
+
     pub fn func(self) -> &'static str {
         match self {
             Variant::Input => "validate_block",
+            Variant::Input16 => "validate_block_16m",
             Variant::Advice => "validate_block_advice",
             Variant::Trusted => "validate_block_trusted",
         }
@@ -76,7 +95,7 @@ pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
 
 fn memory_config_for_program(program_size: u64, variant: Variant) -> MemoryConfig {
     let (input_size, trusted_size) = match variant {
-        Variant::Input => (MAX_INPUT_SIZE, MAX_ADVICE_SIZE),
+        Variant::Input | Variant::Input16 => (variant.payload_capacity(), MAX_ADVICE_SIZE),
         Variant::Advice => (MAX_ADVICE_SIZE, MAX_INPUT_SIZE),
         Variant::Trusted => (MAX_INPUT_SIZE, TRUSTED_DIGEST_ADVICE_SIZE),
     };
@@ -100,7 +119,7 @@ pub fn stream_start(variant: Variant) -> u64 {
     let layout = MemoryLayout::new(&memory_config_for_program(0, variant));
     match variant {
         Variant::Advice => layout.trusted_advice_start,
-        Variant::Input | Variant::Trusted => layout.input_start,
+        Variant::Input | Variant::Input16 | Variant::Trusted => layout.input_start,
     }
 }
 
@@ -267,6 +286,13 @@ pub fn run(
     variant: Variant,
     extra_features: &[&str],
 ) -> Result<()> {
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let wrapped = wrap_input(&raw)?;
+    // Include the argument's postcard length prefix, and reject before building
+    // either ELF or starting the advice pass.
+    variant.check_payload_len(wrapped.len())?;
+    println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
+
     let elf_file = elf_path_with(variant, extra_features);
     if !skip_build || !elf_file.exists() {
         build_guest_features(variant, extra_features)?;
@@ -279,23 +305,12 @@ pub fn run(
         variant.func()
     );
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
-    // Jolt's generated entry point adds only the &[u8] argument length prefix.
-    let wrapped = wrap_input(&raw)?;
-    if wrapped.len() as u64 > MAX_INPUT_SIZE {
-        bail!(
-            "input {} bytes exceeds guest size budget {}",
-            wrapped.len(),
-            MAX_INPUT_SIZE
-        );
-    }
     let digest_blob = match variant {
         Variant::Trusted => Some(wrap_input(&digest_blob_for(&raw)?)?),
         _ => None,
     };
     let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {
-        Variant::Input => (&wrapped, &[]),
+        Variant::Input | Variant::Input16 => (&wrapped, &[]),
         Variant::Advice => (&[], &wrapped),
         Variant::Trusted => (
             &wrapped,
@@ -358,6 +373,7 @@ pub fn run(
     let summary = serde_json::json!({
         "input": input_path,
         "variant": variant.func(),
+        "payload_capacity_bytes": variant.payload_capacity(),
         "elf_bytes": elf.len(),
         "trace_rows_total": trace_rows,
         "gas_used": result.gas_used,
@@ -369,6 +385,7 @@ pub fn run(
     });
     let summary_name = match variant {
         Variant::Input => "trace-summary.json",
+        Variant::Input16 => "trace-summary-input16.json",
         Variant::Advice => "trace-summary-advice.json",
         Variant::Trusted => "trace-summary-trusted.json",
     };
@@ -389,9 +406,45 @@ mod tests {
     /// MemoryLayout drift.
     #[test]
     fn all_stream_starts_are_8_aligned() {
-        for variant in [Variant::Input, Variant::Advice, Variant::Trusted] {
+        for variant in [
+            Variant::Input,
+            Variant::Input16,
+            Variant::Advice,
+            Variant::Trusted,
+        ] {
             assert_eq!(stream_start(variant) % 8, 0);
         }
         assert_eq!(digest_stream_start() % 8, 0);
+    }
+
+    #[test]
+    fn small_input_keeps_default_capacity_and_other_memory_regions() {
+        let full = memory_config_for_program(1024, Variant::Input);
+        let small = memory_config_for_program(1024, Variant::Input16);
+        assert_eq!(full.max_input_size, 128 * 1024 * 1024);
+        assert_eq!(small.max_input_size, 16 * 1024 * 1024);
+        assert_eq!(small.heap_size, full.heap_size);
+        assert_eq!(small.stack_size, full.stack_size);
+        assert_eq!(small.max_output_size, full.max_output_size);
+        assert_eq!(
+            small.max_untrusted_advice_size,
+            full.max_untrusted_advice_size
+        );
+        assert_eq!(small.max_trusted_advice_size, full.max_trusted_advice_size);
+        assert!(Variant::Input16.check_payload_len(16 * 1024 * 1024).is_ok());
+        assert!(Variant::Input16
+            .check_payload_len(16 * 1024 * 1024 + 1)
+            .is_err());
+        assert!(Variant::Input.check_payload_len(90 * 1024 * 1024).is_ok());
+    }
+
+    #[test]
+    fn input_capacity_separates_both_guest_artifacts() {
+        for features in [&[][..], &["compute_advice"][..]] {
+            assert_ne!(
+                elf_path_with(Variant::Input, features),
+                elf_path_with(Variant::Input16, features)
+            );
+        }
     }
 }
