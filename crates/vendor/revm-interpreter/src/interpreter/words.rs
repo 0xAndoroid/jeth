@@ -190,15 +190,39 @@ fn write_u256_be_bytes(bytes: &mut [u8], value: &U256) {
     bytes.copy_from_slice(&value.to_be_bytes::<32>());
 }
 
-/// Byte-swaps `x`. Without Zbb's `rev8`, LLVM lowers `u64::swap_bytes` on
-/// riscv64 to ~25 mask/shift/or instructions per call (and re-derives that
-/// lowering from any hand-written swap it recognises); this pins the
-/// 13-instruction butterfly — rotate by 32, swap the 16-bit halves, swap the
-/// bytes — with the two lane masks materialised by the compiler once per
-/// function.
+/// Byte-swaps `x`. Jolt's existing `VirtualRev8W` reverses bytes within
+/// both 32-bit halves; exchanging the halves finishes the 64-bit reversal.
+/// Other RV64 targets retain the 13-instruction butterfly, avoiding LLVM's
+/// longer lowering of `swap_bytes` without Zbb.
 #[inline(always)]
 pub(crate) fn bswap64(x: u64) -> u64 {
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(
+        target_arch = "riscv64",
+        target_os = "none",
+        feature = "jolt-byte-swap"
+    ))]
+    {
+        let out: u64;
+        // SAFETY: register-only operations. The custom encoding is the same
+        // VirtualRev8W (0x5b, funct3=0, funct7=5) used by Jolt's SHA-2 SDK.
+        unsafe {
+            core::arch::asm!(
+                ".insn r 0x5b, 0, 5, {o}, {x}, x0",
+                "srli {t}, {o}, 32",
+                "slli {o}, {o}, 32",
+                "or   {o}, {o}, {t}",
+                x = in(reg) x,
+                o = out(reg) out,
+                t = out(reg) _,
+                options(pure, nomem, nostack),
+            );
+        }
+        out
+    }
+    #[cfg(all(
+        target_arch = "riscv64",
+        not(all(target_os = "none", feature = "jolt-byte-swap"))
+    ))]
     {
         let out: u64;
         // SAFETY: register-only arithmetic on the named operands; no memory
