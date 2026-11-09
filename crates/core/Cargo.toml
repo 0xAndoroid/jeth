@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+# Enable in BOTH the guest and native advice generator. The ordinary
+# interpreted compute-advice pass selects the original pairing check.
+kzg-residue = ["secp-inline"]
 std = []
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode
 # inspector around the same validation loop. Never enabled by the guest.
@@ -75,8 +78,10 @@ revm-state.workspace = true
 # bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs):
 # the registry 0.5 crates revm-precompile's arkworks backend already compiles.
 ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
 
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -97,6 +102,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e53
 sha3 = { version = "0.12", default-features = false }
 
 [dev-dependencies]
+num-bigint = "0.4"
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jeth-inlines-blake2f.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }

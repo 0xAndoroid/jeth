@@ -94,6 +94,21 @@ impl alloy_consensus::crypto::backend::CryptoProvider for JoltCryptoProvider {
 struct JoltCrypto;
 
 impl Crypto for JoltCrypto {
+    #[cfg(any(target_arch = "riscv64", feature = "kzg-residue"))]
+    fn verify_kzg_proof(
+        &self,
+        z: &[u8; 32],
+        y: &[u8; 32],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
+    ) -> Result<(), PrecompileHalt> {
+        if crate::kzg::verify(commitment, z, y, proof) {
+            Ok(())
+        } else {
+            Err(PrecompileHalt::BlobVerifyKzgProofFailed)
+        }
+    }
+
     #[inline]
     fn secp256k1_ecrecover(
         &self,

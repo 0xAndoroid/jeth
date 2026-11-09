@@ -10,6 +10,8 @@ edition = "2021"
 [workspace]
 
 [features]
+# Checked pairing witnesses supplied by a matching native advice generator.
+kzg-residue = ["jeth-core/kzg-residue"]
 default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
