@@ -12,12 +12,93 @@ use alloc::vec::Vec;
 use alloy_primitives::U256;
 use jolt_inlines_bigint::bigint256_mul_inline;
 
+/// Shared hook for revm's MULMOD in the guest and native advice generator.
+///
+/// # Safety
+/// `a` and `b` point to four initialized, aligned limbs each. `m` points to
+/// four initialized, writable aligned limbs and does not overlap either input.
+#[cfg(feature = "bigint-inline")]
+#[no_mangle]
+pub unsafe extern "C" fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64) {
+    // SAFETY: U256 is transparent over four u64 limbs; the caller guarantees
+    // readable inputs and a disjoint writable output.
+    unsafe {
+        mul_mod(
+            &*a.cast::<U256>(),
+            &*b.cast::<U256>(),
+            &mut *m.cast::<U256>(),
+        );
+    }
+}
+
 /// `(a * b) % modulus`, written over `modulus`; zero when the modulus is zero.
-/// Use ruint's specialized remainder paths. An inline product followed by
-/// generic division bypasses its normalized and all-ones-modulus reductions.
 #[inline(always)]
+#[expect(
+    clippy::expect_used,
+    reason = "Invalid untrusted advice must terminate guest execution."
+)]
 pub fn mul_mod(a: &U256, b: &U256, modulus: &mut U256) {
-    *modulus = a.mul_mod(*b, *modulus);
+    if modulus.as_limbs()[3] == 0 || *modulus == U256::MAX || (a >= modulus && b >= modulus) {
+        *modulus = a.mul_mod(*b, *modulus);
+        return;
+    }
+    // If either input is below m, floor(a*b/m) fits in 256 bits.
+    #[cfg(any(not(target_arch = "riscv64"), feature = "compute_advice"))]
+    let quotient = {
+        let product: alloy_primitives::U512 = a.widening_mul(*b);
+        product / alloy_primitives::U512::from(*modulus)
+    };
+    let q = U256::from_limbs(core::array::from_fn(|_i| {
+        crate::advice::advice_u64!(quotient.as_limbs()[_i])
+    }));
+    *modulus = checked_mulmod_remainder(a, b, modulus, &q).expect("invalid MULMOD advice");
+}
+
+// The full products fit in eight limbs. The high-half and borrow checks
+// establish a*b - q*m = r as an integer equality; r < m then fixes the remainder.
+#[inline(always)]
+fn checked_mulmod_remainder(a: &U256, b: &U256, m: &U256, q: &U256) -> Option<U256> {
+    let lhs = full_product(a, b);
+    let rhs = full_product(q, m);
+    let mut out = [0; 4];
+    let mut borrow = false;
+    for i in 0..8 {
+        let (v, b0) = lhs[i].overflowing_sub(rhs[i]);
+        let (v, b1) = v.overflowing_sub(u64::from(borrow));
+        borrow = b0 | b1;
+        if i < 4 {
+            out[i] = v;
+        } else if v != 0 {
+            return None;
+        }
+    }
+    let r = U256::from_limbs(out);
+    if borrow || r >= *m {
+        None
+    } else {
+        Some(r)
+    }
+}
+
+#[inline(always)]
+fn full_product(a: &U256, b: &U256) -> [u64; 8] {
+    #[cfg(target_arch = "riscv64")]
+    {
+        let mut out = [0; 8];
+        // SAFETY: both inputs have four aligned limbs; output has eight.
+        unsafe {
+            bigint256_mul_inline(
+                a.as_limbs().as_ptr(),
+                b.as_limbs().as_ptr(),
+                out.as_mut_ptr(),
+            );
+        }
+        out
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    {
+        *a.widening_mul::<256, 4, 512, 8>(*b).as_limbs()
+    }
 }
 
 /// MODEXP precompile arithmetic (`base^exp mod modulus`, big-endian operands)
@@ -49,8 +130,8 @@ pub fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
     let n_prime = inv.wrapping_neg();
     // R mod n with R = 2^256; every ladder value stays in Montgomery form (< n).
     let r = U256::ZERO.wrapping_sub(n) % n;
-    let mut a_bar = n;
-    mul_mod(&(U256::from_be_slice(base) % n), &r, &mut a_bar);
+    // Keep MODEXP tape-free: its native reference uses aurora rather than this ladder.
+    let a_bar = (U256::from_be_slice(base) % n).mul_mod(r, n);
     let mut x = r;
     for &byte in exp {
         for bit in (0..8).rev() {
@@ -208,6 +289,42 @@ mod tests {
             let reduced = modulus - U256::from(1);
             check(reduced, reduced, modulus);
             check(U256::MAX, modulus, modulus);
+        }
+    }
+
+    #[test]
+    fn quotient_hint_rejects_corruption() {
+        let mut state = 0x76a4_93b8_125e_f019u64;
+        for _ in 0..10_000 {
+            let m =
+                U256::from_limbs(core::array::from_fn(|_| xorshift(&mut state))) | U256::from(1);
+            let a = U256::from_limbs(core::array::from_fn(|_| xorshift(&mut state))) % m;
+            let b = U256::from_limbs(core::array::from_fn(|_| xorshift(&mut state)));
+            let product: U512 = a.widening_mul(b);
+            let (q, r) = product.div_rem(U512::from(m));
+            let q = U256::from(q);
+            let r = U256::from(r);
+            assert_eq!(checked_mulmod_remainder(&a, &b, &m, &q), Some(r));
+            for limb in 0..4 {
+                let mut bad = *q.as_limbs();
+                bad[limb] ^= 1;
+                assert_eq!(
+                    checked_mulmod_remainder(&a, &b, &m, &U256::from_limbs(bad)),
+                    None
+                );
+            }
+            if q != U256::MAX {
+                assert_eq!(
+                    checked_mulmod_remainder(&a, &b, &m, &(q + U256::from(1))),
+                    None
+                );
+            }
+            if q != U256::ZERO {
+                assert_eq!(
+                    checked_mulmod_remainder(&a, &b, &m, &(q - U256::from(1))),
+                    None
+                );
+            }
         }
     }
 
