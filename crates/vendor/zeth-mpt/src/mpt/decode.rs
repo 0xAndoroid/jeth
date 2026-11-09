@@ -74,7 +74,8 @@ impl<M: Memoization> Node<M> {
 /// (`Box::new_uninit`), deleting the by-value move chain (return → `?` →
 /// `Box::new`, each a whole-node copy).
 ///
-/// List payloads are scanned in place instead of through
+/// Plain branches (only empty or digest children) are decoded in one pass.
+/// Other list payloads are scanned in place instead of through
 /// `Header::decode_raw`'s `PayloadView` `Vec` (allocation + 3 grows + 17
 /// pushes per branch): pass 1 ([`count_items`]) validates every item header
 /// in order and yields the item count exactly like `decode_raw`, pass 2
@@ -109,6 +110,9 @@ fn decode_node_zc_into<M: Memoization>(
             }
             _ => Err(alloy_rlp::Error::UnexpectedLength),
         };
+    }
+    if decode_plain_branch(payload, out) {
+        return Ok(());
     }
     match count_items(payload)? {
         // branch node: 17-item node [ v0 ... v15, value ]
@@ -151,6 +155,44 @@ fn decode_node_zc_into<M: Memoization>(
             }
         }
         _ => Err(alloy_rlp::Error::Custom("unexpected list length")),
+    }
+}
+
+/// Decode the common branch shape in one pass: sixteen empty/digest
+/// children followed by an empty value. All other encodings use the general
+/// decoder. A failed attempt leaves `out` untouched or holding `Node::Null`;
+/// this path never allocates children or owns resources other than the node.
+#[inline]
+fn decode_plain_branch<M: Memoization>(mut p: &[u8], out: &mut MaybeUninit<Node<M>>) -> bool {
+    // Every digest replaces a one-byte empty item with 33 bytes. A valid
+    // branch has at least two nonempty children.
+    if p.len() < 17 + 2 * 32 || p.len() % 32 != 17 {
+        return false;
+    }
+    let node = out.write(Node::Branch(Children::default(), M::default()));
+    let Node::Branch(children, _) = node else {
+        unreachable!()
+    };
+    let mut nonempty = 0;
+    for slot in children.iter_mut() {
+        match p.first() {
+            Some(&EMPTY_STRING_CODE) => p = &p[1..],
+            Some(&DIGEST_ITEM_PREFIX) if p.len() >= DIGEST_RLP_LENGTH => {
+                slot.fill_digest(digest_item(&p[..DIGEST_RLP_LENGTH]));
+                p = &p[DIGEST_RLP_LENGTH..];
+                nonempty += 1;
+            }
+            _ => {
+                *node = Node::Null;
+                return false;
+            }
+        }
+    }
+    if p == [EMPTY_STRING_CODE] && nonempty >= 2 {
+        true
+    } else {
+        *node = Node::Null;
+        false
     }
 }
 
@@ -517,6 +559,80 @@ mod tests {
                     }
                     _ => Err(alloy_rlp::Error::Custom("unexpected list length")),
                 },
+            }
+        }
+    }
+
+    fn check_decoder_parity(bytes: Vec<u8>) {
+        let source = Bytes::from(bytes);
+        let expected = alloy_rlp::decode_exact::<Node<Cache>>(&source);
+        let mut slot = MaybeUninit::<Node<Cache>>::uninit();
+        let got = decode_node_zc_exact_into(&source, &mut slot);
+        match (expected, got) {
+            (Ok(node), Ok(())) => assert_eq!(unsafe { slot.assume_init() }, node, "{source}"),
+            (Err(expected), Err(got)) => assert_eq!(expected, got, "{source}"),
+            (expected, got) => panic!("{source}: expected {expected:?}, got {got:?}"),
+        }
+    }
+
+    fn plain_branch_payload(mask: u16) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for index in 0..16 {
+            if mask & (1 << index) == 0 {
+                payload.push(EMPTY_STRING_CODE);
+            } else {
+                payload.push(DIGEST_ITEM_PREFIX);
+                payload.extend((0..32).map(|byte| (index * 17 + byte) as u8));
+            }
+        }
+        payload.push(EMPTY_STRING_CODE);
+        payload
+    }
+
+    fn encode_list_payload(payload: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        Header {
+            list: true,
+            payload_length: payload.len(),
+        }
+        .encode(&mut encoded);
+        encoded.extend_from_slice(payload);
+        encoded
+    }
+
+    #[test]
+    fn single_pass_branch_matches_reference_for_all_child_masks() {
+        for mask in 0..=u16::MAX {
+            check_decoder_parity(encode_list_payload(&plain_branch_payload(mask)));
+        }
+    }
+
+    #[test]
+    fn single_pass_branch_rejects_or_falls_back_like_reference() {
+        for mask in [0x0003, 0x8001, 0x5555, 0xffff] {
+            let payload = plain_branch_payload(mask);
+            // Every truncation, including ones with a valid new outer length.
+            for length in 0..payload.len() {
+                check_decoder_parity(encode_list_payload(&payload[..length]));
+            }
+            // Every possible tag at every item boundary, including the value.
+            let mut offset = 0;
+            for index in 0..17 {
+                for tag in 0..=u8::MAX {
+                    let mut changed = payload.clone();
+                    changed[offset] = tag;
+                    check_decoder_parity(encode_list_payload(&changed));
+                }
+                offset += if index < 16 && mask & (1 << index) != 0 {
+                    33
+                } else {
+                    1
+                };
+            }
+            for extra in [0, 0x80, 0xa0, 0xc0] {
+                let mut extended = payload.clone();
+                extended.push(extra);
+                check_decoder_parity(encode_list_payload(&extended));
             }
         }
     }
