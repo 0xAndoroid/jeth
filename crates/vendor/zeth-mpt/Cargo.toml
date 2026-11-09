@@ -31,6 +31,8 @@ alloy-primitives = { version = "1.5", default-features = false, features = ["map
 # Advice two-pass, pass-1 build (arena-encoder length advice). The cfg
 # resolves in the defining crate; jeth-core forwards it.
 compute_advice = []
+# Host-only recording through jeth-core's advice hook.
+native-advice = []
 # Resolver probe/hit/decode counters (native runs only; never in guest builds).
 premeasure = []
 serde = []
