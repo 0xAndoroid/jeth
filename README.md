@@ -31,3 +31,26 @@ The library entry point is `jeth_core::advice::native::record`. It captures word
 from both jeth-core and the vendored MPT encoder, on the calling thread only.
 Recording scopes cannot nest; unwinding discards the tape. The recorder does not
 reset other validation state after a failed run.
+
+### Checked Keccak prefixes
+
+The optional `keccak-prefix-cache` feature reuses states computed by the guest
+while hashing trie nodes of 136–544 bytes. It retains up to three complete
+136-byte input blocks. Advice selects a stored prefix; the guest compares every
+prefix byte before continuing the hash. Advice never supplies the sponge state.
+
+Enable the feature in both the guest and its matching native advice generator.
+The native recorder plans which prefixes will be reused and emits cache misses
+after 131,072 eligible calls. Guest storage is capped at 65,536 entries (22 MiB of
+entry payload); a full cache keeps hashing normally. Hint consumption depends
+only on input length, so different buffer alignments cannot change tape order.
+The interpreted `compute_advice` pass emits cache misses and remains correct;
+use the native planner to obtain the row savings.
+
+The feature is disabled by default. On the combined #23–#35 branch, with native
+advice and all other settings held fixed, it reduces live rows from
+88,170,922 / 473,666,778 / 807,159,643 to
+84,128,991 / 459,358,991 / 782,446,835 for blocks
+26235156 / 26235168 / 26235159: 4.58%, 3.02%, and 3.06% fewer rows.
+These are execution counts, not measured prover-time speedups. Inputs with
+little prefix reuse can be slower with this feature enabled.

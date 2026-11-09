@@ -10,6 +10,8 @@ edition = "2021"
 [workspace]
 
 [features]
+# Bounded cache of guest-computed trie-hash prefixes; advice is checked.
+keccak-prefix-cache = ["jeth-core/keccak-prefix-cache"]
 default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the

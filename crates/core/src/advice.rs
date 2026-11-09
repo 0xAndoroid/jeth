@@ -69,8 +69,14 @@ pub mod native {
     use alloc::vec::Vec;
     use core::cell::RefCell;
 
+    struct Recording {
+        bytes: Vec<u8>,
+        #[cfg(feature = "keccak-prefix-cache")]
+        prefixes: crate::prefix_plan::PrefixPlan,
+    }
+
     std::thread_local! {
-        static TAPE: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+        static TAPE: RefCell<Option<Recording>> = const { RefCell::new(None) };
     }
 
     struct Reset;
@@ -88,21 +94,43 @@ pub mod native {
             if slot.is_some() {
                 return Err("native advice recording cannot be nested");
             }
-            *slot = Some(Vec::new());
+            *slot = Some(Recording {
+                bytes: Vec::new(),
+                #[cfg(feature = "keccak-prefix-cache")]
+                prefixes: crate::prefix_plan::PrefixPlan::new(),
+            });
             Ok(())
         })?;
         let _reset = Reset;
         let result = run();
-        let tape = TAPE
+        let recording = TAPE
             .with_borrow_mut(Option::take)
             .ok_or("native advice recording scope was lost")?;
+        let tape = recording.bytes;
+        #[cfg(feature = "keccak-prefix-cache")]
+        let tape = {
+            let mut tape = tape;
+            recording.prefixes.finish(&mut tape);
+            tape
+        };
         Ok((result, tape))
     }
 
     pub(crate) fn write_word(value: u64) {
         TAPE.with_borrow_mut(|slot| {
             if let Some(tape) = slot {
-                tape.extend_from_slice(&value.to_le_bytes());
+                tape.bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        });
+    }
+
+    #[cfg(feature = "keccak-prefix-cache")]
+    pub(super) fn record_prefix(bytes: &[u8]) {
+        TAPE.with_borrow_mut(|slot| {
+            if let Some(recording) = slot {
+                let offset = recording.bytes.len();
+                recording.bytes.extend_from_slice(&0u64.to_le_bytes());
+                recording.prefixes.record(bytes, offset);
             }
         });
     }
@@ -136,6 +164,96 @@ pub mod native {
                 .collect();
             assert_eq!(tape, expected);
             assert!(record(|| ()).expect("next recording").1.is_empty());
+        }
+
+        #[cfg(feature = "keccak-prefix-cache")]
+        #[test]
+        fn prefix_plans_reset_between_recordings_and_skip_ineligible_hashes() {
+            let words = [7u64; 18];
+            let record_hashes = || {
+                write_word(19);
+                // SAFETY: words contains every byte read by these calls.
+                unsafe {
+                    super::super::jeth_record_mpt_prefix(words.as_ptr().cast(), 135);
+                    super::super::jeth_record_mpt_prefix(words.as_ptr().cast::<u8>().add(1), 135);
+                    super::super::jeth_record_mpt_prefix(words.as_ptr().cast(), 136);
+                    super::super::jeth_record_mpt_prefix(words.as_ptr().cast(), 136);
+                }
+                write_word(23);
+            };
+            // No recording scope: this must not retain a plan for the next run.
+            record_hashes();
+            let expected: alloc::vec::Vec<_> = [19u64, 1 << 32, 1, 23]
+                .into_iter()
+                .flat_map(u64::to_le_bytes)
+                .collect();
+            for _ in 0..2 {
+                assert_eq!(record(record_hashes).expect("record hashes").1, expected);
+            }
+        }
+
+        #[cfg(feature = "keccak-prefix-cache")]
+        #[test]
+        fn prefix_hints_depend_on_bytes_not_native_alignment() {
+            let aligned = [7u64; 17];
+            let mut storage = [0u64; 18];
+            let ((), tape) = record(|| {
+                // SAFETY: both arrays have space for all accessed bytes; copying
+                // to offset one deliberately changes only the input's address.
+                unsafe {
+                    let shifted = storage.as_mut_ptr().cast::<u8>().add(1);
+                    core::ptr::copy_nonoverlapping(aligned.as_ptr().cast::<u8>(), shifted, 136);
+                    super::super::jeth_record_mpt_prefix(aligned.as_ptr().cast(), 136);
+                    super::super::jeth_record_mpt_prefix(shifted, 136);
+                }
+            })
+            .expect("mixed alignment record");
+            let expected: alloc::vec::Vec<_> = [1u64 << 32, 1]
+                .into_iter()
+                .flat_map(u64::to_le_bytes)
+                .collect();
+            assert_eq!(tape, expected);
+        }
+
+        #[cfg(feature = "keccak-prefix-cache")]
+        #[test]
+        #[expect(clippy::panic, reason = "exercise prefix-plan cleanup after unwinding")]
+        fn prefix_plans_are_isolated_across_threads_nesting_and_unwinding() {
+            fn hash() {
+                let words = [9u64; 17];
+                // SAFETY: the aligned buffer contains exactly 136 readable bytes.
+                unsafe { super::super::jeth_record_mpt_prefix(words.as_ptr().cast(), 136) };
+            }
+            let failure = std::panic::catch_unwind(|| {
+                let _ = record(|| {
+                    hash();
+                    panic!("test prefix unwind");
+                });
+            });
+            assert!(failure.is_err());
+            assert_eq!(record(hash).expect("singleton after unwind").1, [0; 8]);
+
+            let expected: alloc::vec::Vec<_> = [1u64 << 32, 1]
+                .into_iter()
+                .flat_map(u64::to_le_bytes)
+                .collect();
+            let ((), outer) = record(|| {
+                hash();
+                assert!(record(hash).is_err());
+                let other = std::thread::spawn(|| {
+                    record(|| {
+                        hash();
+                        hash();
+                    })
+                    .expect("worker")
+                })
+                .join()
+                .expect("worker joins");
+                assert_eq!(other.1, expected);
+                hash();
+            })
+            .expect("outer prefix record");
+            assert_eq!(outer, expected);
         }
 
         #[test]
@@ -183,6 +301,25 @@ pub mod native {
             assert_eq!(tape, 7u64.to_le_bytes());
         }
     }
+}
+
+/// Native counterpart of the guest's explicit trie-hash hook.
+///
+/// # Safety
+/// `bytes` must point to `len` readable bytes. The pointer is not retained.
+#[cfg(all(feature = "keccak-prefix-cache", not(target_arch = "riscv64")))]
+#[no_mangle]
+pub unsafe extern "C" fn jeth_record_mpt_prefix(bytes: *const u8, len: usize) {
+    #[cfg(feature = "native-advice")]
+    {
+        use crate::keccak_prefix_params::{MAX_INPUT_LEN, RATE};
+        if (RATE..=MAX_INPUT_LEN).contains(&len) {
+            // SAFETY: the trie-hash caller supplies its live input slice.
+            native::record_prefix(unsafe { core::slice::from_raw_parts(bytes, len) });
+        }
+    }
+    #[cfg(not(feature = "native-advice"))]
+    let _ = (bytes, len);
 }
 
 /// Tape hooks for the vendored zeth-mpt (`crates/vendor/zeth-mpt/src/mpt/advice.rs`),

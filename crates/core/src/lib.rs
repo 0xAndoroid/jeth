@@ -24,8 +24,20 @@ mod crypto;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
 mod keccak_memo;
+#[cfg(all(
+    feature = "keccak-prefix-cache",
+    feature = "native-advice",
+    not(target_arch = "riscv64")
+))]
+mod keccak_prefix_params;
 #[cfg(any(all(feature = "p256-inline", target_arch = "riscv64"), test))]
 mod p256;
+#[cfg(all(
+    feature = "keccak-prefix-cache",
+    feature = "native-advice",
+    not(target_arch = "riscv64")
+))]
+mod prefix_plan;
 #[cfg(feature = "premeasure")]
 pub mod premeasure;
 mod recover;

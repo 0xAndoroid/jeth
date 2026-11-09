@@ -8,6 +8,8 @@ name = "native-advice"
 required-features = ["native-advice", "secp-inline", "code-library", "bigint-inline"]
 
 [features]
+# Bounded cache of guest-computed trie-hash prefixes; advice is checked.
+keccak-prefix-cache = ["zeth-mpt/keccak-prefix-cache"]
 std = []
 # Record untrusted advice while executing the validation logic natively.
 native-advice = ["std", "zeth-mpt/native-advice", "jolt-inlines-secp256k1?/host"]

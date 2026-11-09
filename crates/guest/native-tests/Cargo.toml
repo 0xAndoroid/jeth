@@ -19,6 +19,9 @@ publish = false
 # Declared so the shims' `#[cfg(feature = "guest")]` gates are known cfgs here;
 # never enabled (the guest paths need the riscv target and the Jolt inlines).
 [features]
+# Bounded cache of guest-computed trie-hash prefixes; advice is checked.
+keccak-prefix-cache = []
+compute_advice = []
 guest = []
 
 [lib]

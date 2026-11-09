@@ -32,6 +32,13 @@
 //! native tests (`crates/guest/native-tests`), whose buffers carry word-sized
 //! slack on both ends so the same accesses stay inside the allocation.
 
+#[cfg(feature = "keccak-prefix-cache")]
+#[path = "keccak_prefix.rs"]
+mod prefix;
+#[cfg(feature = "keccak-prefix-cache")]
+#[path = "../../core/src/keccak_prefix_params.rs"]
+mod prefix_params;
+
 use super::mem::{load_word, store_word};
 use core::mem::MaybeUninit;
 use core::ptr::{read_volatile, write_volatile};
@@ -385,4 +392,27 @@ mod tests {
             }
         }
     }
+}
+
+/// Explicit cache entry point for trie-node hashes executed by both passes.
+/// Other hashing, including advice-only resolver indexing, keeps the ordinary
+/// native_keccak256 path and cannot alter this cache or its advice stream.
+#[cfg(all(feature = "guest", feature = "keccak-prefix-cache"))]
+pub(crate) unsafe fn mpt_keccak256_into(bytes: *const u8, len: usize, out: *mut u8) {
+    if prefix_eligible(len) {
+        let saved = prefix::hash_global(bytes, len, out);
+        #[cfg(feature = "keccak-census")]
+        {
+            super::KECCAK_PERMS -= saved as u64;
+        }
+        #[cfg(not(feature = "keccak-census"))]
+        let _ = saved;
+    } else {
+        keccak256_into(bytes, len, out);
+    }
+}
+
+#[cfg(feature = "keccak-prefix-cache")]
+pub(crate) fn prefix_eligible(len: usize) -> bool {
+    (prefix_params::RATE..=prefix_params::MAX_INPUT_LEN).contains(&len)
 }
