@@ -3,7 +3,11 @@
 use alloc::vec::Vec;
 use ark_bn254::{Bn254, Fq, Fq2, G1Affine, G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};
-use ark_ff::{BigInt, One, PrimeField, Zero};
+#[cfg(not(feature = "bn254-pairing-residue"))]
+use ark_ff::One;
+use ark_ff::{BigInt, PrimeField, Zero};
+#[cfg(feature = "bn254-pairing-residue")]
+mod residue;
 use reth_evm::revm::precompile::PrecompileHalt;
 
 #[path = "bn254_pairing/generator.rs"]
@@ -131,7 +135,14 @@ impl Cache {
         if g1.is_empty() {
             return Ok(true);
         }
-        Ok(Bn254::multi_pairing(g1, g2).0.is_one())
+        #[cfg(feature = "bn254-pairing-residue")]
+        {
+            Ok(residue::check(&Bn254::multi_miller_loop(g1, g2).0))
+        }
+        #[cfg(not(feature = "bn254-pairing-residue"))]
+        {
+            Ok(Bn254::multi_pairing(g1, g2).0.is_one())
+        }
     }
 }
 

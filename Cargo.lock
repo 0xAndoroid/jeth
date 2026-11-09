@@ -2647,6 +2647,7 @@ dependencies = [
  "jolt-inlines-sha2",
  "jolt-sdk",
  "k256 0.14.0",
+ "num-bigint",
  "p256 0.14.0",
  "postcard",
  "reth-chainspec",
