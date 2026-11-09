@@ -122,6 +122,27 @@ fn validate_branch_child(item: &[u8], list: bool, plen: usize) -> Result<usize> 
     }
 }
 
+/// Recognize a branch containing only empty children and hashes. The
+/// general validator handles every other shape, including malformed input.
+#[inline]
+fn is_plain_branch(mut p: &[u8]) -> bool {
+    if p.len() < 17 + 2 * 32 || p.len() % 32 != 17 {
+        return false;
+    }
+    let mut children = 0;
+    for _ in 0..16 {
+        match p.first() {
+            Some(&EMPTY_STRING_CODE) => p = &p[1..],
+            Some(&DIGEST_ITEM_PREFIX) if p.len() >= DIGEST_ITEM_LENGTH => {
+                p = &p[DIGEST_ITEM_LENGTH..];
+                children += 1;
+            }
+            _ => return false,
+        }
+    }
+    p == [EMPTY_STRING_CODE] && children >= 2
+}
+
 /// Full `Node::decode`-parity validation of one node encoding, advancing `r`
 /// past it. Recurses into inline (list) children. Returns the node kind.
 ///
@@ -141,6 +162,10 @@ fn validate_at(r: &mut &[u8]) -> Result<NodeKind> {
     // `decode_header` checked `r.len() >= payload_length`.
     let (mut p, rest) = r.split_at(h.payload_length);
     *r = rest;
+
+    if is_plain_branch(p) {
+        return Ok(NodeKind::Branch);
+    }
 
     let mut first: [(&[u8], bool, usize); 2] = [(&[], false, 0); 2];
     let mut items = 0usize;
@@ -423,6 +448,67 @@ mod tests {
         }
         items[16] = value;
         list(&items)
+    }
+
+    #[test]
+    fn plain_branch_masks_match_trie_decoder() {
+        for mask in 0..=u16::MAX {
+            let children: Vec<_> = (0..16)
+                .filter(|index| mask & (1 << index) != 0)
+                .map(|index| (index, digest_item(index as u8)))
+                .collect();
+            let bytes = branch(&children, vec![EMPTY_STRING_CODE]);
+            let decoded = zeth_mpt::Trie::from_rlp([&bytes]);
+            let validated = validate_entry(&bytes);
+            assert_eq!(validated.is_ok(), decoded.is_ok(), "mask {mask:#x}");
+            assert_eq!(
+                validated.ok(),
+                (mask.count_ones() >= 2).then_some(NodeKind::Branch)
+            );
+        }
+    }
+
+    #[test]
+    fn plain_branch_malformed_encodings_match_trie_decoder() {
+        for mask in [0x0003_u16, 0x8001, 0x5555, 0xffff] {
+            let children: Vec<_> = (0..16)
+                .filter(|index| mask & (1 << index) != 0)
+                .map(|index| (index, digest_item(index as u8)))
+                .collect();
+            let encoded = branch(&children, vec![EMPTY_STRING_CODE]);
+            let mut payload = encoded.as_slice();
+            assert!(Header::decode(&mut payload).is_ok());
+            let check = |payload: &[u8]| {
+                let mut bytes = Vec::new();
+                Header {
+                    list: true,
+                    payload_length: payload.len(),
+                }
+                .encode(&mut bytes);
+                bytes.extend_from_slice(payload);
+                assert_eq!(
+                    validate_entry(&bytes).is_ok(),
+                    zeth_mpt::Trie::from_rlp([&bytes]).is_ok(),
+                    "{bytes:02x?}"
+                );
+            };
+            for length in 0..payload.len() {
+                check(&payload[..length]);
+            }
+            let mut offset = 0;
+            for index in 0..17 {
+                for tag in 0..=u8::MAX {
+                    let mut changed = payload.to_vec();
+                    changed[offset] = tag;
+                    check(&changed);
+                }
+                offset += if index < 16 && mask & (1 << index) != 0 {
+                    33
+                } else {
+                    1
+                };
+            }
+        }
     }
 
     /// The walk validator accepts exactly the list encodings `Node::decode`
