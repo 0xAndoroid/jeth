@@ -6,6 +6,9 @@ use ark_ec::{pairing::Pairing, AffineRepr};
 use ark_ff::{BigInt, One, PrimeField, Zero};
 use reth_evm::revm::precompile::PrecompileHalt;
 
+#[path = "bn254_pairing/generator.rs"]
+mod generator;
+
 type Prepared = <Bn254 as Pairing>::G2Prepared;
 const CAPACITY: usize = 8;
 
@@ -89,6 +92,9 @@ impl Cache {
     #[expect(clippy::expect_used, reason = "the G2 prefix is exactly 128 bytes")]
     fn prepare(&mut self, bytes: &[u8], needed: bool) -> Result<Option<Prepared>, PrecompileHalt> {
         let bytes: &[u8; 128] = bytes[..128].try_into().expect("EIP-197 G2 encoding");
+        if bytes == &generator::ENCODING {
+            return Ok(needed.then(generator::prepared));
+        }
         if let Some(entry) = self.entries.iter().find(|entry| &entry.bytes == bytes) {
             return Ok(needed.then(|| entry.prepared.clone()));
         }
