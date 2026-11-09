@@ -329,6 +329,8 @@ const fn instruction_table_impl<WIRE: InterpreterTypes, H: Host>() -> [Instructi
     #[cfg(feature = "push-jump-fusion")]
     {
         table[PUSH2 as usize] = Instruction::new(fusion::push2::<_, _>);
+        table[ISZERO as usize] = Instruction::new(fusion::test_jump::<false, _, _>);
+        table[EQ as usize] = Instruction::new(fusion::test_jump::<true, _, _>);
     }
     table[PUSH3 as usize] = Instruction::new(stack::push::<3, _, _>);
     table[PUSH4 as usize] = Instruction::new(stack::push::<4, _, _>);

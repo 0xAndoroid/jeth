@@ -27,6 +27,17 @@ fn compare_at_spec(
     table: &InstructionTable<EthInterpreter, DummyHost>,
     spec: SpecId,
 ) {
+    compare_values(code, &vec![condition; depth], gas, table, spec);
+}
+
+fn compare_values(
+    code: &[u8],
+    values: &[U256],
+    gas: u64,
+    table: &InstructionTable<EthInterpreter, DummyHost>,
+    spec: SpecId,
+) {
+    let depth = values.len();
     let build = || {
         let mut i = Interpreter::<EthInterpreter>::new(
             SharedMemory::new(),
@@ -36,8 +47,8 @@ fn compare_at_spec(
             spec,
             gas,
         );
-        for _ in 0..depth {
-            assert!(i.stack.push(condition));
+        for &value in values {
+            assert!(i.stack.push(value));
         }
         i.gas = Gas::new_with_regular_gas_and_reservoir(gas, 777);
         i.gas.set_refund(-7);
@@ -119,7 +130,7 @@ fn custom_halt(_: Ip, context: InstructionContext<'_, DummyHost, EthInterpreter>
 
 #[test]
 fn custom_jumps_are_not_fused() {
-    for op in [JUMP, JUMPI, JUMPDEST] {
+    for op in [PUSH2, JUMP, JUMPI, JUMPDEST] {
         let mut table = instruction_table::<EthInterpreter, DummyHost>();
         table[op as usize] = Instruction::new(custom_halt);
         assert!(!matches(&table));
@@ -137,6 +148,81 @@ fn custom_jumps_are_not_fused() {
             100,
             &table,
         );
+    }
+}
+
+#[test]
+fn test_jump_boundaries_match_single_step() {
+    let table = instruction_table::<EthInterpreter, DummyHost>();
+    for test in [ISZERO, EQ] {
+        for target in [0_u16, 1, 2, 5, 65535] {
+            let [hi, lo] = target.to_be_bytes();
+            let code = [test, PUSH2, hi, lo, JUMPI, JUMPDEST, STOP];
+            for depth in [0, 1, 2, 1023, 1024] {
+                for top in [U256::ZERO, U256::from(1), U256::MAX] {
+                    for other in [U256::ZERO, U256::from(1), U256::from(1) << 200] {
+                        let mut values = vec![top; depth];
+                        if depth >= 2 {
+                            values[depth - 2] = other;
+                        }
+                        for gas in 0..24 {
+                            compare_values(&code, &values, gas, &table, SpecId::AMSTERDAM);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for spec in [SpecId::FRONTIER, SpecId::LONDON, SpecId::OSAKA] {
+        for test in [ISZERO, EQ] {
+            for value in [U256::ZERO, U256::from(1), U256::MAX] {
+                for gas in 0..24 {
+                    compare_at_spec(
+                        &[test, PUSH2, 0, 5, JUMPI, JUMPDEST, STOP],
+                        2,
+                        value,
+                        gas,
+                        &table,
+                        spec,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_jump_padding_and_custom_handlers() {
+    for test in [ISZERO, EQ] {
+        for bytes in [
+            vec![test],
+            vec![test, PUSH2],
+            vec![test, PUSH2, 0],
+            vec![test, PUSH2, 0, 5],
+            vec![test, PUSH2, 0, 5, JUMPI, JUMPDEST],
+        ] {
+            for gas in 0..24 {
+                compare(
+                    &bytes,
+                    2,
+                    U256::ZERO,
+                    gas,
+                    &instruction_table::<EthInterpreter, DummyHost>(),
+                );
+            }
+        }
+        for custom in [PUSH2, JUMPI, JUMPDEST] {
+            let mut table = instruction_table::<EthInterpreter, DummyHost>();
+            table[custom as usize] = Instruction::new(custom_halt);
+            assert!(!matches(&table));
+            compare(
+                &[test, PUSH2, 0, 5, JUMPI, JUMPDEST, STOP],
+                2,
+                U256::ZERO,
+                100,
+                &table,
+            );
+        }
     }
 }
 
