@@ -94,7 +94,7 @@ impl alloy_consensus::crypto::backend::CryptoProvider for JoltCryptoProvider {
 struct JoltCrypto;
 
 impl Crypto for JoltCrypto {
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(any(target_arch = "riscv64", feature = "kzg-residue"))]
     fn verify_kzg_proof(
         &self,
         z: &[u8; 32],

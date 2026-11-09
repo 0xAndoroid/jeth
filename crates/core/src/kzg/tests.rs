@@ -4,7 +4,7 @@
 use super::*;
 use alloc::vec::Vec;
 use ark_bls12_381::Fq;
-use ark_ff::Zero;
+use ark_ff::{One, Zero};
 use ark_serialize::CanonicalSerialize;
 
 fn hex<const N: usize>(s: &str) -> [u8; N] {

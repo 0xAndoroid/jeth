@@ -2,9 +2,13 @@
 
 use ark_bls12_381::{Bls12_381, Fr, G1Affine};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{BigInteger, One, PrimeField};
+#[cfg(not(feature = "kzg-residue"))]
+use ark_ff::One;
+use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::CanonicalDeserialize;
 mod prepared;
+#[cfg(feature = "kzg-residue")]
+mod residue;
 
 fn scalar(bytes: &[u8; 32]) -> Option<Fr> {
     let value = Fr::from_be_bytes_mod_order(bytes);
@@ -28,9 +32,16 @@ pub(crate) fn verify(commitment: &[u8; 48], z: &[u8; 32], y: &[u8; 32], proof: &
     let left = (commitment.into_group() - G1Affine::generator().mul_bigint(y.into_bigint())
         + proof.mul_bigint(z.into_bigint()))
     .into_affine();
-    Bls12_381::multi_pairing([left, proof], prepared::fixed_points())
-        .0
-        .is_one()
+    #[cfg(feature = "kzg-residue")]
+    {
+        residue::check(&Bls12_381::multi_miller_loop([left, proof], prepared::fixed_points()).0)
+    }
+    #[cfg(not(feature = "kzg-residue"))]
+    {
+        Bls12_381::multi_pairing([left, proof], prepared::fixed_points())
+            .0
+            .is_one()
+    }
 }
 
 #[cfg(test)]
