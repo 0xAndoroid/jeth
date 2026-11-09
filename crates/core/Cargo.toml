@@ -20,9 +20,9 @@ blake2-inline = ["secp-inline", "dep:jolt-inlines-blake2"]
 blake2f-inline = ["blake2-inline", "dep:jeth-inlines-blake2f"]
 # RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
 p256-inline = ["secp-inline", "dep:jolt-inlines-p256"]
-# EVM MULMOD (the guest hooks `bigint.rs` into revm-interpreter) and MODEXP for odd moduli of
-# 9..=32 significant bytes on the BIGINT256_MUL inline (guest builds only, like the above).
-bigint-inline = ["secp-inline", "dep:jolt-inlines-bigint"]
+# EVM MULMOD checks quotient advice using BIGINT256_MUL, with ruint fallbacks.
+# Route native advice generation through the same hook. MODEXP stays tape-free.
+bigint-inline = ["secp-inline", "dep:jolt-inlines-bigint", "dep:revm-interpreter"]
 # bn254 Fq multiplication (ecadd/ecmul/pairing precompiles) through the BN254_* inlines: the
 # vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.
 bn254-inline = ["ark-ff/jolt-bn254-inline"]
@@ -45,6 +45,7 @@ premeasure = ["zeth-mpt/premeasure"]
 compute_advice = ["zeth-mpt/compute_advice"]
 
 [dependencies]
+revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline"], optional = true }
 stateless.workspace = true
 tries.workspace = true
 zeth-mpt.workspace = true

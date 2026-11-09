@@ -29,9 +29,8 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e53
 jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
 
 jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "blake2f-inline", "p256-inline", "bigint-inline", "bn254-inline", "bls12-381-inline", "guest-instrument"] }
-# Direct dependency only to reach the vendored crate's `bigint-inline` feature:
-# EVM MULMOD through the `jeth_mul_mod` hook in lib.rs (always on, like the
-# jeth-core inline features above).
+# Enable the interpreter's MULMOD hook; jeth-core owns its implementation
+# and shares it with native advice generation.
 revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline"] }
 
 # `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM

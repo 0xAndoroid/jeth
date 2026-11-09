@@ -1666,6 +1666,7 @@ dependencies = [
  "reth-trie-common",
  "revm-bytecode",
  "revm-database-interface",
+ "revm-interpreter",
  "revm-state",
  "serde",
  "sha3 0.12.0",
