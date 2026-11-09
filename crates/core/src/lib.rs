@@ -14,6 +14,8 @@ pub mod advice;
 pub mod bigint;
 #[cfg(feature = "secp-inline")]
 mod bn254;
+#[cfg(any(feature = "secp-inline", test))]
+mod bn254_pairing;
 #[cfg(feature = "census")]
 pub mod census;
 mod chainspec;
