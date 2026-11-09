@@ -359,8 +359,20 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
 /// shadow libc).
 #[cfg(feature = "guest")]
 mod exports {
+    core::arch::global_asm!(include_str!("aligned_copy.S"));
+    unsafe extern "C" {
+        fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
+    }
     #[no_mangle]
     pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+        __jeth_aligned_copy(dst, src, n)
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn __jeth_copy_fallback(
+        dst: *mut u8,
+        src: *const u8,
+        n: usize,
+    ) -> *mut u8 {
         super::memcpy_impl(dst, src, n)
     }
     #[no_mangle]
