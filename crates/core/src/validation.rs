@@ -391,10 +391,36 @@ pub(crate) fn receipt_root_bloom(
         })
         .collect();
     let root = calculate_receipt_root(&receipts);
-    let bloom = receipts
-        .iter()
-        .fold(Bloom::ZERO, |bloom, r| bloom | r.logs_bloom);
-    (root, bloom)
+    let mut words = [0u64; 32];
+    for receipt in &receipts {
+        union_bloom_words(&mut words, &receipt.logs_bloom.0 .0);
+    }
+    // SAFETY: Both arrays have the same size and every bit pattern is valid. Native
+    // byte order is intentional: OR of native words is byte-wise OR on either
+    // endianness, and this preserves the resulting bytes without conversion.
+    let bytes = unsafe { core::mem::transmute::<[u64; 32], [u8; 256]>(words) };
+    (root, Bloom::from(bytes))
+}
+
+/// Union a receipt bloom without 256 separate byte load/OR/store operations.
+#[inline]
+fn union_bloom_words(out: &mut [u64; 32], bytes: &[u8; 256]) {
+    let ptr = bytes.as_ptr();
+    if (ptr as usize) & (core::mem::align_of::<u64>() - 1) == 0 {
+        #[expect(clippy::cast_ptr_alignment, reason = "alignment was checked above")]
+        let aligned = ptr.cast::<u64>();
+        for (i, word) in out.iter_mut().enumerate() {
+            // SAFETY: alignment was checked, all 32 words are inside the
+            // initialized byte array, and every u64 bit pattern is valid.
+            // Keep the aligned load as a word operation on RISC-V; otherwise
+            // LLVM can merge it with the byte-wise unaligned alternative.
+            *word |= unsafe { aligned.add(i).read_volatile() };
+        }
+    } else {
+        for (word, chunk) in out.iter_mut().zip(bytes.as_chunks::<8>().0) {
+            *word |= u64::from_ne_bytes(*chunk);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +428,40 @@ mod tests {
     use super::*;
     use alloy_consensus::TxType;
     use alloy_primitives::Log;
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "the test uses a fixed-size slice")]
+    fn bloom_word_union_matches_bytes_at_every_alignment() {
+        #[repr(align(8))]
+        struct Buffer([u8; 264]);
+        let mut src = Buffer([0; 264]);
+        for (i, byte) in src.0.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(73).wrapping_add(19);
+        }
+        for offset in 0..8 {
+            let bytes: &[u8; 256] = src.0[offset..offset + 256].try_into().expect("256 bytes");
+            for initial in [0u64, u64::MAX, 0x1020_3040_5060_7080] {
+                let mut out = [initial; 32];
+                union_bloom_words(&mut out, bytes);
+                let result: Vec<_> = out.iter().flat_map(|word| word.to_ne_bytes()).collect();
+                let expected: Vec<_> = initial
+                    .to_ne_bytes()
+                    .into_iter()
+                    .cycle()
+                    .zip(bytes)
+                    .map(|(a, b)| a | b)
+                    .collect();
+                assert_eq!(result, expected, "offset={offset}");
+                union_bloom_words(&mut out, bytes);
+                assert_eq!(
+                    out.iter()
+                        .flat_map(|word| word.to_ne_bytes())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
+    }
 
     #[test]
     fn receipt_root_bloom_matches_direct_hashing() {
