@@ -123,6 +123,12 @@ jobs:
           for c in vendor/foldhash vendor/hashbrown vendor/alloy-primitives vendor/revm-interpreter vendor/zeth-mpt guest/native-tests; do
             run "$c"
           done
+      - name: jump fusion tests (riscv64gc-unknown-linux-musl)
+        run: |
+          cargo nextest run --locked --lib --no-fail-fast --release \
+            --target riscv64gc-unknown-linux-musl \
+            --manifest-path crates/vendor/revm-interpreter/Cargo.toml \
+            --features push-jump-fusion
       - if: always()
         run: echo "riscv64 wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
