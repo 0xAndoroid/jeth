@@ -48,6 +48,12 @@ impl Clone for Stack {
 }
 
 impl StackTr for Stack {
+    #[cfg(feature = "push-jump-fusion")]
+    #[inline(always)]
+    fn can_elide_push_pop(&self) -> bool {
+        self.data.len() < STACK_LIMIT
+    }
+
     #[inline]
     fn len(&self) -> usize {
         self.len()

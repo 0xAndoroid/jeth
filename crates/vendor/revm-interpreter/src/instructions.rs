@@ -12,6 +12,8 @@ pub mod block_info;
 pub mod contract;
 /// Control flow instructions (JUMP, JUMPI, REVERT, etc.).
 pub mod control;
+#[cfg(feature = "push-jump-fusion")]
+pub(crate) mod fusion;
 /// Host environment interactions (SLOAD, SSTORE, LOG, etc.).
 pub mod host;
 /// Signed 256-bit integer operations.
@@ -324,6 +326,10 @@ const fn instruction_table_impl<WIRE: InterpreterTypes, H: Host>() -> [Instructi
     table[PUSH0 as usize] = Instruction::new(stack::push0);
     table[PUSH1 as usize] = Instruction::new(stack::push::<1, _, _>);
     table[PUSH2 as usize] = Instruction::new(stack::push::<2, _, _>);
+    #[cfg(feature = "push-jump-fusion")]
+    {
+        table[PUSH2 as usize] = Instruction::new(fusion::push2::<_, _>);
+    }
     table[PUSH3 as usize] = Instruction::new(stack::push::<3, _, _>);
     table[PUSH4 as usize] = Instruction::new(stack::push::<4, _, _>);
     table[PUSH5 as usize] = Instruction::new(stack::push::<5, _, _>);

@@ -158,6 +158,14 @@ pub trait MemoryTr {
 
 /// Functions needed for Interpreter Stack operations.
 pub trait StackTr {
+    /// Returns true only when a push would succeed and immediately popping that
+    /// value has no effect on the observable stack state.
+    /// Custom stacks keep their original operations unless they opt in.
+    #[cfg(feature = "push-jump-fusion")]
+    fn can_elide_push_pop(&self) -> bool {
+        false
+    }
+
     /// Returns stack length.
     fn len(&self) -> usize;
 

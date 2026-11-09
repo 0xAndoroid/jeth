@@ -10,6 +10,8 @@ edition = "2021"
 [workspace]
 
 [features]
+# Fuse successful PUSH2 jumps in the plain guest interpreter.
+push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
 default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
