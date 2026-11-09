@@ -162,6 +162,71 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
     if n == 0 {
         return dst;
     }
+    // Addresses have a four-byte tail after two full words. Avoid the
+    // generic head/body/tail loops when serializing one from aligned storage.
+    // The final source load and destination edge accesses are containing-word
+    // operations under the guest memory contract described above.
+    if n == 20 && (src as usize) & 7 == 0 {
+        let source = src as *const u64;
+        let a = load_word::<0>(source);
+        let b = load_word::<1>(source);
+        let c = load_word::<2>(source) & 0xffff_ffff;
+        let offset = (dst as usize) & 7;
+        let target = ((dst as usize) & !7) as *mut u64;
+        if offset == 0 {
+            let last = load_word::<2>(target);
+            store_word::<0>(target, a);
+            store_word::<1>(target, b);
+            store_word::<2>(target, (last & !0xffff_ffff) | c);
+        } else {
+            let shift = offset * 8;
+            let back = 64 - shift;
+            let prefix_mask = (1u64 << shift) - 1;
+            let first = load_word::<0>(target);
+            store_word::<0>(target, (first & prefix_mask) | (a << shift));
+            store_word::<1>(target, (a >> back) | (b << shift));
+            let third = (b >> back) | (c << shift);
+            if offset < 4 {
+                let mask = (1u64 << (32 + shift)) - 1;
+                let last = load_word::<2>(target);
+                store_word::<2>(target, (last & !mask) | third);
+            } else {
+                store_word::<2>(target, third);
+                if offset > 4 {
+                    let mask = (1u64 << (shift - 32)) - 1;
+                    let last = load_word::<3>(target);
+                    store_word::<3>(target, (last & !mask) | (c >> back));
+                }
+            }
+        }
+        return dst;
+    }
+    // A common serialization copy: a complete aligned word array into a
+    // byte buffer after an RLP prefix. Preserve only the two boundary words.
+    // The source loads are in bounds. Destination containing-word accesses
+    // rely on the same single-hart guest memory contract as the fallback.
+    if n == 32 && (src as usize) & 7 == 0 {
+        let offset = (dst as usize) & 7;
+        if offset != 0 {
+            let source = src as *const u64;
+            let a = load_word::<0>(source);
+            let b = load_word::<1>(source);
+            let c = load_word::<2>(source);
+            let d = load_word::<3>(source);
+            let target = ((dst as usize) & !7) as *mut u64;
+            let shift = offset * 8;
+            let back = 64 - shift;
+            let prefix_mask = (1u64 << shift) - 1;
+            let first = load_word::<0>(target);
+            let last = load_word::<4>(target);
+            store_word::<0>(target, (first & prefix_mask) | (a << shift));
+            store_word::<1>(target, (a >> back) | (b << shift));
+            store_word::<2>(target, (b >> back) | (c << shift));
+            store_word::<3>(target, (c >> back) | (d << shift));
+            store_word::<4>(target, (last & !prefix_mask) | (d >> back));
+            return dst;
+        }
+    }
     if n <= 8 {
         let v = load_le_partial(src, n);
         store_le_partial(dst, v, n);
@@ -359,8 +424,20 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
 /// shadow libc).
 #[cfg(feature = "guest")]
 mod exports {
+    core::arch::global_asm!(include_str!("aligned_copy.S"));
+    unsafe extern "C" {
+        fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
+    }
     #[no_mangle]
     pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+        __jeth_aligned_copy(dst, src, n)
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn __jeth_copy_fallback(
+        dst: *mut u8,
+        src: *const u8,
+        n: usize,
+    ) -> *mut u8 {
         super::memcpy_impl(dst, src, n)
     }
     #[no_mangle]
@@ -393,6 +470,30 @@ mod tests {
     #[derive(Clone, Copy)]
     #[repr(align(8))]
     struct Words([u8; 144]);
+
+    #[test]
+    fn fixed_size_copies_preserve_boundary_bytes() {
+        for n in [19, 20, 21, 31, 32, 33] {
+            for soff in 0..8 {
+                for doff in 0..8 {
+                    for pattern in [0u8, 0x55, 0xff] {
+                        let mut source = Words([0u8; 144]);
+                        for (i, byte) in source.0.iter_mut().enumerate() {
+                            *byte = (i as u8).wrapping_mul(73) ^ pattern;
+                        }
+                        let mut dest = Words([pattern; 144]);
+                        let mut expected = dest;
+                        expected.0[16 + doff..16 + doff + n]
+                            .copy_from_slice(&source.0[16 + soff..16 + soff + n]);
+                        let ptr = unsafe { dest.0.as_mut_ptr().add(16 + doff) };
+                        let result = unsafe { jmemcpy(ptr, source.0.as_ptr().add(16 + soff), n) };
+                        assert_eq!(result, ptr);
+                        assert_eq!(dest.0, expected.0, "n={n}, src={soff}, dst={doff}");
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn fuzz_memcpy_memset_memcmp() {
