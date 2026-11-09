@@ -255,3 +255,26 @@ mod cs {
         unsafe fn release(_: critical_section::RawRestoreState) {}
     }
 }
+
+/// Trie-node hashing shared by witness authentication and final-root encoding.
+/// Separate from native_keccak256 so advice-only bookkeeping cannot enter the
+/// cache or consume/produce its advice.
+#[cfg(all(feature = "guest", feature = "keccak-prefix-cache"))]
+#[no_mangle]
+#[inline(never)]
+pub unsafe extern "C" fn jeth_mpt_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
+    // Prefix reuse and the existing small-message cache cover disjoint lengths.
+    // Preserve the small-message cache when this hash has no eligible prefix.
+    if !keccak::prefix_eligible(len) {
+        native_keccak256(bytes, len, output);
+        return;
+    }
+    #[cfg(feature = "keccak-census")]
+    {
+        KECCAK_CALLS += 1;
+        KECCAK_BYTES += len as u64;
+        KECCAK_PERMS += (len / 136) as u64 + 1;
+        KECCAK_UNALIGNED += (bytes as usize & 7 != 0) as u64;
+    }
+    keccak::mpt_keccak256_into(bytes, len, output);
+}

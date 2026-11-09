@@ -153,7 +153,7 @@ impl WitnessResolver {
         let have = if self.is_verified(i) {
             self.verified[i]
         } else {
-            let digest = keccak256(&self.witness[i]);
+            let digest = zeth_mpt::hash_node_rlp(&self.witness[i]);
             let limbs = le_words_32(digest.as_slice());
             self.verified[i] = limbs;
             self.verified_set[i >> 6] |= 1 << (i & 63);

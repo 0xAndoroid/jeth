@@ -53,6 +53,8 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all --all-targets -q --message-format=short -- -D warnings
+      - run: cargo clippy -p jeth-core --all-targets --features native-advice,code-library -q --message-format=short -- -D warnings
+      - run: cargo clippy -p jeth-core --all-targets --features native-advice,code-library,keccak-prefix-cache -q --message-format=short -- -D warnings
       - if: always()
         run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
@@ -76,6 +78,11 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo nextest run --workspace --locked --no-fail-fast
+      - run: cargo nextest run -p jeth-core --features native-advice,secp-inline,code-library,bigint-inline --locked --no-fail-fast
+      - name: checked Keccak prefixes and native hint planning
+        run: |
+          cargo nextest run --locked --no-fail-fast -p jeth-core --lib --features native-advice,code-library,keccak-prefix-cache
+          cargo nextest run --locked --no-fail-fast --manifest-path crates/guest/native-tests/Cargo.toml --features keccak-prefix-cache
       - if: always()
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
@@ -123,6 +130,9 @@ jobs:
           for c in vendor/foldhash vendor/hashbrown vendor/alloy-primitives vendor/revm-interpreter vendor/zeth-mpt guest/native-tests; do
             run "$c"
           done
+          cargo nextest run --locked --lib --no-fail-fast --release \
+            --target riscv64gc-unknown-linux-musl \
+            --manifest-path crates/guest/native-tests/Cargo.toml --features keccak-prefix-cache
       - if: always()
         run: echo "riscv64 wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 

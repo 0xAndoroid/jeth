@@ -302,7 +302,7 @@ impl RlpNode {
     pub(super) fn from_rlp(rlp: impl AsRef<[u8]>) -> Self {
         let rlp = rlp.as_ref();
         if rlp.len() >= B256::len_bytes() {
-            Self::from_digest_words(le_words_32(keccak256(rlp).as_slice()))
+            Self::from_digest_words(le_words_32(crate::hash_node_rlp(rlp).as_slice()))
         } else {
             let mut words = [[0u8; 8]; 5];
             words.as_flattened_mut()[..rlp.len()].copy_from_slice(rlp);
