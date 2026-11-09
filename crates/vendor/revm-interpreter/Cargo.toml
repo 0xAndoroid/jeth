@@ -41,6 +41,7 @@ rustdoc-args = [
 ]
 
 [features]
+push-jump-fusion = []
 # jeth: MULMOD through the guest's `jeth_mul_mod` hook (Jolt BIGINT256_MUL inline).
 bigint-inline = []
 arbitrary = [
