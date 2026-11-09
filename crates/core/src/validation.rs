@@ -31,8 +31,8 @@ use reth_consensus::{Consensus, HeaderValidator};
 use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus};
 use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_evm::{
-    execute::{BlockExecutionOutput, BlockExecutor},
-    revm::database::{states::bundle_state::BundleRetention, CacheState, State},
+    execute::BlockExecutor,
+    revm::database::{CacheState, State},
     ConfigureEvm,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -150,26 +150,34 @@ pub fn validate_recovered_pertx(
         .apply_post_execution_changes()
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
 
-    state.merge_transitions(BundleRetention::Reverts);
-    let output = BlockExecutionOutput {
-        state: state.take_bundle(),
-        result,
-    };
+    // Validation needs the final values, not a rollback bundle. Move the
+    // accumulated transitions directly into their final-account view.
+    #[expect(
+        clippy::expect_used,
+        reason = "the State builder enables bundle updates above"
+    )]
+    let final_accounts: Vec<_> = state
+        .transition_state
+        .take()
+        .expect("bundle updates enabled")
+        .transitions
+        .into_iter()
+        .filter_map(|(address, transition)| {
+            crate::final_state::final_account(transition).map(|account| (address, account))
+        })
+        .collect();
     // Single-shot process: leak the block state instead of tearing it down.
     core::mem::forget(state);
 
-    let root_bloom = receipt_root_bloom(&output.result.receipts, |address| {
-        trie.hashed_address(address)
-    });
-    validate_block_post_execution(
-        &current_block,
-        &chain_spec,
-        &output.result,
-        Some(root_bloom),
-    )
-    .map_err(StatelessValidationError::ConsensusValidationFailed)?;
+    let root_bloom = receipt_root_bloom(&result.receipts, |address| trie.hashed_address(address));
+    validate_block_post_execution(&current_block, &chain_spec, &result, Some(root_bloom))
+        .map_err(StatelessValidationError::ConsensusValidationFailed)?;
 
-    let hashed_state = trie.hashed_post_state(&output.state.state);
+    let hashed_state = trie.hashed_post_state(
+        final_accounts
+            .iter()
+            .map(|(address, account)| (address, account)),
+    );
     let state_root = trie.calculate_state_root(hashed_state)?;
     if state_root != current_block.state_root {
         return Err(StatelessValidationError::PostStateRootMismatch {
@@ -180,11 +188,11 @@ pub fn validate_recovered_pertx(
 
     let validated = ValidatedBlock {
         block_hash: current_block.hash_slow(),
-        gas_used: output.result.gas_used,
-        receipts: output.result.receipts,
+        gas_used: result.gas_used,
+        receipts: result.receipts,
     };
     core::mem::forget(trie);
-    core::mem::forget(output.state);
+    core::mem::forget(final_accounts);
     core::mem::forget(witness);
     core::mem::forget(current_block);
     Ok(validated)

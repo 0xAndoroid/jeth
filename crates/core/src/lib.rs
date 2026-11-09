@@ -21,6 +21,7 @@ pub mod code_library;
 pub mod container;
 #[cfg(feature = "secp-inline")]
 mod crypto;
+mod final_state;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
 mod keccak_memo;
