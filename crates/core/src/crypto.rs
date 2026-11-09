@@ -109,6 +109,10 @@ impl Crypto for JoltCrypto {
         crate::bn254::g1_mul(point, scalar)
     }
 
+    fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, PrecompileHalt> {
+        crate::bn254_pairing::pairing_check(pairs)
+    }
+
     /// SHA-256 on the Jolt inline; the native build keeps revm's default so `run-native` stays
     /// the independent reference.
     #[cfg(all(feature = "sha2-inline", target_arch = "riscv64"))]

@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+# Enable in the guest and matching native advice producer.
+bn254-pairing-residue = ["secp-inline"]
 std = []
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode
 # inspector around the same validation loop. Never enabled by the guest.
@@ -97,6 +99,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e53
 sha3 = { version = "0.12", default-features = false }
 
 [dev-dependencies]
+num-bigint = "0.4"
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jeth-inlines-blake2f.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
