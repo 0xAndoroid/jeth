@@ -5,7 +5,7 @@ edition.workspace = true
 
 [[example]]
 name = "native-advice"
-required-features = ["native-advice", "secp-inline", "code-library"]
+required-features = ["native-advice", "secp-inline", "code-library", "bigint-inline"]
 
 [features]
 std = []

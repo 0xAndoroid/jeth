@@ -18,7 +18,7 @@ For the ordinary guest with the code library enabled:
 
 ```sh
 cargo run --release -p jeth-core --example native-advice \
-  --features native-advice,secp-inline,code-library -- input.bin advice.bin
+  --features native-advice,secp-inline,code-library,bigint-inline -- input.bin advice.bin
 ```
 
 Pass the resulting bytes as Jolt's runtime advice tape, not its trusted-advice

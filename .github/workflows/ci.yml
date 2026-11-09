@@ -77,7 +77,7 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo nextest run --workspace --locked --no-fail-fast
-      - run: cargo nextest run -p jeth-core --features native-advice,secp-inline,code-library --locked --no-fail-fast
+      - run: cargo nextest run -p jeth-core --features native-advice,secp-inline,code-library,bigint-inline --locked --no-fail-fast
       - if: always()
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
