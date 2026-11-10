@@ -894,7 +894,6 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
@@ -1720,22 +1719,21 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-bigint"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 
 [[package]]
 name = "jolt-inlines-blake2"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
+dependencies = [
+ "jolt-platform",
+]
 
 [[package]]
 name = "jolt-inlines-p256"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "jolt-inlines-sdk",
  "serde",
@@ -1744,7 +1742,6 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-sdk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "jolt-platform",
 ]
@@ -1752,7 +1749,6 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-secp256k1"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-secp256k1",
@@ -1765,12 +1761,10 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 
 [[package]]
 name = "jolt-platform"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -1780,7 +1774,6 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -1795,7 +1788,6 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=8e536f199735ac8187156aa589ed1387722a079a#8e536f199735ac8187156aa589ed1387722a079a"
 dependencies = [
  "common",
  "proc-macro2",
@@ -3886,3 +3878,19 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "jolt-field"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-poly"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-transcript"
+version = "0.1.0"
