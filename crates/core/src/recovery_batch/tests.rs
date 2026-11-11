@@ -394,3 +394,14 @@ fn signed_window_reconstruction_including_top_carry() {
         }
     }
 }
+
+#[test]
+fn msm_ignores_infinity_terms_and_zero_scalars() {
+    let zero = scalar([0; 32]);
+    let one = scalar(U256::from(1).to_be_bytes());
+    assert!(pippenger(&[
+        (one, Secp256k1Point::infinity()),
+        (zero, Secp256k1Point::generator()),
+    ])
+    .is_infinity());
+}

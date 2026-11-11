@@ -2,7 +2,7 @@
 
 mod word_point;
 
-use word_point::{Point, WordField};
+use word_point::{add_finite, Point, WordField};
 
 use crate::advice::advice_u64;
 use crate::crypto::{prepare_recovery, N};
@@ -280,6 +280,9 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
     let mut split = Vec::with_capacity(2 * terms.len());
     let mut push = |(negative, scalar): (bool, u128), point: Secp256k1Point| {
         let point = Point::new_unchecked(WordField(point.x()), WordField(point.y()));
+        if point.is_infinity() {
+            return;
+        }
         let point = if negative { point.neg() } else { point };
         let (biased, overflow) = scalar.overflowing_add(bias);
         split.push(Term {
@@ -306,7 +309,7 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
         if top {
             for term in &split {
                 if term.top != 0 {
-                    buckets[term.top] = buckets[term.top].add(&term.point);
+                    buckets[term.top] = add_finite(&buckets[term.top], &term.point);
                 }
             }
         } else {
@@ -320,7 +323,7 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
                     } else {
                         (digit.wrapping_neg(), &term.negated)
                     };
-                    buckets[index] = buckets[index].add(point);
+                    buckets[index] = add_finite(&buckets[index], point);
                 }
             }
         }

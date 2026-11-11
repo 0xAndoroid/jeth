@@ -149,6 +149,31 @@ impl CurveParams<WordField> for Curve {
 
 pub(super) type Point = AffinePoint<WordField, Curve>;
 
+/// Add a point whose non-infinity invariant was checked when constructing
+/// the GLV term. Bucket values can still be infinity, equal or opposite.
+#[inline(always)]
+pub(super) fn add_finite(left: &Point, right: &Point) -> Point {
+    debug_assert!(!right.is_infinity());
+    if left.is_infinity() {
+        return right.clone();
+    }
+    let x = left.x();
+    let y = left.y();
+    let other_x = right.x();
+    let other_y = right.y();
+    if x == other_x {
+        return if y == other_y {
+            left.double()
+        } else {
+            Point::infinity()
+        };
+    }
+    let slope = y.sub(&other_y).div_assume_nonzero(&x.sub(&other_x));
+    let result_x = slope.square().sub(&x.add(&other_x));
+    let result_y = slope.mul(&x.sub(&result_x)).sub(&y);
+    Point::new_unchecked(result_x, result_y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +181,24 @@ mod tests {
 
     fn word(point: &Secp256k1Point) -> Point {
         Point::new_unchecked(WordField(point.x()), WordField(point.y()))
+    }
+
+    #[test]
+    fn finite_addition_matches_complete_addition() {
+        let mut a = Secp256k1Point::generator();
+        let mut b = a.double();
+        for _ in 0..64 {
+            for left in [&a, &a.neg(), &b, &Secp256k1Point::infinity()] {
+                for right in [&a, &b] {
+                    assert_eq!(
+                        add_finite(&word(left), &word(right)).to_u64_arr(),
+                        left.add(right).to_u64_arr()
+                    );
+                }
+            }
+            a = a.double().add(&b);
+            b = b.double().add(&Secp256k1Point::generator());
+        }
     }
 
     #[test]
