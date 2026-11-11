@@ -15,13 +15,15 @@ macro_rules! charge {
         const OPCODE: u8 = crate::bytecode::opcode::$opcode;
         const COST: u64 = super::static_gas(OPCODE, SpecId::FRONTIER);
         const { assert!(super::static_gas_is_spec_independent(OPCODE)) };
-        let old = *$remaining;
-        let new = crate::gas::sub_const::<COST>(old);
-        if new > old {
-            $context.interpreter.gas.set_remaining(old);
+        // Entry and every fallback reload admit only nonnegative signed budgets.
+        // A wrapped subtraction is therefore negative exactly on out-of-gas.
+        *$remaining = crate::gas::sub_const::<COST>(*$remaining);
+        if (*$remaining as i64) < 0 {
+            // halt_oog spends the budget before capturing it. Do not retain the
+            // pre-subtraction value merely to overwrite it with zero there.
+            $context.interpreter.gas.set_remaining(0);
             return $context.interpreter.halt_oog();
         }
-        *$remaining = new;
     };
 }
 
@@ -50,39 +52,37 @@ macro_rules! binary {
             let Some(([a], top)) = context.interpreter.stack.popn_top::<1>() else {
                 return fail(context.interpreter, *remaining, InstructionResult::StackUnderflow);
             };
-            *top = ($operation)(a, *top);
+            ($operation)(a, top);
             ip
         }
     };
 }
 
-binary!(add, ADD, |a: U256, b: U256| a.wrapping_add(b));
-binary!(sub, SUB, |a: U256, b: U256| a.wrapping_sub(b));
-binary!(mul, MUL, |a: U256, b: U256| a.wrapping_mul(b));
-binary!(div, DIV, |a: U256, b: U256| if b.is_zero() {
-    b
-} else {
-    a.wrapping_div(b)
+binary!(add, ADD, |a: U256, b: &mut U256| *b = a.wrapping_add(*b));
+binary!(sub, SUB, |a: U256, b: &mut U256| *b = a.wrapping_sub(*b));
+binary!(mul, MUL, |a: U256, b: &mut U256| *b = a.wrapping_mul(*b));
+binary!(div, DIV, |a: U256, b: &mut U256| {
+    if !b.is_zero() {
+        *b = a.wrapping_div(*b);
+    }
 });
-binary!(lt, LT, |a: U256, b: U256| U256::from(
-    super::bitwise::less_word(&a, &b)
-));
-binary!(gt, GT, |a: U256, b: U256| U256::from(
-    super::bitwise::less_word(&b, &a)
-));
-binary!(eq, EQ, |a: U256, b: U256| U256::from(a == b));
-binary!(bitand, AND, |a: U256, b: U256| a & b);
-binary!(bitor, OR, |a: U256, b: U256| a | b);
+binary!(lt, LT, |a: U256, b: &mut U256| *b =
+    U256::from(super::bitwise::less_word(&a, b)));
+binary!(gt, GT, |a: U256, b: &mut U256| *b =
+    U256::from(super::bitwise::less_word(b, &a)));
+binary!(eq, EQ, |a: U256, b: &mut U256| *b = U256::from(a == *b));
+binary!(bitand, AND, |a: U256, b: &mut U256| *b = a & *b);
+binary!(bitor, OR, |a: U256, b: &mut U256| *b = a | *b);
 binary!(
     shl,
     SHL,
-    |a: U256, b: U256| super::bitwise::shift_word::<true>(b, as_usize_saturated!(a)),
+    |a: U256, b: &mut U256| *b = super::bitwise::shift_word::<true>(*b, as_usize_saturated!(a)),
     CONSTANTINOPLE
 );
 binary!(
     shr,
     SHR,
-    |a: U256, b: U256| super::bitwise::shift_word::<false>(b, as_usize_saturated!(a)),
+    |a: U256, b: &mut U256| *b = super::bitwise::shift_word::<false>(*b, as_usize_saturated!(a)),
     CONSTANTINOPLE
 );
 
