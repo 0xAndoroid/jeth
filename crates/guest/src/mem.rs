@@ -313,6 +313,20 @@ fn first_diff_sign(x: u64, y: u64) -> i32 {
 }
 
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
+    // Fixed-size hashes and field coordinates dominate comparisons. Aligned
+    // pointers let each word use one load, without generic head/tail setup.
+    if n == 32 && ((a as usize | b as usize) & 7) == 0 {
+        let a = a.cast::<u64>();
+        let b = b.cast::<u64>();
+        for i in 0..4 {
+            let x = read_volatile(a.add(i));
+            let y = read_volatile(b.add(i));
+            if x != y {
+                return first_diff_sign(x, y);
+            }
+        }
+        return 0;
+    }
     let mut i = 0usize;
     // Co-aligned fast path (the common case: 32-byte hash equality between
     // 8-aligned heap objects): one aligned load per side per word after a
@@ -393,6 +407,49 @@ mod tests {
     #[derive(Clone, Copy)]
     #[repr(align(8))]
     struct Words([u8; 144]);
+
+    #[test]
+    fn compare_matches_unsigned_bytes_at_every_small_boundary() {
+        let mut rng = 0x7a93_10dc_a84f_5e21;
+        for n in 0..=64 {
+            for aoff in 0..8 {
+                for boff in 0..8 {
+                    let mut a = Words([0; 144]);
+                    let mut b = Words([0; 144]);
+                    for i in 0..n {
+                        let byte = xorshift(&mut rng) as u8;
+                        a.0[aoff + i] = byte;
+                        b.0[boff + i] = byte;
+                    }
+                    for mismatch in 0..=n {
+                        if mismatch < n {
+                            b.0[boff + mismatch] = a.0[aoff + mismatch].wrapping_add(1);
+                        }
+                        for (left, right, lo, ro) in [(&a, &b, aoff, boff), (&b, &a, boff, aoff)] {
+                            let want = left.0[lo..lo + n]
+                                .iter()
+                                .zip(&right.0[ro..ro + n])
+                                .find_map(|(&x, &y)| {
+                                    (x != y).then(|| (x as i32 - y as i32).signum())
+                                })
+                                .unwrap_or(0);
+                            let got = unsafe {
+                                jmemcmp(left.0.as_ptr().add(lo), right.0.as_ptr().add(ro), n)
+                            };
+                            assert_eq!(
+                                got.signum(),
+                                want,
+                                "n={n} a={lo} b={ro} mismatch={mismatch}"
+                            );
+                        }
+                        if mismatch < n {
+                            b.0[boff + mismatch] = a.0[aoff + mismatch];
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn fuzz_memcpy_memset_memcmp() {
