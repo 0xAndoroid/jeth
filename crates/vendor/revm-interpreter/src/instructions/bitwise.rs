@@ -288,9 +288,9 @@ mod tests {
     #[test]
     fn limb_order_matches_full_width_comparison() {
         let check = |a: U256, b: U256| {
-            assert_eq!(less_word(&a, &b), a < b);
-            assert_eq!(less_word(&b, &a), a > b);
-            assert!(!less_word(&a, &a));
+            assert_eq!(super::less_word(&a, &b), a < b);
+            assert_eq!(super::less_word(&b, &a), a > b);
+            assert!(!super::less_word(&a, &a));
         };
         check(U256::ZERO, U256::MAX);
         for limb in 0..4 {
