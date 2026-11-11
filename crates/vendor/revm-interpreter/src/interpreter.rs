@@ -388,6 +388,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     }
 
     inline_dispatch!(IW;
+        STOP => control::stop,
         ADD => arithmetic::add,
         SUB => arithmetic::sub,
         LT => bitwise::lt,
@@ -466,6 +467,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         SWAP14 => stack::swap::<14>,
         SWAP15 => stack::swap::<15>,
         SWAP16 => stack::swap::<16>,
+        SELFDESTRUCT => host::selfdestruct,
     );
 }
 
