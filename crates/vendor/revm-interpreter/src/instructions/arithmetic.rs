@@ -37,16 +37,16 @@ pub(super) fn mul_word(a: U256, b: U256) -> U256 {
 // Division by zero is an EVM zero result. For two one-limb operands the
 // quotient is also one limb; retain the ordinary U256 algorithm otherwise.
 #[inline(always)]
-pub(super) fn div_word(a: U256, b: U256) -> U256 {
+pub(super) fn div_word(a: U256, b: &mut U256) {
     if b.is_zero() {
-        return U256::ZERO;
+        return;
     }
     let x = a.as_limbs();
     let y = b.as_limbs();
     if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
-        U256::from(x[0] / y[0])
+        *b = U256::from(x[0] / y[0]);
     } else {
-        a.wrapping_div(b)
+        *b = a.wrapping_div(*b);
     }
 }
 
@@ -260,7 +260,11 @@ mod small_word_tests {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
                 assert_eq!(mul_word(a, b), a.wrapping_mul(b));
                 assert_eq!(
-                    div_word(a, b),
+                    {
+                        let mut result = b;
+                        div_word(a, &mut result);
+                        result
+                    },
                     if b.is_zero() {
                         U256::ZERO
                     } else {
@@ -286,7 +290,11 @@ mod small_word_tests {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
                 assert_eq!(mul_word(a, b), a.wrapping_mul(b));
                 assert_eq!(
-                    div_word(a, b),
+                    {
+                        let mut result = b;
+                        div_word(a, &mut result);
+                        result
+                    },
                     if b.is_zero() {
                         U256::ZERO
                     } else {
