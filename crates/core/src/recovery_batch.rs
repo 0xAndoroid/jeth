@@ -1,5 +1,9 @@
 //! Deferred recovery equations; no validation output may precede `verify`.
 
+mod word_point;
+
+use word_point::{Point, WordField};
+
 use crate::advice::advice_u64;
 use crate::crypto::{prepare_recovery, N};
 use alloc::vec::Vec;
@@ -231,8 +235,8 @@ fn challenge(digest: B256, index: usize) -> Secp256k1Fr {
 struct Term {
     biased: u128,
     top: usize,
-    point: Secp256k1Point,
-    negated: Secp256k1Point,
+    point: Point,
+    negated: Point,
 }
 
 /// Pippenger MSM over the GLV-split terms with signed window digits.
@@ -251,6 +255,7 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
     let bias = (0..windows - 1).fold(0u128, |bias, i| bias | (half as u128) << (width * i));
     let mut split = Vec::with_capacity(2 * terms.len());
     let mut push = |(negative, scalar): (bool, u128), point: Secp256k1Point| {
+        let point = Point::new_unchecked(WordField(point.x()), WordField(point.y()));
         let point = if negative { point.neg() } else { point };
         let (biased, overflow) = scalar.overflowing_add(bias);
         split.push(Term {
@@ -265,15 +270,15 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
         push(k1, point.clone());
         push(k2, point.endomorphism());
     }
-    let mut buckets = alloc::vec![Secp256k1Point::infinity(); (1 << width) + 1];
-    let mut result = Secp256k1Point::infinity();
+    let mut buckets = alloc::vec![Point::infinity(); (1 << width) + 1];
+    let mut result = Point::infinity();
     for window in (0..windows).rev() {
         for _ in 0..width {
             result = result.double();
         }
         let top = window == windows - 1;
         let live = if top { 1 << (128 - top_shift) } else { half };
-        buckets[1..=live].fill(Secp256k1Point::infinity());
+        buckets[1..=live].fill(Point::infinity());
         if top {
             for term in &split {
                 if term.top != 0 {
@@ -295,13 +300,13 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
                 }
             }
         }
-        let mut sum = Secp256k1Point::infinity();
+        let mut sum = Point::infinity();
         for bucket in buckets[1..=live].iter().rev() {
             sum = sum.add(bucket);
             result = result.add(&sum);
         }
     }
-    result
+    Secp256k1Point::new_unchecked(result.x().0, result.y().0)
 }
 
 #[cfg(test)]

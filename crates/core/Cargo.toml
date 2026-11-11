@@ -10,7 +10,7 @@ std = []
 census = ["std"]
 code-library = []
 # Deferred tx, precompile, and authorization recovery using the secp256k1 inlines.
-secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
+secp-inline = ["dep:jolt-inlines-sdk", "dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
 # SHA256 (0x02) precompile on the Jolt SHA-256 inline (guest builds only; the native build keeps
 # revm's sha2 crate so run-native stays the independent reference).
 sha2-inline = ["secp-inline", "dep:jolt-inlines-sha2"]
@@ -45,6 +45,7 @@ premeasure = ["zeth-mpt/premeasure"]
 compute_advice = ["zeth-mpt/compute_advice"]
 
 [dependencies]
+jolt-inlines-sdk = { workspace = true, optional = true, features = ["elliptic-curve"] }
 stateless.workspace = true
 tries.workspace = true
 zeth-mpt.workspace = true
