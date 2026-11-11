@@ -184,8 +184,8 @@ pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     super::cached::shr::<false, _, _>(ip, context, &mut 0)
 }
 
-// Whole-limb selection is separate from the residual shift so each transfer
-// is a fixed-width operation and no temporary array needs a dynamic index.
+// Each whole-limb case shifts only the live limbs. Double shifts keep the
+// carry expression defined at a zero residual without an extra branch.
 #[inline(always)]
 pub(crate) fn shift_word<const LEFT: bool>(value: U256, shift: usize) -> U256 {
     if shift >= 256 {
@@ -196,31 +196,31 @@ pub(crate) fn shift_word<const LEFT: bool>(value: U256, shift: usize) -> U256 {
     let bits = shift % 64;
     let inv = 63 - bits;
     let limbs = if LEFT {
-        let [a, b, c, d] = match words {
-            0 => [a, b, c, d],
-            1 => [0, a, b, c],
-            2 => [0, 0, a, b],
-            _ => [0, 0, 0, a],
-        };
-        [
-            a << bits,
-            (b << bits) | ((a >> inv) >> 1),
-            (c << bits) | ((b >> inv) >> 1),
-            (d << bits) | ((c >> inv) >> 1),
-        ]
+        let carry = |x: u64| (x >> inv) >> 1;
+        match words {
+            0 => [
+                a << bits,
+                (b << bits) | carry(a),
+                (c << bits) | carry(b),
+                (d << bits) | carry(c),
+            ],
+            1 => [0, a << bits, (b << bits) | carry(a), (c << bits) | carry(b)],
+            2 => [0, 0, a << bits, (b << bits) | carry(a)],
+            _ => [0, 0, 0, a << bits],
+        }
     } else {
-        let [a, b, c, d] = match words {
-            0 => [a, b, c, d],
-            1 => [b, c, d, 0],
-            2 => [c, d, 0, 0],
-            _ => [d, 0, 0, 0],
-        };
-        [
-            (a >> bits) | ((b << inv) << 1),
-            (b >> bits) | ((c << inv) << 1),
-            (c >> bits) | ((d << inv) << 1),
-            d >> bits,
-        ]
+        let carry = |x: u64| (x << inv) << 1;
+        match words {
+            0 => [
+                (a >> bits) | carry(b),
+                (b >> bits) | carry(c),
+                (c >> bits) | carry(d),
+                d >> bits,
+            ],
+            1 => [(b >> bits) | carry(c), (c >> bits) | carry(d), d >> bits, 0],
+            2 => [(c >> bits) | carry(d), d >> bits, 0, 0],
+            _ => [d >> bits, 0, 0, 0],
+        }
     };
     U256::from_limbs(limbs)
 }
