@@ -467,7 +467,6 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         SWAP15 => stack::swap::<15>,
         SWAP16 => stack::swap::<16>,
     );
-
 }
 
 /* used for cargo asm
