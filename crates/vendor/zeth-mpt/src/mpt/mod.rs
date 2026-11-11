@@ -44,7 +44,7 @@ mod rlp;
 mod serde;
 
 pub use alloy_trie::EMPTY_ROOT_HASH;
-pub use decode::{decode_header, equal_bytes, le_words_32};
+pub use decode::{decode_header, equal_bytes, is_plain_branch, le_words_32};
 pub use rlp::DigestResolver;
 
 /// A sparse Merkle Patricia trie storing byte values.

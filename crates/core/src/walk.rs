@@ -29,7 +29,7 @@
 use alloy_primitives::B256;
 use alloy_rlp::{Error, Result, EMPTY_STRING_CODE};
 use core::ops::Range;
-use zeth_mpt::{decode_header, equal_bytes, le_words_32};
+use zeth_mpt::{decode_header, equal_bytes, is_plain_branch, le_words_32};
 
 /// RLP header byte of a digest item (32-byte string) and the item's length.
 const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + 32;
@@ -141,6 +141,9 @@ fn validate_at(r: &mut &[u8]) -> Result<NodeKind> {
     // `decode_header` checked `r.len() >= payload_length`.
     let (mut p, rest) = r.split_at(h.payload_length);
     *r = rest;
+    if is_plain_branch(p) {
+        return Ok(NodeKind::Branch);
+    }
 
     let mut first: [(&[u8], bool, usize); 2] = [(&[], false, 0); 2];
     let mut items = 0usize;

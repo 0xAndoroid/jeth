@@ -28,5 +28,6 @@ pub use mpt::orphan;
 #[cfg(feature = "premeasure")]
 pub use mpt::premeasure;
 pub use mpt::{
-    decode_header, equal_bytes, le_words_32, CachedTrie, DigestResolver, Trie, EMPTY_ROOT_HASH,
+    decode_header, equal_bytes, is_plain_branch, le_words_32, CachedTrie, DigestResolver, Trie,
+    EMPTY_ROOT_HASH,
 };

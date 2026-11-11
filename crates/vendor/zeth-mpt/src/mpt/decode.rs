@@ -110,7 +110,12 @@ fn decode_node_zc_into<M: Memoization>(
             _ => Err(alloy_rlp::Error::UnexpectedLength),
         };
     }
-    match count_items(payload)? {
+    let items = if is_plain_branch(payload) {
+        17
+    } else {
+        count_items(payload)?
+    };
+    match items {
         // branch node: 17-item node [ v0 ... v15, value ]
         17 => {
             // Write the empty branch first and decode the children into
@@ -256,6 +261,28 @@ fn item_len(p: &[u8]) -> alloy_rlp::Result<usize> {
             Ok(p.len() - q.len() + h.payload_length)
         }
     }
+}
+
+/// Whether a list payload is a complete 17-item branch containing only
+/// empty children or digest references. The length determines the digest
+/// count: 17 bytes of headers plus 32 bytes per digest. Every child prefix
+/// and the final empty value are still checked. Other shapes fall back to
+/// the general grammar, so this predicate never rejects a valid node.
+#[inline]
+pub fn is_plain_branch(mut payload: &[u8]) -> bool {
+    if !(81..=529).contains(&payload.len()) || (payload.len() - 17) & 31 != 0 {
+        return false;
+    }
+    for _ in 0..16 {
+        match payload.first() {
+            Some(&EMPTY_STRING_CODE) => payload = &payload[1..],
+            Some(&DIGEST_ITEM_PREFIX) if payload.len() >= DIGEST_RLP_LENGTH => {
+                payload = &payload[DIGEST_RLP_LENGTH..];
+            }
+            _ => return false,
+        }
+    }
+    payload == [EMPTY_STRING_CODE]
 }
 
 /// Number of RLP items in a list payload; every item header is decoded and
@@ -494,6 +521,37 @@ mod tests {
     use super::{super::memoize::Cache, *};
     use alloc::{vec, vec::Vec};
     use alloy_rlp::{Decodable, PayloadView};
+
+    #[test]
+    fn plain_branch_recognition_checks_every_child() {
+        for mask in 0..=u16::MAX {
+            let mut payload = Vec::new();
+            for i in 0..16 {
+                if mask & (1 << i) == 0 {
+                    payload.push(EMPTY_STRING_CODE);
+                } else {
+                    payload.push(DIGEST_ITEM_PREFIX);
+                    payload.extend_from_slice(&[i as u8; 32]);
+                }
+            }
+            payload.push(EMPTY_STRING_CODE);
+            assert_eq!(is_plain_branch(&payload), mask.count_ones() >= 2);
+            if mask.count_ones() >= 2 {
+                let mut offset = 0;
+                for i in 0..16 {
+                    let len = if mask & (1 << i) == 0 { 1 } else { 33 };
+                    let original = payload[offset];
+                    payload[offset] = 0xc0;
+                    assert!(!is_plain_branch(&payload));
+                    payload[offset] = original;
+                    offset += len;
+                }
+                assert!(!is_plain_branch(&payload[..payload.len() - 1]));
+                *payload.last_mut().unwrap() = 1;
+                assert!(!is_plain_branch(&payload));
+            }
+        }
+    }
 
     #[test]
     fn word_equality_matches_slices() {
