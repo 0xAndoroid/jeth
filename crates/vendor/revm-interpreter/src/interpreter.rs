@@ -24,7 +24,10 @@ use crate::{
     host::DummyHost, instruction_context::InstructionContext, interpreter_types::*, Gas, Host,
     InstructionResult, InstructionTable, InterpreterAction,
 };
-use bytecode::Bytecode;
+use bytecode::{
+    opcode::{PUSH1, PUSH2},
+    Bytecode,
+};
 use primitives::{hardfork::SpecId, Bytes};
 
 /// Main interpreter structure that contains all components defined in [`InterpreterTypes`].
@@ -349,16 +352,41 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         instruction_table: &InstructionTable<IW, H>,
         host: &mut H,
     ) -> InterpreterAction {
+        let canonical_pushes = instruction_table[PUSH1 as usize].is(crate::Instruction::new(
+            crate::instructions::stack::push::<1, IW, H>,
+        )) && instruction_table[PUSH2 as usize].is(crate::Instruction::new(
+            crate::instructions::stack::push::<2, IW, H>,
+        ));
+        // Check once per run so custom instruction tables retain their semantics.
+        if canonical_pushes {
+            self.run_plain_inner::<H, true>(instruction_table, host)
+        } else {
+            self.run_plain_inner::<H, false>(instruction_table, host)
+        }
+    }
+
+    #[inline(always)]
+    fn run_plain_inner<H: Host + ?Sized, const INLINE_PUSH: bool>(
+        &mut self,
+        instruction_table: &InstructionTable<IW, H>,
+        host: &mut H,
+    ) -> InterpreterAction {
         let mut ip = self.bytecode.ip();
         loop {
             // SAFETY: analysed bytecode is padded with STOP, so `ip` stays inside it (see `step`).
             let (opcode, next) = unsafe { (*ip, ip.add(1)) };
-            let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
             let context = InstructionContext {
                 interpreter: self,
                 host,
             };
-            ip = instruction.execute(next, context);
+            ip = match opcode {
+                PUSH1 if INLINE_PUSH => crate::instructions::stack::push::<1, IW, H>(next, context),
+                PUSH2 if INLINE_PUSH => crate::instructions::stack::push::<2, IW, H>(next, context),
+                _ => {
+                    let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
+                    instruction.execute(next, context)
+                }
+            };
             // Null: the instruction halted or yielded and set the action.
             if ip.is_null() {
                 break;

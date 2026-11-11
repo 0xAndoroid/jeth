@@ -67,6 +67,12 @@ impl<W: InterpreterTypes, H: Host + ?Sized> Instruction<W, H> {
         }
     }
 
+    /// Whether this entry uses the same implementation as another instruction.
+    #[inline]
+    pub(crate) fn is(&self, other: Self) -> bool {
+        core::ptr::fn_addr_eq(self.fn_, other.fn_)
+    }
+
     /// Executes the instruction at `ip` (the byte after its opcode) and returns the next [`Ip`].
     #[inline(always)]
     pub fn execute(self, ip: Ip, ctx: InstructionContext<'_, H, W>) -> Ip {
