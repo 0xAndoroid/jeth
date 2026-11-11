@@ -198,18 +198,17 @@ fn write_u256_be_bytes(bytes: &mut [u8], value: &U256) {
 /// function.
 #[inline(always)]
 pub(crate) fn bswap64(x: u64) -> u64 {
-    if x == 0 {
-        return 0;
-    }
     #[cfg(target_arch = "riscv64")]
     {
-        let out: u64;
+        let mut out = x;
         // SAFETY: register-only arithmetic on the named operands; no memory
-        // access, no stack use.
+        // access, no stack use. The zero branch preserves the input; all other
+        // inputs execute the original butterfly. The tied output avoids a copy.
         unsafe {
             core::arch::asm!(
-                "srli {t}, {x}, 32",
-                "slli {o}, {x}, 32",
+                "beqz {o}, 2f",
+                "srli {t}, {o}, 32",
+                "slli {o}, {o}, 32",
                 "or   {o}, {o}, {t}",
                 "srli {t}, {o}, 16",
                 "and  {t}, {t}, {m16}",
@@ -221,10 +220,10 @@ pub(crate) fn bswap64(x: u64) -> u64 {
                 "and  {o}, {o}, {m8}",
                 "slli {o}, {o}, 8",
                 "or   {o}, {o}, {t}",
-                x = in(reg) x,
+                "2:",
                 m16 = in(reg) 0x0000_ffff_0000_ffffu64,
                 m8 = in(reg) 0x00ff_00ff_00ff_00ffu64,
-                o = out(reg) out,
+                o = inout(reg) out,
                 t = out(reg) _,
                 options(pure, nomem, nostack),
             );
