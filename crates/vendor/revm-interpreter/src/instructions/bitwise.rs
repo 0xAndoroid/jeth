@@ -8,6 +8,7 @@ use core::cmp::Ordering;
 use primitives::U256;
 
 /// Implements the LT instruction - less than comparison.
+#[inline(always)]
 pub fn lt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -19,6 +20,7 @@ pub fn lt<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// Implements the GT instruction - greater than comparison.
+#[inline(always)]
 pub fn gt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
