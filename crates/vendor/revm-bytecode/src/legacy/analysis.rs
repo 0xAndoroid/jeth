@@ -9,6 +9,17 @@ use std::vec::Vec;
 /// Prefer using [`Bytecode::new_legacy`](crate::Bytecode::new_legacy) instead.
 pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
     let mut jumps: BitVec<u8> = bitvec![u8, Lsb0; 0; bytecode.len()];
+    let jump_len = jumps.as_raw_slice().len();
+    let jump_bytes = jumps.as_raw_mut_slice().as_mut_ptr();
+    // Whole-word writes require alignment, initialized storage, and the
+    // little-endian layout used by Lsb0 bits within the byte slice.
+    let wide_limit = if cfg!(target_endian = "little")
+        && jump_bytes.align_offset(core::mem::align_of::<u64>()) == 0
+    {
+        (jump_len / 8) * 64
+    } else {
+        0
+    };
     let range = bytecode.as_ptr_range();
     let start = range.start;
     let mut iterator = start;
@@ -20,22 +31,22 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
     if bytecode.len() > 16 * 33 {
         let batch_end = unsafe { end.sub(16 * 33) };
         while iterator < batch_end {
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
         }
     }
 
@@ -43,10 +54,10 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
     if bytecode.len() > 4 * 33 {
         let batch_end = unsafe { end.sub(4 * 33) };
         while iterator < batch_end {
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
-            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
+            iterator = unsafe { scan_step(iterator, start, jump_bytes, wide_limit) };
         }
     }
 
@@ -54,7 +65,7 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
         last_byte = unsafe { *iterator };
         if last_byte == opcode::JUMPDEST {
             // SAFETY: Jumps are max length of the code
-            unsafe { jumps.set_unchecked(iterator.offset_from_unsigned(start), true) }
+            unsafe { set_jump(jump_bytes, wide_limit, iterator.offset_from_unsigned(start)) }
             iterator = unsafe { iterator.add(1) };
         } else {
             let push_offset = (last_byte as usize).wrapping_sub(opcode::PUSH1 as usize);
@@ -97,8 +108,14 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
 
 // SAFETY: The caller provides a readable opcode pointer. The returned
 // pointer may skip a truncated PUSH but is never dereferenced unchecked.
+// jumps covers every original bytecode bit; wide_limit meets set_jump requirements.
 #[inline(always)]
-unsafe fn scan_step(iterator: *const u8, start: *const u8, jumps: &mut BitVec<u8>) -> *const u8 {
+unsafe fn scan_step(
+    iterator: *const u8,
+    start: *const u8,
+    jumps: *mut u8,
+    wide_limit: usize,
+) -> *const u8 {
     let byte = unsafe { *iterator };
     let range = (byte as usize).wrapping_sub(opcode::JUMPDEST as usize);
     // Opcodes outside this interval neither mark a destination nor skip data.
@@ -109,9 +126,22 @@ unsafe fn scan_step(iterator: *const u8, start: *const u8, jumps: &mut BitVec<u8
         return iterator.wrapping_add(range - usize::from(opcode::PUSH1 - opcode::JUMPDEST) + 2);
     }
     if range == 0 {
-        unsafe { jumps.set_unchecked(iterator.offset_from_unsigned(start), true) };
+        unsafe { set_jump(jumps, wide_limit, iterator.offset_from_unsigned(start)) };
     }
     iterator.wrapping_add(1)
+}
+
+// SAFETY: offset is a bit inside the allocated zero-initialized jump table.
+// wide_limit covers only complete aligned u64 words on little-endian targets.
+#[inline(always)]
+unsafe fn set_jump(jumps: *mut u8, wide_limit: usize, offset: usize) {
+    if offset < wide_limit {
+        let word = unsafe { jumps.cast::<u64>().add(offset / 64) };
+        unsafe { *word |= 1u64 << (offset % 64) };
+    } else {
+        let byte = unsafe { jumps.add(offset / 8) };
+        unsafe { *byte |= 1u8 << (offset % 8) };
+    }
 }
 
 // Only a special penultimate byte can require extra padding before a final
@@ -202,6 +232,22 @@ mod tests {
                 }
                 assert!(!actual.is_valid(len));
             }
+        }
+    }
+
+    #[test]
+    fn jump_writes_support_unaligned_byte_storage() {
+        let mut storage = [0u8; 17];
+        let base = storage.as_mut_ptr();
+        let skip = usize::from(base.align_offset(core::mem::align_of::<u64>()) == 0);
+        let bytes = unsafe { base.add(skip) };
+        assert_ne!(bytes.align_offset(core::mem::align_of::<u64>()), 0);
+        for bit in [0, 7, 8, 63, 64, 127] {
+            unsafe { set_jump(bytes, 0, bit) };
+        }
+        for bit in 0..128 {
+            let actual = storage[skip + bit / 8] & (1 << (bit % 8)) != 0;
+            assert_eq!(actual, [0, 7, 8, 63, 64, 127].contains(&bit));
         }
     }
 
