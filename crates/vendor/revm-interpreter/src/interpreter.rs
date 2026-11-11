@@ -48,7 +48,7 @@ macro_rules! inline_dispatch {
             }
         }
 
-        #[inline(always)]
+        #[inline(never)]
         fn run_plain_inner<H: Host + ?Sized, const INLINE: bool>(
             &mut self,
             instruction_table: &InstructionTable<$wire, H>,
