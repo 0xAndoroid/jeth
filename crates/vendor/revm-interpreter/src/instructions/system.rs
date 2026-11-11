@@ -46,7 +46,7 @@ pub fn address<WIRE: InterpreterTypes, H: ?Sized>(
     static_gas!(context.interpreter, ADDRESS);
     push!(
         context.interpreter,
-        crate::interpreter::words::address_word(&context.interpreter.input.target_address())
+        context.interpreter.input.target_address_word()
     );
     ip
 }
@@ -62,7 +62,7 @@ pub fn caller<WIRE: InterpreterTypes, H: ?Sized>(
     static_gas!(context.interpreter, CALLER);
     push!(
         context.interpreter,
-        crate::interpreter::words::address_word(&context.interpreter.input.caller_address())
+        context.interpreter.input.caller_address_word()
     );
     ip
 }
