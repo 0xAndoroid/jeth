@@ -39,6 +39,17 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
         }
     }
 
+    // Drain shorter batches before the scalar padding tail.
+    if bytecode.len() > 4 * 33 {
+        let batch_end = unsafe { end.sub(4 * 33) };
+        while iterator < batch_end {
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+        }
+    }
+
     while iterator < end {
         last_byte = unsafe { *iterator };
         if last_byte == opcode::JUMPDEST {
