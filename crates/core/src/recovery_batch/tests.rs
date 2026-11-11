@@ -407,7 +407,7 @@ fn msm_ignores_infinity_terms_and_zero_scalars() {
 }
 
 #[test]
-fn specialized_windows_match_binary_scalar_multiplication() {
+fn window_widths_match_binary_scalar_multiplication() {
     let a = scalar([0xd3; 32]);
     let b = scalar([0x79; 32]);
     let total = a.add(&b.dbl());
@@ -423,7 +423,7 @@ fn specialized_windows_match_binary_scalar_multiplication() {
     }
     macro_rules! check {
         ($($width:literal),*) => { $(
-            assert_eq!(pippenger_width::<$width>(&terms).to_u64_arr(), expected.to_u64_arr());
+            assert_eq!(pippenger_width(&terms, $width).to_u64_arr(), expected.to_u64_arr());
         )* };
     }
     check!(4, 5, 6, 7, 8, 9, 10, 11, 12);

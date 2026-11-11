@@ -269,22 +269,10 @@ fn window_width(terms: usize) -> usize {
 /// (2^w for w = 8, 4 for w = 7), so no extra window is needed.
 #[inline(never)]
 fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
-    match window_width(terms.len()) {
-        4 => pippenger_width::<4>(terms),
-        5 => pippenger_width::<5>(terms),
-        6 => pippenger_width::<6>(terms),
-        7 => pippenger_width::<7>(terms),
-        8 => pippenger_width::<8>(terms),
-        9 => pippenger_width::<9>(terms),
-        10 => pippenger_width::<10>(terms),
-        11 => pippenger_width::<11>(terms),
-        12 => pippenger_width::<12>(terms),
-        _ => unreachable!("window model only considers widths 4 through 12"),
-    }
+    pippenger_width(terms, window_width(terms.len()))
 }
 
-fn pippenger_width<const WIDTH: usize>(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
-    let width = WIDTH;
+fn pippenger_width(terms: &[(Secp256k1Fr, Secp256k1Point)], width: usize) -> Secp256k1Point {
     let windows = 128usize.div_ceil(width);
     let half = 1usize << (width - 1);
     let top_shift = width * (windows - 1);
