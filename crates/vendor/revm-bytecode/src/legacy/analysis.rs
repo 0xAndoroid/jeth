@@ -77,13 +77,18 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
 #[inline(always)]
 unsafe fn scan_step(iterator: *const u8, start: *const u8, jumps: &mut BitVec<u8>) -> *const u8 {
     let byte = unsafe { *iterator };
-    if byte == opcode::JUMPDEST {
-        unsafe { jumps.set_unchecked(iterator.offset_from_unsigned(start), true) };
-        iterator.wrapping_add(1)
-    } else {
-        let push = (byte as usize).wrapping_sub(opcode::PUSH1 as usize);
-        iterator.wrapping_add(if push < 32 { push + 2 } else { 1 })
+    let range = (byte as usize).wrapping_sub(opcode::JUMPDEST as usize);
+    // Opcodes outside this interval neither mark a destination nor skip data.
+    if range > usize::from(opcode::PUSH32 - opcode::JUMPDEST) {
+        return iterator.wrapping_add(1);
     }
+    if range >= usize::from(opcode::PUSH1 - opcode::JUMPDEST) {
+        return iterator.wrapping_add(range - usize::from(opcode::PUSH1 - opcode::JUMPDEST) + 2);
+    }
+    if range == 0 {
+        unsafe { jumps.set_unchecked(iterator.offset_from_unsigned(start), true) };
+    }
+    iterator.wrapping_add(1)
 }
 
 // Only a special penultimate byte can require extra padding before a final
@@ -186,6 +191,18 @@ mod tests {
                 !(opcode::PUSH1..=opcode::PUSH32).contains(&first),
                 "opcode {first:#x}"
             );
+            let mut raw = vec![opcode::JUMPDEST; 133];
+            raw[0] = first;
+            let (expected, padding) = reference(&raw);
+            let (actual, padded) = analyze_legacy(raw.into());
+            assert_eq!(padded.as_ref(), padding.as_slice());
+            for (offset, valid) in expected.into_iter().enumerate() {
+                assert_eq!(
+                    actual.is_valid(offset),
+                    valid,
+                    "opcode {first:#x}, offset {offset}"
+                );
+            }
         }
         for push in opcode::PUSH1..=opcode::PUSH32 {
             let width = usize::from(push - opcode::PUSH1) + 1;
