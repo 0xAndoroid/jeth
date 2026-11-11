@@ -405,3 +405,26 @@ fn msm_ignores_infinity_terms_and_zero_scalars() {
     ])
     .is_infinity());
 }
+
+#[test]
+fn specialized_windows_match_binary_scalar_multiplication() {
+    let a = scalar([0xd3; 32]);
+    let b = scalar([0x79; 32]);
+    let total = a.add(&b.dbl());
+    let g = Secp256k1Point::generator();
+    let terms = [(a, g.clone()), (b, g.double())];
+    let limbs = total.e();
+    let mut expected = Secp256k1Point::infinity();
+    for bit in (0..256).rev() {
+        expected = expected.double();
+        if (limbs[bit / 64] >> (bit % 64)) & 1 != 0 {
+            expected = expected.add(&g);
+        }
+    }
+    macro_rules! check {
+        ($($width:literal),*) => { $(
+            assert_eq!(pippenger_width::<$width>(&terms).to_u64_arr(), expected.to_u64_arr());
+        )* };
+    }
+    check!(4, 5, 6, 7, 8, 9, 10, 11, 12);
+}
