@@ -29,9 +29,25 @@ pub(super) fn mul_word(a: U256, b: U256) -> U256 {
     if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
         let product = (x[0] as u128) * (y[0] as u128);
         U256::from_limbs([product as u64, (product >> 64) as u64, 0, 0])
+    } else if (x[1] | x[2] | x[3]) == 0 {
+        mul_by_word(b, x[0])
+    } else if (y[1] | y[2] | y[3]) == 0 {
+        mul_by_word(a, y[0])
     } else {
         a.wrapping_mul(b)
     }
+}
+
+// Each product plus its incoming carry fits in u128. The final high carry
+// is discarded, exactly as required by multiplication modulo 2^256.
+#[inline(always)]
+fn mul_by_word(value: U256, word: u64) -> U256 {
+    let a = value.as_limbs();
+    let p0 = (a[0] as u128) * (word as u128);
+    let p1 = (a[1] as u128) * (word as u128) + (p0 >> 64);
+    let p2 = (a[2] as u128) * (word as u128) + (p1 >> 64);
+    let p3 = a[3].wrapping_mul(word).wrapping_add((p2 >> 64) as u64);
+    U256::from_limbs([p0 as u64, p1 as u64, p2 as u64, p3])
 }
 
 // Division by zero is an EVM zero result. For two one-limb operands the
@@ -286,6 +302,8 @@ mod small_word_tests {
             for (a, b) in [
                 (a, b),
                 (U256::from(a.as_limbs()[0]), U256::from(b.as_limbs()[0])),
+                (a, U256::from(b.as_limbs()[0])),
+                (U256::from(a.as_limbs()[0]), b),
             ] {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
                 assert_eq!(mul_word(a, b), a.wrapping_mul(b));

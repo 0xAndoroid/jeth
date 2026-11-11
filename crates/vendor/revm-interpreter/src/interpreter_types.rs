@@ -19,19 +19,11 @@ pub type Ip = *const u8;
 pub trait InputsTr {
     /// Returns target address of the call.
     fn target_address(&self) -> Address;
-    /// Returns the current address as a right-aligned EVM stack word.
-    fn target_address_word(&self) -> U256 {
-        self.target_address().into_word().into()
-    }
     /// Returns bytecode address of the call. For DELEGATECALL this address will be different from target address.
     /// And if initcode is called this address will be [`None`].
     fn bytecode_address(&self) -> Option<&Address>;
     /// Returns caller address of the call.
     fn caller_address(&self) -> Address;
-    /// Returns the current address as a right-aligned EVM stack word.
-    fn caller_address_word(&self) -> U256 {
-        self.caller_address().into_word().into()
-    }
     /// Returns input of the call.
     fn input(&self) -> &CallInput;
     /// Returns call value of the call.

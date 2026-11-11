@@ -25,18 +25,8 @@ impl InputsTr for InputsImpl {
         self.target_address
     }
 
-    #[inline(always)]
-    fn target_address_word(&self) -> U256 {
-        super::words::address_word(&self.target_address)
-    }
-
     fn caller_address(&self) -> Address {
         self.caller_address
-    }
-
-    #[inline(always)]
-    fn caller_address_word(&self) -> U256 {
-        super::words::address_word(&self.caller_address)
     }
 
     fn bytecode_address(&self) -> Option<&Address> {
@@ -49,23 +39,5 @@ impl InputsTr for InputsImpl {
 
     fn call_value(&self) -> U256 {
         self.call_value
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn address_words_observe_current_fields() {
-        let mut input = InputsImpl::default();
-        for value in [0u8, 1, 0x80, 0xff] {
-            input.target_address = Address::from([value; 20]);
-            input.caller_address = Address::from([value ^ 0x55; 20]);
-            let target: U256 = input.target_address().into_word().into();
-            let caller: U256 = input.caller_address().into_word().into();
-            assert_eq!(input.target_address_word(), target);
-            assert_eq!(input.caller_address_word(), caller);
-        }
     }
 }

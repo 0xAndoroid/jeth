@@ -46,7 +46,12 @@ pub fn address<WIRE: InterpreterTypes, H: ?Sized>(
     static_gas!(context.interpreter, ADDRESS);
     push!(
         context.interpreter,
-        context.interpreter.input.target_address_word()
+        context
+            .interpreter
+            .input
+            .target_address()
+            .into_word()
+            .into()
     );
     ip
 }
@@ -62,7 +67,12 @@ pub fn caller<WIRE: InterpreterTypes, H: ?Sized>(
     static_gas!(context.interpreter, CALLER);
     push!(
         context.interpreter,
-        context.interpreter.input.caller_address_word()
+        context
+            .interpreter
+            .input
+            .caller_address()
+            .into_word()
+            .into()
     );
     ip
 }
