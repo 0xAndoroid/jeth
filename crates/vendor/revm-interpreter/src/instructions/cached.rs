@@ -66,8 +66,10 @@ macro_rules! binary {
     };
 }
 
-binary!(add, ADD, |a: U256, b: &mut U256| *b = a.wrapping_add(*b));
-binary!(sub, SUB, |a: U256, b: &mut U256| *b = a.wrapping_sub(*b));
+binary!(add, ADD, |a: U256, b: &mut U256| *b =
+    super::arithmetic::add_word(a, *b));
+binary!(sub, SUB, |a: U256, b: &mut U256| *b =
+    super::arithmetic::sub_word(a, *b));
 binary!(mul, MUL, |a: U256, b: &mut U256| *b = a.wrapping_mul(*b));
 binary!(div, DIV, |a: U256, b: &mut U256| {
     if !b.is_zero() {

@@ -7,6 +7,33 @@ use crate::{
 use context_interface::Host;
 use primitives::U256;
 
+// Offset arithmetic commonly fits in one limb. Keep the full-width path for
+// every other value, including carry and borrow propagation across all limbs.
+#[inline(always)]
+pub(super) fn add_word(a: U256, b: U256) -> U256 {
+    let x = a.as_limbs();
+    let y = b.as_limbs();
+    if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
+        let (low, carry) = x[0].overflowing_add(y[0]);
+        U256::from_limbs([low, carry as u64, 0, 0])
+    } else {
+        a.wrapping_add(b)
+    }
+}
+
+#[inline(always)]
+pub(super) fn sub_word(a: U256, b: U256) -> U256 {
+    let x = a.as_limbs();
+    let y = b.as_limbs();
+    if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
+        let (low, borrow) = x[0].overflowing_sub(y[0]);
+        let high = 0u64.wrapping_sub(borrow as u64);
+        U256::from_limbs([low, high, high, high])
+    } else {
+        a.wrapping_sub(b)
+    }
+}
+
 /// Implements the ADD instruction - adds two values from stack.
 pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
@@ -195,4 +222,46 @@ pub fn signextend<WIRE: InterpreterTypes, H: ?Sized>(
         *x = if bit { *x | !mask } else { *x & mask };
     }
     ip
+}
+
+#[cfg(test)]
+mod small_word_tests {
+    use super::{add_word, sub_word};
+    use primitives::U256;
+
+    #[test]
+    fn small_arithmetic_matches_full_width() {
+        let mut values = vec![U256::ZERO, U256::from(1), U256::from(u64::MAX), U256::MAX];
+        for limb in 0..4 {
+            for x in [1, u64::MAX] {
+                let mut words = [0; 4];
+                words[limb] = x;
+                values.push(U256::from_limbs(words));
+            }
+        }
+        for &a in &values {
+            for &b in &values {
+                assert_eq!(add_word(a, b), a.wrapping_add(b));
+                assert_eq!(sub_word(a, b), a.wrapping_sub(b));
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..128 {
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            let a = U256::from_limbs(core::array::from_fn(|_| next()));
+            let b = U256::from_limbs(core::array::from_fn(|_| next()));
+            for (a, b) in [
+                (a, b),
+                (U256::from(a.as_limbs()[0]), U256::from(b.as_limbs()[0])),
+            ] {
+                assert_eq!(add_word(a, b), a.wrapping_add(b));
+                assert_eq!(sub_word(a, b), a.wrapping_sub(b));
+            }
+        }
+    }
 }
