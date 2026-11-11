@@ -269,20 +269,21 @@ fn item_len(p: &[u8]) -> alloy_rlp::Result<usize> {
 /// and the final empty value are still checked. Other shapes fall back to
 /// the general grammar, so this predicate never rejects a valid node.
 #[inline]
-pub fn is_plain_branch(mut payload: &[u8]) -> bool {
+pub fn is_plain_branch(payload: &[u8]) -> bool {
     if !(81..=529).contains(&payload.len()) || (payload.len() - 17) & 31 != 0 {
         return false;
     }
+    let mut cursor = 0;
     for _ in 0..16 {
-        match payload.first() {
-            Some(&EMPTY_STRING_CODE) => payload = &payload[1..],
-            Some(&DIGEST_ITEM_PREFIX) if payload.len() >= DIGEST_RLP_LENGTH => {
-                payload = &payload[DIGEST_RLP_LENGTH..];
-            }
+        match payload.get(cursor) {
+            Some(&EMPTY_STRING_CODE) => cursor += 1,
+            Some(&DIGEST_ITEM_PREFIX) => cursor += DIGEST_RLP_LENGTH,
             _ => return false,
         }
     }
-    payload == [EMPTY_STRING_CODE]
+    // The cursor is at most 16 * 33, so it cannot overflow. A truncated
+    // digest is rejected by the next get or by this exact final boundary.
+    cursor + 1 == payload.len() && payload[cursor] == EMPTY_STRING_CODE
 }
 
 /// Number of RLP items in a list payload; every item header is decoded and
@@ -551,6 +552,22 @@ mod tests {
                 assert!(!is_plain_branch(&payload));
             }
         }
+    }
+
+    #[test]
+    fn plain_branch_rejects_truncated_digest_payloads() {
+        let mut payload = Vec::new();
+        for _ in 0..16 {
+            payload.push(DIGEST_ITEM_PREFIX);
+            payload.extend_from_slice(&[0x55; 32]);
+        }
+        payload.push(EMPTY_STRING_CODE);
+        assert!(is_plain_branch(&payload));
+        for end in 0..payload.len() {
+            assert!(!is_plain_branch(&payload[..end]));
+        }
+        payload.push(EMPTY_STRING_CODE);
+        assert!(!is_plain_branch(&payload));
     }
 
     #[test]
