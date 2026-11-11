@@ -225,7 +225,7 @@ fn forged_equation_behind_a_shared_key_must_panic() {
 #[test]
 fn pippenger_batch_matches_independent_recovery() {
     let mut equations = Vec::new();
-    // 99 equations at the mid-check (w = 7 windows), 598 at the end (w = 8).
+    // Exercise both the intermediate batch of 99 equations and the full 598.
     for i in 2..600u64 {
         equations.push(recovered_equation(i));
         if i == 100 {
@@ -241,7 +241,7 @@ fn pippenger_batch_matches_independent_recovery() {
 #[test]
 #[should_panic(expected = "invalid recovery batch")]
 fn forged_key_in_wide_batch_must_panic() {
-    // 598 equations select the w = 8 window path.
+    // Reject one forged key among 598 independently recovered equations.
     let mut equations: Vec<_> = (2..600u64).map(recovered_equation).collect();
     equations[300].key = Secp256k1Point::generator();
     Batch { equations }.verify();
@@ -407,7 +407,7 @@ fn msm_ignores_infinity_terms_and_zero_scalars() {
 }
 
 #[test]
-fn window_widths_match_binary_scalar_multiplication() {
+fn specialized_windows_match_binary_scalar_multiplication() {
     let a = scalar([0xd3; 32]);
     let b = scalar([0x79; 32]);
     let total = a.add(&b.dbl());
@@ -423,7 +423,7 @@ fn window_widths_match_binary_scalar_multiplication() {
     }
     macro_rules! check {
         ($($width:literal),*) => { $(
-            assert_eq!(pippenger_width(&terms, $width).to_u64_arr(), expected.to_u64_arr());
+            assert_eq!(pippenger_width::<$width>(&terms).to_u64_arr(), expected.to_u64_arr());
         )* };
     }
     check!(4, 5, 6, 7, 8, 9, 10, 11, 12);
