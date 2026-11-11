@@ -279,3 +279,31 @@ fn test_biginteger832() {
     use crate::biginteger::BigInteger832 as B;
     test_biginteger(B::new([u64::MAX; 13]), B::new([0u64; 13]));
 }
+
+#[test]
+fn limb_equality_matches_bytes() {
+    use crate::BigInt;
+    let mut rng = 0xc3d2_721e_10a4_9b65u64;
+    for _ in 0..256 {
+        let mut a = [0u64; 4];
+        for limb in &mut a {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            *limb = rng;
+        }
+        for index in 0..=32 {
+            let mut b = a;
+            if index < 32 {
+                b[index / 8] ^= 1 << ((index % 8) * 8);
+            }
+            let reference = a
+                .iter()
+                .flat_map(|x| x.to_le_bytes())
+                .eq(b.iter().flat_map(|x| x.to_le_bytes()));
+            assert_eq!(BigInt(a) == BigInt(b), reference);
+        }
+    }
+    assert_eq!(BigInt([0u64; 4]), BigInt([0u64; 4]));
+    assert_ne!(BigInt([u64::MAX; 4]), BigInt([0u64; 4]));
+}

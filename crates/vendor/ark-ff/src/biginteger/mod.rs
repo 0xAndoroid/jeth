@@ -29,8 +29,19 @@ use zeroize::Zeroize;
 #[macro_use]
 pub mod arithmetic;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Zeroize)]
+#[derive(Copy, Clone, Eq, Hash, Zeroize)]
 pub struct BigInt<const N: usize>(pub [u64; N]);
+
+impl<const N: usize> PartialEq for BigInt<N> {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        let mut difference = 0;
+        for i in 0..N {
+            difference |= self.0[i] ^ other.0[i];
+        }
+        difference == 0
+    }
+}
 
 impl<const N: usize> Default for BigInt<N> {
     fn default() -> Self {
@@ -566,7 +577,7 @@ impl<const N: usize> Ord for BigInt<N> {
             let a = &self.0[N - i - 1];
             let b = &other.0[N - i - 1];
             match a.cmp(b) {
-                Ordering::Equal => {},
+                Ordering::Equal => {}
                 order => return order,
             };
         }
