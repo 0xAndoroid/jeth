@@ -388,6 +388,19 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     }
 
     inline_dispatch!(IW;
+        MUL => arithmetic::mul,
+        DIV => arithmetic::div,
+        SIGNEXTEND => arithmetic::signextend,
+        SLT => bitwise::slt,
+        OR => bitwise::bitor,
+        NOT => bitwise::not,
+        SHL => bitwise::shl,
+        SHR => bitwise::shr,
+        CALLER => system::caller,
+        CALLDATALOAD => system::calldataload,
+        CALLDATASIZE => system::calldatasize,
+        RETURNDATASIZE => system::returndatasize,
+        GAS => system::gas,
         STOP => control::stop,
         ADD => arithmetic::add,
         SUB => arithmetic::sub,

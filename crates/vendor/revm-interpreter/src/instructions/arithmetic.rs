@@ -19,6 +19,7 @@ pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// Implements the MUL instruction - multiplies two values from stack.
+#[inline(always)]
 pub fn mul<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -41,6 +42,7 @@ pub fn sub<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// Implements the DIV instruction - divides two values from stack.
+#[inline(always)]
 pub fn div<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -191,6 +193,7 @@ pub fn exp<WIRE: InterpreterTypes, H: Host + ?Sized>(
 ///
 /// Similarly, if `b == 0` then the yellow paper says the output should start with all zeros,
 /// then end with bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
+#[inline(always)]
 pub fn signextend<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,

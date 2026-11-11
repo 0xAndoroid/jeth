@@ -47,6 +47,7 @@ pub fn clz<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the SLT instruction.
 ///
 /// Signed less than comparison of two values from stack.
+#[inline(always)]
 pub fn slt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -112,6 +113,7 @@ pub fn bitand<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the OR instruction.
 ///
 /// Bitwise OR of two values from stack.
+#[inline(always)]
 pub fn bitor<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -138,6 +140,7 @@ pub fn bitxor<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the NOT instruction.
 ///
 /// Bitwise NOT (negation) of the top stack value.
+#[inline(always)]
 pub fn not<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -168,6 +171,7 @@ pub fn byte<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
+#[inline(always)]
 pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -185,6 +189,7 @@ pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
+#[inline(always)]
 pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
