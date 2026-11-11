@@ -15,7 +15,7 @@ pub fn lt<WIRE: InterpreterTypes, H: ?Sized>(
 ) -> Ip {
     static_gas!(context.interpreter, LT);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(op1 < *op2);
+    *op2 = U256::from(less_word(&op1, op2));
     ip
 }
 
@@ -27,8 +27,25 @@ pub fn gt<WIRE: InterpreterTypes, H: ?Sized>(
 ) -> Ip {
     static_gas!(context.interpreter, GT);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(op1 > *op2);
+    *op2 = U256::from(less_word(op2, &op1));
     ip
+}
+
+// Unsigned ordering is determined by the first unequal limb from the high end.
+// Avoid computing a full subtraction and equality reduction just for its ordering.
+#[inline(always)]
+fn less_word(left: &U256, right: &U256) -> bool {
+    let a = left.as_limbs();
+    let b = right.as_limbs();
+    if a[3] != b[3] {
+        a[3] < b[3]
+    } else if a[2] != b[2] {
+        a[2] < b[2]
+    } else if a[1] != b[1] {
+        a[1] < b[1]
+    } else {
+        a[0] < b[0]
+    }
 }
 
 /// Implements the CLZ instruction - count leading zeros.
@@ -267,6 +284,43 @@ mod tests {
         InstructionContext, Interpreter,
     };
     use primitives::{hardfork::SpecId, uint, U256};
+
+    #[test]
+    fn limb_order_matches_full_width_comparison() {
+        let check = |a: U256, b: U256| {
+            assert_eq!(less_word(&a, &b), a < b);
+            assert_eq!(less_word(&b, &a), a > b);
+            assert!(!less_word(&a, &a));
+        };
+        check(U256::ZERO, U256::MAX);
+        for limb in 0..4 {
+            for value in [0, 1, u64::MAX / 2, u64::MAX - 1] {
+                let mut a = [u64::MAX; 4];
+                let mut b = [0; 4];
+                for i in limb + 1..4 {
+                    a[i] = 0xaaaa_5555_ffff_0000;
+                    b[i] = a[i];
+                }
+                a[limb] = value;
+                b[limb] = value + 1;
+                check(U256::from_limbs(a), U256::from_limbs(b));
+            }
+        }
+        let mut state = 0x3141_5926_5358_9793u64;
+        for _ in 0..512 {
+            let mut word = || {
+                U256::from_limbs(core::array::from_fn(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state
+                }))
+            };
+            let a = word();
+            let b = word();
+            check(a, b);
+        }
+    }
 
     #[test]
     fn limb_shifts_match_full_width_operations() {
