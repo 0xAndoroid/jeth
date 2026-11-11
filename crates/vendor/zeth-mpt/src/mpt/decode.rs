@@ -194,10 +194,17 @@ pub fn decode_header(buf: &mut &[u8]) -> alloy_rlp::Result<Header> {
             if len_bytes[0] == 0 {
                 return Err(alloy_rlp::Error::LeadingZero);
             }
-            let mut len = 0u64;
-            for &x in len_bytes {
-                len = (len << 8) | x as u64;
-            }
+            let len = match len_bytes {
+                [a] => *a as u64,
+                [a, b] => ((*a as u64) << 8) | *b as u64,
+                _ => {
+                    let mut len = 0u64;
+                    for &x in len_bytes {
+                        len = (len << 8) | x as u64;
+                    }
+                    len
+                }
+            };
             let payload_length =
                 usize::try_from(len).map_err(|_| alloy_rlp::Error::Custom("Input too big"))?;
             if payload_length < 56 {
