@@ -15,11 +15,23 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
     let end = range.end;
     let mut last_byte: u8 = 0;
 
-    // Four instructions advance at most 132 bytes. Leave at least one
+    // Sixteen instructions advance at most 528 bytes. Leave at least one
     // instruction for the scalar tail, which records the final opcode.
-    if bytecode.len() > 4 * 33 {
-        let batch_end = unsafe { end.sub(4 * 33) };
+    if bytecode.len() > 16 * 33 {
+        let batch_end = unsafe { end.sub(16 * 33) };
         while iterator < batch_end {
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
             iterator = unsafe { scan_step(iterator, start, &mut jumps) };
             iterator = unsafe { scan_step(iterator, start, &mut jumps) };
             iterator = unsafe { scan_step(iterator, start, &mut jumps) };
@@ -147,7 +159,7 @@ mod tests {
     #[test]
     fn scan_matches_reference_at_batch_boundaries() {
         let mut state = 0x6d2b79f5u32;
-        for len in 0..=512 {
+        for len in 0..=1120 {
             for mode in 0..20 {
                 let raw: Vec<_> = (0..len)
                     .map(|i| {
@@ -191,7 +203,7 @@ mod tests {
                 !(opcode::PUSH1..=opcode::PUSH32).contains(&first),
                 "opcode {first:#x}"
             );
-            let mut raw = vec![opcode::JUMPDEST; 133];
+            let mut raw = vec![opcode::JUMPDEST; 529];
             raw[0] = first;
             let (expected, padding) = reference(&raw);
             let (actual, padded) = analyze_legacy(raw.into());
