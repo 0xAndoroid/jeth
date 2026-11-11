@@ -606,6 +606,17 @@ pub const fn num_words(len: usize) -> usize {
     len.div_ceil(32)
 }
 
+// Round the inclusive last byte for nonempty ranges. Constant opcode lengths
+// then need only one saturating add, one shift and one increment.
+#[inline(always)]
+const fn range_words(offset: usize, len: usize) -> usize {
+    if len == 0 {
+        num_words(offset)
+    } else {
+        offset.saturating_add(len - 1) / 32 + 1
+    }
+}
+
 /// Performs EVM memory resize.
 #[inline]
 pub fn resize_memory<Memory: MemoryTr>(
@@ -620,7 +631,7 @@ pub fn resize_memory<Memory: MemoryTr>(
         return Err(InstructionResult::MemoryLimitOOG);
     }
 
-    let new_num_words = num_words(offset.saturating_add(len));
+    let new_num_words = range_words(offset, len);
     if new_num_words > gas.memory().words_num {
         return resize_memory_cold(gas, memory, gas_table, new_num_words);
     }
@@ -653,6 +664,48 @@ fn resize_memory_cold<Memory: MemoryTr>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_rounding_matches_saturating_end() {
+        let edges = [
+            0,
+            1,
+            7,
+            8,
+            31,
+            32,
+            33,
+            63,
+            64,
+            65,
+            usize::MAX - 33,
+            usize::MAX - 32,
+            usize::MAX - 31,
+            usize::MAX - 1,
+            usize::MAX,
+        ];
+        for offset in edges {
+            for len in edges {
+                assert_eq!(
+                    range_words(offset, len),
+                    num_words(offset.saturating_add(len)),
+                    "offset {offset} len {len}"
+                );
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..1024 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let offset = state as usize;
+            let len = state.rotate_left(23) as usize;
+            assert_eq!(
+                range_words(offset, len),
+                num_words(offset.saturating_add(len))
+            );
+        }
+    }
 
     #[test]
     fn test_num_words() {
