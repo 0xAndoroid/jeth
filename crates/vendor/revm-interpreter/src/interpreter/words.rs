@@ -198,6 +198,9 @@ fn write_u256_be_bytes(bytes: &mut [u8], value: &U256) {
 /// function.
 #[inline(always)]
 pub(crate) fn bswap64(x: u64) -> u64 {
+    if x == 0 {
+        return 0;
+    }
     #[cfg(target_arch = "riscv64")]
     {
         let out: u64;
@@ -319,6 +322,19 @@ mod tests {
                 buf.fill(0xAA);
                 buf[off..off + 32].copy_from_slice(&value.to_be_bytes::<32>());
                 assert_eq!(read_u256_be(&buf, off), value, "pad {pad} len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn bswap64_zero_and_byte_edges() {
+        assert_eq!(bswap64(0), 0);
+        assert_eq!(bswap64(u64::MAX), u64::MAX);
+        for byte in 0..8 {
+            for value in [1u64, 0x80, 0xff] {
+                let x = value << (byte * 8);
+                assert_eq!(bswap64(x), x.swap_bytes());
+                assert_eq!(bswap64(!x), (!x).swap_bytes());
             }
         }
     }
