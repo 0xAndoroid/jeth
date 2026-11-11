@@ -169,7 +169,7 @@ pub(super) fn add_finite(left: &Point, right: &Point) -> Point {
         };
     }
     let slope = y.sub(&other_y).div_assume_nonzero(&x.sub(&other_x));
-    let result_x = slope.square().sub(&x.add(&other_x));
+    let result_x = slope.square().sub(&x).sub(&other_x);
     let result_y = slope.mul(&x.sub(&result_x)).sub(&y);
     Point::new_unchecked(result_x, result_y)
 }
