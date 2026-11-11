@@ -71,11 +71,8 @@ binary!(add, ADD, |a: U256, b: &mut U256| *b =
 binary!(sub, SUB, |a: U256, b: &mut U256| *b = a.wrapping_sub(*b));
 binary!(mul, MUL, |a: U256, b: &mut U256| *b =
     super::arithmetic::mul_word(a, *b));
-binary!(div, DIV, |a: U256, b: &mut U256| {
-    if !b.is_zero() {
-        *b = a.wrapping_div(*b);
-    }
-});
+binary!(div, DIV, |a: U256, b: &mut U256| *b =
+    super::arithmetic::div_word(a, *b));
 binary!(lt, LT, |a: U256, b: &mut U256| *b =
     U256::from(super::bitwise::less_word(&a, b)));
 binary!(gt, GT, |a: U256, b: &mut U256| *b =

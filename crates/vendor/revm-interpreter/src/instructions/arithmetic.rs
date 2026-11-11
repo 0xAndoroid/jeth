@@ -34,6 +34,22 @@ pub(super) fn mul_word(a: U256, b: U256) -> U256 {
     }
 }
 
+// Division by zero is an EVM zero result. For two one-limb operands the
+// quotient is also one limb; retain the ordinary U256 algorithm otherwise.
+#[inline(always)]
+pub(super) fn div_word(a: U256, b: U256) -> U256 {
+    if b.is_zero() {
+        return U256::ZERO;
+    }
+    let x = a.as_limbs();
+    let y = b.as_limbs();
+    if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
+        U256::from(x[0] / y[0])
+    } else {
+        a.wrapping_div(b)
+    }
+}
+
 /// Implements the ADD instruction - adds two values from stack.
 pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
@@ -226,7 +242,7 @@ pub fn signextend<WIRE: InterpreterTypes, H: ?Sized>(
 
 #[cfg(test)]
 mod small_word_tests {
-    use super::{add_word, mul_word};
+    use super::{add_word, div_word, mul_word};
     use primitives::U256;
 
     #[test]
@@ -243,6 +259,14 @@ mod small_word_tests {
             for &b in &values {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
                 assert_eq!(mul_word(a, b), a.wrapping_mul(b));
+                assert_eq!(
+                    div_word(a, b),
+                    if b.is_zero() {
+                        U256::ZERO
+                    } else {
+                        a.wrapping_div(b)
+                    }
+                );
             }
         }
         let mut state = 0x9e37_79b9_7f4a_7c15u64;
@@ -261,6 +285,14 @@ mod small_word_tests {
             ] {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
                 assert_eq!(mul_word(a, b), a.wrapping_mul(b));
+                assert_eq!(
+                    div_word(a, b),
+                    if b.is_zero() {
+                        U256::ZERO
+                    } else {
+                        a.wrapping_div(b)
+                    }
+                );
             }
         }
     }
