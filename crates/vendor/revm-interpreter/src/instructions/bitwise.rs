@@ -34,7 +34,7 @@ pub fn gt<WIRE: InterpreterTypes, H: ?Sized>(
 // Unsigned ordering is determined by the first unequal limb from the high end.
 // Avoid computing a full subtraction and equality reduction just for its ordering.
 #[inline(always)]
-fn less_word(left: &U256, right: &U256) -> bool {
+pub(crate) fn less_word(left: &U256, right: &U256) -> bool {
     let a = left.as_limbs();
     let b = right.as_limbs();
     if a[3] != b[3] {
@@ -218,7 +218,7 @@ pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
 // Whole-limb selection is separate from the residual shift so each transfer
 // is a fixed-width operation and no temporary array needs a dynamic index.
 #[inline(always)]
-fn shift_word<const LEFT: bool>(value: U256, shift: usize) -> U256 {
+pub(crate) fn shift_word<const LEFT: bool>(value: U256, shift: usize) -> U256 {
     if shift >= 256 {
         return U256::ZERO;
     }

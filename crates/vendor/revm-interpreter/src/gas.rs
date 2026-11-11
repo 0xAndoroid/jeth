@@ -285,7 +285,7 @@ impl Gas {
 /// `x.wrapping_sub(COST)` as a single `addi` LLVM cannot fold into the following compare.
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
-fn sub_const<const COST: u64>(x: u64) -> u64 {
+pub(crate) fn sub_const<const COST: u64>(x: u64) -> u64 {
     if COST <= 2047 {
         let r: u64;
         // SAFETY: register-only arithmetic; no memory, stack, or flags are touched.
@@ -306,7 +306,7 @@ fn sub_const<const COST: u64>(x: u64) -> u64 {
 
 #[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
-fn sub_const<const COST: u64>(x: u64) -> u64 {
+pub(crate) fn sub_const<const COST: u64>(x: u64) -> u64 {
     x.wrapping_sub(COST)
 }
 

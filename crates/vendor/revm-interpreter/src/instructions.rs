@@ -8,6 +8,7 @@ pub mod arithmetic;
 pub mod bitwise;
 /// Block information instructions (COINBASE, TIMESTAMP, etc.).
 pub mod block_info;
+pub(crate) mod cached;
 /// Contract operations (CALL, CREATE, DELEGATECALL, etc.).
 pub mod contract;
 /// Control flow instructions (JUMP, JUMPI, REVERT, etc.).
