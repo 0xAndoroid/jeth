@@ -21,16 +21,16 @@ pub(super) fn add_word(a: U256, b: U256) -> U256 {
     }
 }
 
+// Two one-limb operands have an exact two-limb product.
 #[inline(always)]
-pub(super) fn sub_word(a: U256, b: U256) -> U256 {
+pub(super) fn mul_word(a: U256, b: U256) -> U256 {
     let x = a.as_limbs();
     let y = b.as_limbs();
     if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
-        let (low, borrow) = x[0].overflowing_sub(y[0]);
-        let high = 0u64.wrapping_sub(borrow as u64);
-        U256::from_limbs([low, high, high, high])
+        let product = (x[0] as u128) * (y[0] as u128);
+        U256::from_limbs([product as u64, (product >> 64) as u64, 0, 0])
     } else {
-        a.wrapping_sub(b)
+        a.wrapping_mul(b)
     }
 }
 
@@ -226,7 +226,7 @@ pub fn signextend<WIRE: InterpreterTypes, H: ?Sized>(
 
 #[cfg(test)]
 mod small_word_tests {
-    use super::{add_word, sub_word};
+    use super::{add_word, mul_word};
     use primitives::U256;
 
     #[test]
@@ -242,7 +242,7 @@ mod small_word_tests {
         for &a in &values {
             for &b in &values {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
-                assert_eq!(sub_word(a, b), a.wrapping_sub(b));
+                assert_eq!(mul_word(a, b), a.wrapping_mul(b));
             }
         }
         let mut state = 0x9e37_79b9_7f4a_7c15u64;
@@ -260,7 +260,7 @@ mod small_word_tests {
                 (U256::from(a.as_limbs()[0]), U256::from(b.as_limbs()[0])),
             ] {
                 assert_eq!(add_word(a, b), a.wrapping_add(b));
-                assert_eq!(sub_word(a, b), a.wrapping_sub(b));
+                assert_eq!(mul_word(a, b), a.wrapping_mul(b));
             }
         }
     }

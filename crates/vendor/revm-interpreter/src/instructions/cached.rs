@@ -68,9 +68,9 @@ macro_rules! binary {
 
 binary!(add, ADD, |a: U256, b: &mut U256| *b =
     super::arithmetic::add_word(a, *b));
-binary!(sub, SUB, |a: U256, b: &mut U256| *b =
-    super::arithmetic::sub_word(a, *b));
-binary!(mul, MUL, |a: U256, b: &mut U256| *b = a.wrapping_mul(*b));
+binary!(sub, SUB, |a: U256, b: &mut U256| *b = a.wrapping_sub(*b));
+binary!(mul, MUL, |a: U256, b: &mut U256| *b =
+    super::arithmetic::mul_word(a, *b));
 binary!(div, DIV, |a: U256, b: &mut U256| {
     if !b.is_zero() {
         *b = a.wrapping_div(*b);
