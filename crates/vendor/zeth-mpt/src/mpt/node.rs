@@ -67,7 +67,7 @@ pub(super) fn packed_key(key: &[u8]) -> Nibbles {
 
 /// Up to eight live bytes, zero-padded on the right, as a little-endian limb.
 #[inline(always)]
-fn packed_limb(bytes: &[u8], start: usize) -> u64 {
+pub(super) fn packed_limb(bytes: &[u8], start: usize) -> u64 {
     if start >= bytes.len() {
         return 0;
     }

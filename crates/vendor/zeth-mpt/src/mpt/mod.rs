@@ -14,10 +14,10 @@
 
 //! A sparse Merkle Patricia trie implementation.
 
-use alloc::vec::Vec;
-use alloy_primitives::{map::B256IndexMap, Bytes, B256};
 #[allow(unused_imports)]
 use alloc::vec;
+use alloc::vec::Vec;
+use alloy_primitives::{map::B256IndexMap, Bytes, B256};
 use alloy_trie::Nibbles;
 use core::{cmp::PartialEq, fmt::Debug};
 use memoize::{Cache, NoCache};
@@ -44,13 +44,16 @@ mod rlp;
 mod serde;
 
 pub use alloy_trie::EMPTY_ROOT_HASH;
-pub use decode::{decode_header, le_words_32};
+pub use decode::{decode_header, equal_bytes, le_words_32};
 pub use rlp::DigestResolver;
 
 /// A sparse Merkle Patricia trie storing byte values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "rkyv", derive(::rkyv::Archive, ::rkyv::Serialize, ::rkyv::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(::rkyv::Archive, ::rkyv::Serialize, ::rkyv::Deserialize)
+)]
 pub struct Trie(Node<NoCache>);
 
 impl Trie {
@@ -76,7 +79,8 @@ impl Trie {
     ///   (i.e., the node is represented by a digest and the full node is not available).
     #[inline]
     pub fn insert(&mut self, key: impl AsRef<[u8]>, value: impl Into<Bytes>) {
-        self.0.insert(NibbleSlice::from(Nibbles::unpack(key)), value.into());
+        self.0
+            .insert(NibbleSlice::from(Nibbles::unpack(key)), value.into());
     }
 
     /// Removes a key-value pair from the trie.
@@ -185,7 +189,10 @@ impl<K: AsRef<[u8]>> FromIterator<(K, Bytes)> for Trie {
 /// the user, automatically updating cached hashes as the trie is modified.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "rkyv", derive(::rkyv::Archive, ::rkyv::Serialize, ::rkyv::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(::rkyv::Archive, ::rkyv::Serialize, ::rkyv::Deserialize)
+)]
 pub struct CachedTrie {
     #[cfg_attr(
         all(feature = "serde", feature = "rlp_serialize"),
@@ -201,7 +208,10 @@ pub struct CachedTrie {
 impl Default for CachedTrie {
     #[inline]
     fn default() -> Self {
-        Self { inner: Node::Null, hash: Some(EMPTY_ROOT_HASH) }
+        Self {
+            inner: Node::Null,
+            hash: Some(EMPTY_ROOT_HASH),
+        }
     }
 }
 
@@ -219,7 +229,8 @@ impl CachedTrie {
     /// See [`Trie::insert`] for detailed documentation.
     #[inline]
     pub fn insert(&mut self, key: impl AsRef<[u8]>, value: impl Into<Bytes>) {
-        self.inner.insert(NibbleSlice::from(Nibbles::unpack(key)), value.into());
+        self.inner
+            .insert(NibbleSlice::from(Nibbles::unpack(key)), value.into());
         self.hash = None;
     }
 
@@ -232,7 +243,8 @@ impl CachedTrie {
         value: impl Into<Bytes>,
         r: &mut impl DigestResolver,
     ) {
-        self.inner.insert_with(NibbleSlice::from(Nibbles::unpack(key)), value.into(), r);
+        self.inner
+            .insert_with(NibbleSlice::from(Nibbles::unpack(key)), value.into(), r);
         self.hash = None;
     }
 
@@ -252,7 +264,10 @@ impl CachedTrie {
     /// the branch-collapse sibling; miss ⇒ panic).
     #[inline]
     pub fn remove_with(&mut self, key: impl AsRef<[u8]>, r: &mut impl DigestResolver) -> bool {
-        if !self.inner.remove_with(NibbleSlice::from(Nibbles::unpack(key)), r) {
+        if !self
+            .inner
+            .remove_with(NibbleSlice::from(Nibbles::unpack(key)), r)
+        {
             return false;
         }
         self.hash = None;
@@ -305,7 +320,10 @@ impl CachedTrie {
     /// Clears the trie, removing all key-value pairs.
     #[inline]
     pub fn clear(&mut self) {
-        *self = Self { inner: Node::Null, hash: Some(EMPTY_ROOT_HASH) }
+        *self = Self {
+            inner: Node::Null,
+            hash: Some(EMPTY_ROOT_HASH),
+        }
     }
 
     /// Returns whether the hash is currently cached or needs to be recomputed.
@@ -328,7 +346,10 @@ impl CachedTrie {
         if digest == EMPTY_ROOT_HASH {
             Self::default()
         } else {
-            Self { inner: Node::Digest(node::Digest(digest)), hash: Some(digest) }
+            Self {
+                inner: Node::Digest(node::Digest(digest)),
+                hash: Some(digest),
+            }
         }
     }
 
@@ -339,7 +360,10 @@ impl CachedTrie {
     pub fn from_rlp<T: AsRef<[u8]>>(nodes: impl IntoIterator<Item = T>) -> alloy_rlp::Result<Self> {
         let root = Node::from_rlp(nodes)?;
 
-        Ok(Self { inner: root, hash: None })
+        Ok(Self {
+            inner: root,
+            hash: None,
+        })
     }
 
     /// Build from a root digest, resolving nodes through a [`DigestResolver`]
@@ -418,7 +442,10 @@ mod tests {
 
     #[test]
     fn empty_root_hash() {
-        assert_eq!(EMPTY_ROOT_HASH, keccak256(vec![alloy_rlp::EMPTY_STRING_CODE]));
+        assert_eq!(
+            EMPTY_ROOT_HASH,
+            keccak256(vec![alloy_rlp::EMPTY_STRING_CODE])
+        );
     }
 
     #[test]
@@ -446,7 +473,11 @@ mod tests {
 
     #[test]
     fn mpt_leaf() {
-        let trie = Trie(Node::Leaf(Nibbles::unpack(B256::ZERO), vec![0].into(), NoCache));
+        let trie = Trie(Node::Leaf(
+            Nibbles::unpack(B256::ZERO),
+            vec![0].into(),
+            NoCache,
+        ));
         assert_eq!(trie, Trie::from_rlp(trie.0.rlp_nodes()).unwrap());
 
         // a leave counts as a full node
@@ -463,12 +494,22 @@ mod tests {
     fn mpt_extension() {
         let child = Node::Branch(
             Children::from([
-                (0, Node::Leaf(Nibbles::from_nibbles([0; 62]), vec![0].into(), NoCache)),
-                (1, Node::Leaf(Nibbles::from_nibbles([1; 62]), vec![1].into(), NoCache)),
+                (
+                    0,
+                    Node::Leaf(Nibbles::from_nibbles([0; 62]), vec![0].into(), NoCache),
+                ),
+                (
+                    1,
+                    Node::Leaf(Nibbles::from_nibbles([1; 62]), vec![1].into(), NoCache),
+                ),
             ]),
             NoCache,
         );
-        let trie = Trie(Node::Extension(Nibbles::from_nibbles([0; 1]), child.into(), NoCache));
+        let trie = Trie(Node::Extension(
+            Nibbles::from_nibbles([0; 1]),
+            child.into(),
+            NoCache,
+        ));
         assert_eq!(trie, Trie::from_rlp(trie.0.rlp_nodes()).unwrap());
 
         // there are one branch, two leaves plus one extension
@@ -476,7 +517,9 @@ mod tests {
 
         assert_eq!(trie.get(B256::ZERO), Some(&[0][..]));
         assert_eq!(
-            trie.get(b256!("0111111111111111111111111111111111111111111111111111111111111111")),
+            trie.get(b256!(
+                "0111111111111111111111111111111111111111111111111111111111111111"
+            )),
             Some(&[1][..])
         );
         assert_eq!(trie.get([]), None);
@@ -489,8 +532,14 @@ mod tests {
     fn mpt_branch() {
         let trie = Trie(Node::Branch(
             Children::from([
-                (0, Node::Leaf(Nibbles::from_nibbles([0; 63]), vec![0].into(), NoCache)),
-                (1, Node::Leaf(Nibbles::from_nibbles([1; 63]), vec![1].into(), NoCache)),
+                (
+                    0,
+                    Node::Leaf(Nibbles::from_nibbles([0; 63]), vec![0].into(), NoCache),
+                ),
+                (
+                    1,
+                    Node::Leaf(Nibbles::from_nibbles([1; 63]), vec![1].into(), NoCache),
+                ),
             ]),
             NoCache,
         ));
@@ -511,10 +560,22 @@ mod tests {
         // 4 leaves with 1-byte long keys, the resulting root node should be shorter than 32 bytes
         let trie = Trie(Node::Branch(
             Children::from([
-                (0, Node::Leaf(Nibbles::from_nibbles([0]), vec![0].into(), NoCache)),
-                (1, Node::Leaf(Nibbles::from_nibbles([1]), vec![0].into(), NoCache)),
-                (2, Node::Leaf(Nibbles::from_nibbles([2]), vec![0].into(), NoCache)),
-                (3, Node::Leaf(Nibbles::from_nibbles([3]), vec![0].into(), NoCache)),
+                (
+                    0,
+                    Node::Leaf(Nibbles::from_nibbles([0]), vec![0].into(), NoCache),
+                ),
+                (
+                    1,
+                    Node::Leaf(Nibbles::from_nibbles([1]), vec![0].into(), NoCache),
+                ),
+                (
+                    2,
+                    Node::Leaf(Nibbles::from_nibbles([2]), vec![0].into(), NoCache),
+                ),
+                (
+                    3,
+                    Node::Leaf(Nibbles::from_nibbles([3]), vec![0].into(), NoCache),
+                ),
             ]),
             NoCache,
         ));
@@ -524,7 +585,12 @@ mod tests {
         assert_eq!(trie, Trie::from_rlp(&rlp).unwrap());
         assert_eq!(
             trie.hash_slow(),
-            trie_root([([0x00], vec![0]), ([0x11], vec![0]), ([0x22], vec![0]), ([0x33], vec![0])])
+            trie_root([
+                ([0x00], vec![0]),
+                ([0x11], vec![0]),
+                ([0x22], vec![0]),
+                ([0x33], vec![0])
+            ])
         );
         assert_eq!(trie.hash_slow(), CachedTrie::from_rlp(&rlp).unwrap().hash(),);
     }
@@ -534,8 +600,22 @@ mod tests {
         // 2 leaves with 5-byte long keys, the resulting root node should be exactly 32 bytes
         let trie = Trie(Node::Branch(
             Children::from([
-                (0, Node::Leaf(Nibbles::from_nibbles([0]), vec![0, 1, 2, 3, 4].into(), NoCache)),
-                (1, Node::Leaf(Nibbles::from_nibbles([1]), vec![0, 1, 2, 3, 4].into(), NoCache)),
+                (
+                    0,
+                    Node::Leaf(
+                        Nibbles::from_nibbles([0]),
+                        vec![0, 1, 2, 3, 4].into(),
+                        NoCache,
+                    ),
+                ),
+                (
+                    1,
+                    Node::Leaf(
+                        Nibbles::from_nibbles([1]),
+                        vec![0, 1, 2, 3, 4].into(),
+                        NoCache,
+                    ),
+                ),
             ]),
             NoCache,
         ));
@@ -632,8 +712,9 @@ mod tests {
 
     #[test]
     fn keccak_trie() {
-        let leaves: Vec<(B256, Bytes)> =
-            (0..N).map(|i| (keccak256(i.to_be_bytes()), alloy_rlp::encode(i).into())).collect();
+        let leaves: Vec<(B256, Bytes)> = (0..N)
+            .map(|i| (keccak256(i.to_be_bytes()), alloy_rlp::encode(i).into()))
+            .collect();
 
         // insert
         let mut trie = Trie::default();
@@ -669,7 +750,10 @@ mod tests {
         let leaves: BTreeMap<_, _> = (0..N)
             .map(|i| {
                 let key = U256::from(i);
-                (Nibbles::unpack(keccak256(B256::from(key))), alloy_rlp::encode(key))
+                (
+                    Nibbles::unpack(keccak256(B256::from(key))),
+                    alloy_rlp::encode(key),
+                )
             })
             .collect();
 
@@ -681,7 +765,10 @@ mod tests {
 
         // reconstruct the trie from the RLP encoded proofs and verify the root hash
         let mpt = Trie::from_rlp(
-            hb.take_proof_nodes().into_nodes_sorted().into_iter().map(|node| node.1),
+            hb.take_proof_nodes()
+                .into_nodes_sorted()
+                .into_iter()
+                .map(|node| node.1),
         )
         .unwrap();
         assert!(mpt.size() < N);
@@ -708,7 +795,9 @@ mod tests {
         let mpt = Trie::from_rlp(account_proof).unwrap();
 
         let address = alloy_primitives::address!("0x0000000000000000000000000000000000000004");
-        let account = mpt.get(keccak256(address)).map(|rlp| alloy_rlp::decode_exact(rlp).unwrap());
+        let account = mpt
+            .get(keccak256(address))
+            .map(|rlp| alloy_rlp::decode_exact(rlp).unwrap());
         assert_eq!(
             account,
             Some(alloy_trie::TrieAccount {
@@ -754,7 +843,10 @@ mod tests {
                 assert_eq!(trie.hash(), trie_root(leaves.iter().take(i + 1)));
             }
 
-            assert_eq!(trie.hash(), CachedTrie::from_rlp(trie.inner.rlp_nodes()).unwrap().hash());
+            assert_eq!(
+                trie.hash(),
+                CachedTrie::from_rlp(trie.inner.rlp_nodes()).unwrap().hash()
+            );
 
             // delete
             for (i, (key, _)) in leaves.iter().enumerate() {
@@ -765,8 +857,9 @@ mod tests {
 
         #[test]
         fn keccak_trie() {
-            let leaves: Vec<(B256, Bytes)> =
-                (0..N).map(|i| (keccak256(i.to_be_bytes()), alloy_rlp::encode(i).into())).collect();
+            let leaves: Vec<(B256, Bytes)> = (0..N)
+                .map(|i| (keccak256(i.to_be_bytes()), alloy_rlp::encode(i).into()))
+                .collect();
 
             // insert
             let mut trie = CachedTrie::default();
@@ -775,7 +868,10 @@ mod tests {
                 assert_eq!(trie.hash(), trie_root(leaves.iter().take(i + 1)));
             }
 
-            assert_eq!(trie.hash(), CachedTrie::from_rlp(trie.inner.rlp_nodes()).unwrap().hash());
+            assert_eq!(
+                trie.hash(),
+                CachedTrie::from_rlp(trie.inner.rlp_nodes()).unwrap().hash()
+            );
 
             // delete
             for (i, (key, _)) in leaves.iter().enumerate() {
