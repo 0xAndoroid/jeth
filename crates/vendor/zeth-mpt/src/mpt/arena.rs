@@ -50,20 +50,23 @@ impl Scratch {
 /// Write an RLP list header for `payload_len` at `buf[0..]`; returns its size.
 /// Mirrors `alloy_rlp::Header::encode` for lists (payloads here ≤ 1 KiB).
 #[inline(always)]
-fn write_list_header(buf: &mut [u8], payload_len: usize) -> usize {
-    if payload_len < 56 {
-        buf[0] = 0xc0 + payload_len as u8;
-        1
+fn write_list_header(buf: &mut Scratch, payload_len: usize) -> usize {
+    let (word, len): (u64, usize) = if payload_len < 56 {
+        (0xc0 + payload_len as u64, 1)
     } else if payload_len < 256 {
-        buf[0] = 0xf8;
-        buf[1] = payload_len as u8;
-        2
+        (0xf8 | ((payload_len as u64) << 8), 2)
     } else {
-        buf[0] = 0xf9;
-        buf[1] = (payload_len >> 8) as u8;
-        buf[2] = payload_len as u8;
-        3
-    }
+        (
+            0xf9 | ((((payload_len >> 8) & 0xff) as u64) << 8)
+                | (((payload_len & 0xff) as u64) << 16),
+            3,
+        )
+    };
+    // SAFETY: Scratch owns an initialized, 8-aligned buffer. The header is
+    // the first write for this node, and every payload byte is overwritten
+    // before hashing, so bytes beyond the header in this word are dead.
+    unsafe { write_volatile(buf.0.as_mut_ptr().cast::<u64>(), word.to_le()) };
+    len
 }
 
 /// Longest string item the arena encoder writes: the long form carries a
@@ -360,7 +363,7 @@ impl<M: Memoization> Node<M> {
             claimed + 3 <= MAX_NODE_ENCODING,
             "MPT: node encoding too large"
         );
-        let header_len = write_list_header(&mut scratch.0, claimed);
+        let header_len = write_list_header(scratch, claimed);
         let mut cursor = header_len;
         match &*self {
             Node::Leaf(prefix, value, _) => {
@@ -489,6 +492,24 @@ fn str_item_length(bytes: &[u8]) -> usize {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
+
+    #[test]
+    fn list_headers_match_rlp_encoding() {
+        for payload_length in 0..=MAX_NODE_ENCODING - 3 {
+            let mut expected = Vec::new();
+            alloy_rlp::Header {
+                list: true,
+                payload_length,
+            }
+            .encode(&mut expected);
+            let mut scratch = Scratch::new();
+            scratch.0.fill(0xa5);
+            let len = write_list_header(&mut scratch, payload_length);
+            assert_eq!(len, expected.len());
+            assert_eq!(&scratch.0[..len], expected.as_slice());
+            assert!(scratch.0[8..].iter().all(|&byte| byte == 0xa5));
+        }
+    }
 
     /// The word writer is byte-exact for every source offset, cursor offset
     /// and length, preserves everything below the cursor and clobbers at most
