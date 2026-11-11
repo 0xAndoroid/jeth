@@ -32,7 +32,7 @@ use cfg_if::cfg_if;
 mod hasher;
 pub use hasher::*;
 
-mod fixed;
+pub(crate) mod fixed;
 pub use fixed::*;
 
 // The `HashMap` implementation.

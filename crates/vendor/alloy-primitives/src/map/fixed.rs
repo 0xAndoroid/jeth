@@ -2,7 +2,7 @@
 // 8-/4-byte key chunks with a riscv64 containing-word gather instead of `from_ne_bytes` on an
 // align-1 array (8 `lbu` + shifts per word on the Jolt guest); see `gather` at the bottom.
 use super::*;
-use crate::{Address, B256, FixedBytes, Selector, U256};
+use crate::{Address, FixedBytes, Selector, B256, U256};
 use cfg_if::cfg_if;
 use core::{
     fmt,
@@ -78,7 +78,10 @@ impl<const N: usize> BuildHasher for FbBuildHasher<N> {
 
     #[inline]
     fn build_hasher(&self) -> Self::Hasher {
-        FbHasher { inner: self.inner.build_hasher(), _marker: core::marker::PhantomData }
+        FbHasher {
+            inner: self.inner.build_hasher(),
+            _marker: core::marker::PhantomData,
+        }
     }
 
     #[inline]
@@ -237,7 +240,7 @@ fn read_ne_u32(chunk: &[u8; 4]) -> u32 {
 /// `crates/guest/src/mem.rs`), and only words containing at least one live byte of the
 /// caller's range are loaded. Guest target only; native builds keep the upstream reads.
 #[cfg(target_arch = "riscv64")]
-mod gather {
+pub(crate) mod gather {
     use core::arch::asm;
 
     /// Read the `n` (4 or 8) bytes at `p` into the low bytes of a `u64`, little-endian,
@@ -248,7 +251,7 @@ mod gather {
     /// `p..p + n` must be readable, and the aligned words containing that range must be
     /// mapped (true on the Jolt guest, see the module comment).
     #[inline(always)]
-    pub(super) unsafe fn load_le(p: *const u8, n: usize) -> u64 {
+    pub(crate) unsafe fn load_le(p: *const u8, n: usize) -> u64 {
         debug_assert!(n == 4 || n == 8);
         let addr = p as usize;
         let k = addr & 7;
@@ -301,7 +304,11 @@ mod tests {
                 let want8 = u64::from_ne_bytes(buf.0[at..at + 8].try_into().unwrap());
                 let want4 = u32::from_ne_bytes(buf.0[at..at + 4].try_into().unwrap());
                 assert_eq!(unsafe { gather::load_le(p, 8) }, want8, "u64 at {at}");
-                assert_eq!(unsafe { gather::load_le(p, 4) } as u32, want4, "u32 at {at}");
+                assert_eq!(
+                    unsafe { gather::load_le(p, 4) } as u32,
+                    want4,
+                    "u32 at {at}"
+                );
             }
         }
     }

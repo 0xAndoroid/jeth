@@ -13,29 +13,102 @@ use hex::FromHex;
 /// lengths should use the [`wrap_fixed_bytes!`](crate::wrap_fixed_bytes) macro
 /// to create a new fixed-length byte array type.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Deref,
-    DerefMut,
-    From,
-    Index,
-    IndexMut,
-    IntoIterator,
+    Clone, Copy, Eq, PartialOrd, Ord, Hash, Deref, DerefMut, From, Index, IndexMut, IntoIterator,
 )]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary, proptest_derive::Arbitrary))]
+#[cfg_attr(
+    feature = "arbitrary",
+    derive(arbitrary::Arbitrary, proptest_derive::Arbitrary)
+)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[cfg_attr(feature = "diesel", derive(diesel::AsExpression, diesel::FromSqlRow))]
 #[cfg_attr(feature = "diesel", diesel(sql_type = diesel::sql_types::Binary))]
-#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
 #[repr(transparent)]
 pub struct FixedBytes<const N: usize>(#[into_iterator(owned, ref, ref_mut)] pub [u8; N]);
 
 crate::impl_fb_traits!(FixedBytes<N>, N, const);
+
+impl<const N: usize> PartialEq for FixedBytes<N> {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        if N != 20 && N != 32 {
+            return self.0 == other.0;
+        }
+        let a = self.0.as_ptr();
+        let b = other.0.as_ptr();
+        if (a as usize | b as usize) & 7 == 0 {
+            let mut difference = 0u64;
+            for i in 0..N / 8 {
+                // SAFETY: the guard proves alignment and every full word lies
+                // inside the initialized byte array. Equality ignores byte order.
+                unsafe {
+                    difference |=
+                        a.add(8 * i).cast::<u64>().read() ^ b.add(8 * i).cast::<u64>().read();
+                }
+            }
+            if N == 20 {
+                // SAFETY: the final four bytes are in bounds and four-aligned.
+                unsafe {
+                    difference |=
+                        u64::from(a.add(16).cast::<u32>().read() ^ b.add(16).cast::<u32>().read());
+                }
+            }
+            difference == 0
+        } else {
+            unaligned_equality(&self.0, &other.0)
+        }
+    }
+}
+
+#[inline(never)]
+fn unaligned_equality<const N: usize>(a: &[u8; N], b: &[u8; N]) -> bool {
+    debug_assert!(N == 20 || N == 32);
+    let mut difference = 0u64;
+    let mut offset = 0;
+    while offset + 8 <= N {
+        // SAFETY: each full chunk is inside the fixed byte arrays.
+        unsafe {
+            difference |=
+                equality_word(a.as_ptr().add(offset), 8) ^ equality_word(b.as_ptr().add(offset), 8);
+        }
+        offset += 8;
+    }
+    if offset < N {
+        // SAFETY: only Address has a tail here, exactly four bytes.
+        unsafe {
+            difference |= (equality_word(a.as_ptr().add(offset), 4)
+                ^ equality_word(b.as_ptr().add(offset), 4))
+                & 0xffff_ffff;
+        }
+    }
+    difference == 0
+}
+
+/// The caller owns the next four or eight bytes. Guest loads reuse the
+/// containing-word gather used by key hashing; native loads stay in bounds.
+#[inline(always)]
+unsafe fn equality_word(p: *const u8, n: usize) -> u64 {
+    #[cfg(all(target_arch = "riscv64", feature = "map"))]
+    {
+        // SAFETY: the caller guarantees the live bytes, and Jolt maps their
+        // containing words as required by the existing hashing gather.
+        unsafe { crate::map::fixed::gather::load_le(p, n) }
+    }
+    #[cfg(not(all(target_arch = "riscv64", feature = "map")))]
+    {
+        // SAFETY: read_unaligned requires no alignment and reads exactly n bytes.
+        unsafe {
+            if n == 8 {
+                p.cast::<u64>().read_unaligned().to_le()
+            } else {
+                u64::from(p.cast::<u32>().read_unaligned().to_le())
+            }
+        }
+    }
+}
 
 impl<const N: usize> Default for FixedBytes<N> {
     #[inline]
@@ -466,7 +539,8 @@ impl<const N: usize> FixedBytes<N> {
     #[inline]
     #[track_caller]
     pub fn randomize(&mut self) {
-        self.try_randomize().unwrap_or_else(|e| panic!("failed to fill with random bytes: {e}"));
+        self.try_randomize()
+            .unwrap_or_else(|e| panic!("failed to fill with random bytes: {e}"));
     }
 
     /// Tries to fill this [`FixedBytes`] with the default cryptographic random number
@@ -517,7 +591,10 @@ impl<const N: usize> FixedBytes<N> {
         self,
         other: FixedBytes<M>,
     ) -> FixedBytes<Z> {
-        assert!(N + M == Z, "Output size `Z` must equal the sum of the input sizes `N` and `M`");
+        assert!(
+            N + M == Z,
+            "Output size `Z` must equal the sum of the input sizes `N` and `M`"
+        );
 
         let mut result = [0u8; Z];
         let mut i = 0;
@@ -544,7 +621,10 @@ impl<const N: usize> FixedBytes<N> {
     pub fn from_slice(src: &[u8]) -> Self {
         match Self::try_from(src) {
             Ok(x) => x,
-            Err(_) => panic!("cannot convert a slice of length {} to FixedBytes<{N}>", src.len()),
+            Err(_) => panic!(
+                "cannot convert a slice of length {} to FixedBytes<{N}>",
+                src.len()
+            ),
         }
     }
 
@@ -562,7 +642,10 @@ impl<const N: usize> FixedBytes<N> {
     #[track_caller]
     pub fn left_padding_from(value: &[u8]) -> Self {
         let len = value.len();
-        assert!(len <= N, "slice is too large. Expected <={N} bytes, got {len}");
+        assert!(
+            len <= N,
+            "slice is too large. Expected <={N} bytes, got {len}"
+        );
         let mut bytes = Self::ZERO;
         bytes[N - len..].copy_from_slice(value);
         bytes
@@ -582,7 +665,10 @@ impl<const N: usize> FixedBytes<N> {
     #[track_caller]
     pub fn right_padding_from(value: &[u8]) -> Self {
         let len = value.len();
-        assert!(len <= N, "slice is too large. Expected <={N} bytes, got {len}");
+        assert!(
+            len <= N,
+            "slice is too large. Expected <={N} bytes, got {len}"
+        );
         let mut bytes = Self::ZERO;
         bytes[..len].copy_from_slice(value);
         bytes
@@ -672,7 +758,11 @@ impl<const N: usize> FixedBytes<N> {
 
     fn fmt_hex<const UPPER: bool>(&self, f: &mut fmt::Formatter<'_>, prefix: bool) -> fmt::Result {
         let mut buf = hex::Buffer::<N, true>::new();
-        let s = if UPPER { buf.format_upper(self) } else { buf.format(self) };
+        let s = if UPPER {
+            buf.format_upper(self)
+        } else {
+            buf.format(self)
+        };
         // SAFETY: The buffer is guaranteed to be at least 2 bytes in length.
         f.write_str(unsafe { s.get_unchecked((!prefix as usize) * 2..) })
     }
@@ -681,6 +771,77 @@ impl<const N: usize> FixedBytes<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_equality_handles_every_alignment() {
+        fn check<const N: usize>() {
+            let mut rng = 0x914e_6c2a_31f0_992bu64;
+            for aoff in 0..8 {
+                for boff in 0..8 {
+                    let mut a = [0u8; 80];
+                    let mut b = [0u8; 80];
+                    for i in 0..N {
+                        rng ^= rng << 13;
+                        rng ^= rng >> 7;
+                        rng ^= rng << 17;
+                        a[aoff + i] = rng as u8;
+                        b[boff + i] = rng as u8;
+                    }
+                    for mismatch in 0..=N {
+                        if mismatch < N {
+                            b[boff + mismatch] ^= 0x80;
+                        }
+                        // SAFETY: FixedBytes is transparent over an alignment-one
+                        // byte array. Both complete arrays fit inside their buffers.
+                        let (left, right) = unsafe {
+                            (
+                                &*a.as_ptr().add(aoff).cast::<FixedBytes<N>>(),
+                                &*b.as_ptr().add(boff).cast::<FixedBytes<N>>(),
+                            )
+                        };
+                        let reference = left.0.iter().zip(&right.0).all(|(x, y)| x == y);
+                        assert_eq!(left == right, reference);
+                        if mismatch < N {
+                            b[boff + mismatch] ^= 0x80;
+                        }
+                    }
+                }
+            }
+        }
+        check::<20>();
+        check::<32>();
+    }
+
+    #[test]
+    fn word_equality_matches_byte_reference() {
+        fn check<const N: usize>() {
+            let mut rng = 0x42d9_a173_6fe5_b029u64;
+            for _ in 0..128 {
+                let mut a = [0u8; N];
+                for byte in &mut a {
+                    rng ^= rng << 13;
+                    rng ^= rng >> 7;
+                    rng ^= rng << 17;
+                    *byte = rng as u8;
+                }
+                for index in 0..=N {
+                    let mut b = a;
+                    if index < N {
+                        b[index] ^= 1;
+                    }
+                    assert_eq!(
+                        FixedBytes(a) == FixedBytes(b),
+                        a.iter().zip(&b).all(|(x, y)| x == y)
+                    );
+                }
+            }
+        }
+        check::<0>();
+        check::<1>();
+        check::<20>();
+        check::<32>();
+        check::<33>();
+    }
 
     macro_rules! test_fmt {
         ($($fmt:literal, $hex:literal => $expected:literal;)+) => {$(
@@ -737,7 +898,10 @@ mod tests {
 
     #[test]
     fn left_padding_from() {
-        assert_eq!(FixedBytes::<4>::left_padding_from(&[0x01, 0x23]), fixed_bytes!("0x00000123"));
+        assert_eq!(
+            FixedBytes::<4>::left_padding_from(&[0x01, 0x23]),
+            fixed_bytes!("0x00000123")
+        );
 
         assert_eq!(
             FixedBytes::<4>::left_padding_from(&[0x01, 0x23, 0x45, 0x67]),
@@ -753,7 +917,10 @@ mod tests {
 
     #[test]
     fn right_padding_from() {
-        assert_eq!(FixedBytes::<4>::right_padding_from(&[0x01, 0x23]), fixed_bytes!("0x01230000"));
+        assert_eq!(
+            FixedBytes::<4>::right_padding_from(&[0x01, 0x23]),
+            fixed_bytes!("0x01230000")
+        );
 
         assert_eq!(
             FixedBytes::<4>::right_padding_from(&[0x01, 0x23, 0x45, 0x67]),

@@ -301,6 +301,9 @@ pub(crate) unsafe fn memset_impl(dst: *mut u8, val: i32, n: usize) -> *mut u8 {
 /// the byte itself (no byte swap: RV64IMAC has no `rev8`).
 #[inline(always)]
 fn first_diff_sign(x: u64, y: u64) -> i32 {
+    if (x ^ y) & 0xff != 0 {
+        return if (x & 0xff) > (y & 0xff) { 1 } else { -1 };
+    }
     let d = x ^ y;
     let low_bit = d & d.wrapping_neg();
     let ones = (low_bit | (low_bit - 1)) & 0x0101_0101_0101_0101;
@@ -327,6 +330,12 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
         }
         return 0;
     }
+    memcmp_generic(a, b, n)
+}
+
+// Keep generic alignment and tail handling out of the fixed-size leaf path.
+#[inline(never)]
+unsafe fn memcmp_generic(a: *const u8, b: *const u8, n: usize) -> i32 {
     let mut i = 0usize;
     // Co-aligned fast path (the common case: 32-byte hash equality between
     // 8-aligned heap objects): one aligned load per side per word after a
