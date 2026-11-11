@@ -29,6 +29,8 @@ use primitives::{hardfork::SpecId, Bytes};
 
 // Keep the existing classifier. Only these host-free kernels use local gas.
 macro_rules! cached_dispatch {
+    (control::jump, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure jump, $ip, $interpreter, $host, $remaining, $table) };
+    (control::jumpi, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure jumpi, $ip, $interpreter, $host, $remaining, $table) };
     (arithmetic::add, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure add, $ip, $interpreter, $host, $remaining, $table) };
     (arithmetic::sub, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure sub, $ip, $interpreter, $host, $remaining, $table) };
     (arithmetic::mul, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure mul, $ip, $interpreter, $host, $remaining, $table) };
@@ -49,12 +51,12 @@ macro_rules! cached_dispatch {
     (stack::dup::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@generic dup::<$n>, $ip, $interpreter, $host, $remaining, $table) };
     (stack::swap::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@generic swap::<$n>, $ip, $interpreter, $host, $remaining, $table) };
     (@pure $name:ident, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => {
-        crate::instructions::cached::$name($ip, InstructionContext {
+        crate::instructions::cached::$name::<true, _, _>($ip, InstructionContext {
             interpreter: &mut *$interpreter, host: &mut *$host,
         }, $remaining)
     };
     (@generic $name:ident::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => {
-        crate::instructions::cached::$name::<$n, _, _>($ip, InstructionContext {
+        crate::instructions::cached::$name::<$n, true, _, _>($ip, InstructionContext {
             interpreter: &mut *$interpreter, host: &mut *$host,
         }, $remaining)
     };
@@ -775,6 +777,61 @@ mod tests {
         assert_eq!(cached.bytecode.pc(), plain.bytecode.pc());
         assert_eq!(cached.gas.remaining(), u64::MAX - 9);
         assert_eq!(cached.stack.len(), 1);
+    }
+
+    #[test]
+    fn cached_jump_boundaries_match_uncached() {
+        use bytecode::opcode::*;
+        for (code, gas, result) in [
+            (
+                vec![PUSH1, 3, JUMP, JUMPDEST, STOP],
+                100,
+                InstructionResult::Stop,
+            ),
+            (
+                vec![PUSH1, 0, JUMP, STOP],
+                100,
+                InstructionResult::InvalidJump,
+            ),
+            (
+                vec![PUSH1, 3, JUMP, JUMPDEST, STOP],
+                10,
+                InstructionResult::OutOfGas,
+            ),
+            (
+                vec![PUSH1, 0, POP, JUMP, STOP],
+                100,
+                InstructionResult::StackUnderflow,
+            ),
+            (
+                vec![PUSH1, 1, JUMPI, STOP],
+                100,
+                InstructionResult::StackUnderflow,
+            ),
+            (
+                vec![PUSH1, 0, PUSH1, 255, JUMPI, STOP],
+                100,
+                InstructionResult::Stop,
+            ),
+            (
+                vec![PUSH1, 1, PUSH1, 5, JUMPI, JUMPDEST, STOP],
+                100,
+                InstructionResult::Stop,
+            ),
+            (
+                vec![PUSH1, 1, PUSH1, 0, JUMPI, STOP],
+                100,
+                InstructionResult::InvalidJump,
+            ),
+            (
+                vec![PUSH1, 0, PUSH1, 255, JUMPI, STOP],
+                15,
+                InstructionResult::OutOfGas,
+            ),
+        ] {
+            let action = compare_cached_path(&code, gas, 0, SpecId::OSAKA, false);
+            assert_eq!(action.instruction_result(), Some(result));
+        }
     }
 
     #[test]

@@ -12,10 +12,7 @@ pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, ADD);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = op1.wrapping_add(*op2);
-    ip
+    super::cached::add::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the MUL instruction - multiplies two values from stack.
@@ -24,10 +21,7 @@ pub fn mul<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, MUL);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = op1.wrapping_mul(*op2);
-    ip
+    super::cached::mul::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the SUB instruction - subtracts two values from stack.
@@ -35,10 +29,7 @@ pub fn sub<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, SUB);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = op1.wrapping_sub(*op2);
-    ip
+    super::cached::sub::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the DIV instruction - divides two values from stack.
@@ -47,12 +38,7 @@ pub fn div<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, DIV);
-    popn_top!([op1], op2, context.interpreter);
-    if !op2.is_zero() {
-        *op2 = op1.wrapping_div(*op2);
-    }
-    ip
+    super::cached::div::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the SDIV instruction.

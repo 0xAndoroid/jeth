@@ -13,10 +13,7 @@ pub fn pop<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, POP);
-    // Can ignore return. as relative N jump is safe operation.
-    popn!([_i], context.interpreter);
-    ip
+    super::cached::pop::<false, _, _>(ip, context, &mut 0)
 }
 
 /// EIP-3855: PUSH0 instruction
@@ -26,10 +23,7 @@ pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, PUSH0);
-    check!(context.interpreter, SHANGHAI);
-    push!(context.interpreter, U256::ZERO);
-    ip
+    super::cached::push0::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the PUSH1-PUSH32 instructions.
@@ -42,16 +36,7 @@ pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    // PUSH1..=PUSH32 share one static gas.
-    static_gas!(context.interpreter, PUSH1);
-    // SAFETY: `ip` points at the N immediate bytes (see `read_be_immediate`).
-    let value = unsafe { crate::interpreter::words::read_be_immediate::<N>(ip) };
-    if !context.interpreter.stack.push(value) {
-        return context.interpreter.halt(InstructionResult::StackOverflow);
-    }
-
-    // SAFETY: skips the immediate bytes, which are inside the bytecode (see above).
-    unsafe { ip.add(N) }
+    super::cached::push::<N, false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the DUP1-DUP16 instructions.
@@ -61,12 +46,7 @@ pub fn dup<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    // DUP1..=DUP16 share one static gas.
-    static_gas!(context.interpreter, DUP1);
-    if !context.interpreter.stack.dup(N) {
-        return context.interpreter.halt(InstructionResult::StackOverflow);
-    }
-    ip
+    super::cached::dup::<N, false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the SWAP1-SWAP16 instructions.
@@ -76,13 +56,7 @@ pub fn swap<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    // SWAP1..=SWAP16 share one static gas.
-    static_gas!(context.interpreter, SWAP1);
-    assert!(N != 0);
-    if !context.interpreter.stack.exchange(0, N) {
-        return context.interpreter.halt(InstructionResult::StackUnderflow);
-    }
-    ip
+    super::cached::swap::<N, false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the DUPN instruction.

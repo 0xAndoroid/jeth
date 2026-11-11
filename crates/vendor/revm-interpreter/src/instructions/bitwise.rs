@@ -13,10 +13,7 @@ pub fn lt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, LT);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(less_word(&op1, op2));
-    ip
+    super::cached::lt::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the GT instruction - greater than comparison.
@@ -25,10 +22,7 @@ pub fn gt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, GT);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(less_word(op2, &op1));
-    ip
+    super::cached::gt::<false, _, _>(ip, context, &mut 0)
 }
 
 // Unsigned ordering is determined by the first unequal limb from the high end.
@@ -95,10 +89,7 @@ pub fn eq<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, EQ);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(op1 == *op2);
-    ip
+    super::cached::eq::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the ISZERO instruction.
@@ -108,10 +99,7 @@ pub fn iszero<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, ISZERO);
-    popn_top!([], op1, context.interpreter);
-    *op1 = U256::from(op1.is_zero());
-    ip
+    super::cached::iszero::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the AND instruction.
@@ -121,10 +109,7 @@ pub fn bitand<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, AND);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = op1 & *op2;
-    ip
+    super::cached::bitand::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the OR instruction.
@@ -135,10 +120,7 @@ pub fn bitor<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, OR);
-    popn_top!([op1], op2, context.interpreter);
-    *op2 = op1 | *op2;
-    ip
+    super::cached::bitor::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the XOR instruction.
@@ -162,10 +144,7 @@ pub fn not<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, NOT);
-    popn_top!([], op1, context.interpreter);
-    *op1 = !*op1;
-    ip
+    super::cached::not::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the BYTE instruction.
@@ -193,12 +172,7 @@ pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, SHL);
-    check!(context.interpreter, CONSTANTINOPLE);
-    popn_top!([op1], op2, context.interpreter);
-    let shift = as_usize_saturated!(op1);
-    *op2 = shift_word::<true>(*op2, shift);
-    ip
+    super::cached::shl::<false, _, _>(ip, context, &mut 0)
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
@@ -207,12 +181,7 @@ pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, SHR);
-    check!(context.interpreter, CONSTANTINOPLE);
-    popn_top!([op1], op2, context.interpreter);
-    let shift = as_usize_saturated!(op1);
-    *op2 = shift_word::<false>(*op2, shift);
-    ip
+    super::cached::shr::<false, _, _>(ip, context, &mut 0)
 }
 
 // Whole-limb selection is separate from the residual shift so each transfer

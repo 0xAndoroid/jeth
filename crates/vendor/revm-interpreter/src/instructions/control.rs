@@ -15,9 +15,7 @@ pub fn jump<ITy: InterpreterTypes, H: ?Sized>(
     _ip: Ip,
     context: InstructionContext<'_, H, ITy>,
 ) -> Ip {
-    static_gas!(context.interpreter, JUMP);
-    popn!([target], context.interpreter);
-    jump_inner(context.interpreter, target)
+    super::cached::jump::<false, _, _>(_ip, context, &mut 0)
 }
 
 /// Implements the JUMPI instruction.
@@ -28,25 +26,7 @@ pub fn jumpi<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, JUMPI);
-    popn!([target, cond], context.interpreter);
-    if !cond.is_zero() {
-        return jump_inner(context.interpreter, target);
-    }
-    ip
-}
-
-/// Internal helper function for jump operations.
-///
-/// Validates the jump target and returns the [`Ip`] of the destination.
-#[inline(always)]
-fn jump_inner<WIRE: InterpreterTypes>(interpreter: &mut Interpreter<WIRE>, target: U256) -> Ip {
-    let target = as_usize_saturated!(target);
-    if !interpreter.bytecode.is_valid_legacy_jump(target) {
-        return interpreter.halt(InstructionResult::InvalidJump);
-    }
-    // `is_valid_legacy_jump` ensures that `target` is in bounds.
-    interpreter.bytecode.jump_target(target)
+    super::cached::jumpi::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the JUMPDEST instruction.
@@ -56,8 +36,7 @@ pub fn jumpdest<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, JUMPDEST);
-    ip
+    super::cached::jumpdest::<false, _, _>(ip, context, &mut 0)
 }
 
 /// Implements the PC instruction.
