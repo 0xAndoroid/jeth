@@ -180,11 +180,7 @@ pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
     check!(context.interpreter, CONSTANTINOPLE);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
-    *op2 = if shift < 256 {
-        *op2 << shift
-    } else {
-        U256::ZERO
-    };
+    *op2 = shift_word::<true>(*op2, shift);
     ip
 }
 
@@ -198,12 +194,49 @@ pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     check!(context.interpreter, CONSTANTINOPLE);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
-    *op2 = if shift < 256 {
-        *op2 >> shift
-    } else {
-        U256::ZERO
-    };
+    *op2 = shift_word::<false>(*op2, shift);
     ip
+}
+
+// Whole-limb selection is separate from the residual shift so each transfer
+// is a fixed-width operation and no temporary array needs a dynamic index.
+#[inline(always)]
+fn shift_word<const LEFT: bool>(value: U256, shift: usize) -> U256 {
+    if shift >= 256 {
+        return U256::ZERO;
+    }
+    let [a, b, c, d] = *value.as_limbs();
+    let words = shift / 64;
+    let bits = shift % 64;
+    let inv = 63 - bits;
+    let limbs = if LEFT {
+        let [a, b, c, d] = match words {
+            0 => [a, b, c, d],
+            1 => [0, a, b, c],
+            2 => [0, 0, a, b],
+            _ => [0, 0, 0, a],
+        };
+        [
+            a << bits,
+            (b << bits) | ((a >> inv) >> 1),
+            (c << bits) | ((b >> inv) >> 1),
+            (d << bits) | ((c >> inv) >> 1),
+        ]
+    } else {
+        let [a, b, c, d] = match words {
+            0 => [a, b, c, d],
+            1 => [b, c, d, 0],
+            2 => [c, d, 0, 0],
+            _ => [d, 0, 0, 0],
+        };
+        [
+            (a >> bits) | ((b << inv) << 1),
+            (b >> bits) | ((c << inv) << 1),
+            (c >> bits) | ((d << inv) << 1),
+            d >> bits,
+        ]
+    };
+    U256::from_limbs(limbs)
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
@@ -234,6 +267,35 @@ mod tests {
         InstructionContext, Interpreter,
     };
     use primitives::{hardfork::SpecId, uint, U256};
+
+    #[test]
+    fn limb_shifts_match_full_width_operations() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..32 {
+            let value = U256::from_limbs(core::array::from_fn(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            }));
+            for shift in 0..=300 {
+                let left = if shift < 256 {
+                    value << shift
+                } else {
+                    U256::ZERO
+                };
+                let right = if shift < 256 {
+                    value >> shift
+                } else {
+                    U256::ZERO
+                };
+                assert_eq!(super::shift_word::<true>(value, shift), left);
+                assert_eq!(super::shift_word::<false>(value, shift), right);
+            }
+            assert_eq!(super::shift_word::<true>(value, usize::MAX), U256::ZERO);
+            assert_eq!(super::shift_word::<false>(value, usize::MAX), U256::ZERO);
+        }
+    }
 
     #[test]
     fn test_shift_left() {
