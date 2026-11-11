@@ -110,11 +110,8 @@ fn decode_node_zc_into<M: Memoization>(
             _ => Err(alloy_rlp::Error::UnexpectedLength),
         };
     }
-    let items = if is_plain_branch(payload) {
-        17
-    } else {
-        count_items(payload)?
-    };
+    let plain = is_plain_branch(payload);
+    let items = if plain { 17 } else { count_items(payload)? };
     match items {
         // branch node: 17-item node [ v0 ... v15, value ]
         17 => {
@@ -124,7 +121,12 @@ fn decode_node_zc_into<M: Memoization>(
             let Node::Branch(children, _) = &mut *node else {
                 unreachable!()
             };
-            let filled = decode_branch_children(source, payload, children);
+            let filled = if plain {
+                decode_plain_branch_children(payload, children);
+                Ok(())
+            } else {
+                decode_branch_children(source, payload, children)
+            };
             if filled.is_err() {
                 *node = Node::Null; // drops the partial branch
             }
@@ -297,6 +299,23 @@ fn count_items(mut p: &[u8]) -> alloy_rlp::Result<usize> {
         n += 1;
     }
     Ok(n)
+}
+
+/// Fill a branch after `is_plain_branch` validated every child boundary,
+/// the empty value, and at least two digests. No resource-owning children
+/// can appear here; the initialized branch remains valid after each write.
+#[inline]
+fn decode_plain_branch_children<M: Memoization>(mut p: &[u8], children: &mut Children<M>) {
+    debug_assert!(is_plain_branch(p));
+    for slot in children.iter_mut() {
+        if p[0] == EMPTY_STRING_CODE {
+            p = &p[1..];
+        } else {
+            slot.fill_digest(digest_item(&p[..DIGEST_RLP_LENGTH]));
+            p = &p[DIGEST_RLP_LENGTH..];
+        }
+    }
+    debug_assert_eq!(p, [EMPTY_STRING_CODE]);
 }
 
 /// Decode the 16 child items of the 17-item branch payload `p` straight into
@@ -589,6 +608,31 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn plain_branch_fill_matches_general_decode() {
+        for mask in 0u32..1 << 16 {
+            if mask.count_ones() < 2 {
+                continue;
+            }
+            let mut payload = Vec::new();
+            for child in 0..16 {
+                if mask & (1 << child) == 0 {
+                    payload.push(EMPTY_STRING_CODE);
+                } else {
+                    payload.push(DIGEST_ITEM_PREFIX);
+                    payload.extend_from_slice(&[child as u8; 32]);
+                }
+            }
+            payload.push(EMPTY_STRING_CODE);
+            let source = Bytes::from(payload);
+            let mut actual = Children::<Cache>::default();
+            let mut expected = Children::<Cache>::default();
+            decode_plain_branch_children(&source, &mut actual);
+            decode_branch_children(&source, &source, &mut expected).unwrap();
+            assert!(actual == expected, "mask={mask}");
         }
     }
 
