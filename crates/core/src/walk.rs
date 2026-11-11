@@ -29,7 +29,7 @@
 use alloy_primitives::B256;
 use alloy_rlp::{Error, Result, EMPTY_STRING_CODE};
 use core::ops::Range;
-use zeth_mpt::{decode_header, equal_bytes, is_plain_branch, le_words_32};
+use zeth_mpt::{decode_header, is_plain_branch, le_words_32};
 
 /// RLP header byte of a digest item (32-byte string) and the item's length.
 const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + 32;
@@ -279,7 +279,7 @@ fn match_path(compact: &[u8], key: &B256, depth: usize, require_exhaust: bool) -
     // the case for leaves (remainder parity == depth parity).
     let body = &compact[1..];
     if d & 1 == 0 {
-        if !equal_bytes(body, &key[d / 2..d / 2 + body.len()]) {
+        if body != &key[d / 2..d / 2 + body.len()] {
             return None;
         }
     } else {

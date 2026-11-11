@@ -18,7 +18,7 @@
 use super::{
     children::{Children, Slot},
     memoize::Memoization,
-    node::{packed_key, packed_limb, Digest, Node},
+    node::{packed_key, Digest, Node},
     rlp::{DIGEST_ITEM_PREFIX, DIGEST_RLP_LENGTH},
 };
 use alloc::boxed::Box;
@@ -439,23 +439,6 @@ pub fn le_words_32(bytes: &[u8]) -> [u64; 4] {
     }
 }
 
-/// Byte equality using masked containing words. This is equality only,
-/// not a lexicographic comparison; each final partial limb ignores padding.
-#[inline]
-pub fn equal_bytes(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut offset = 0;
-    while offset < a.len() {
-        if packed_limb(a, offset) != packed_limb(b, offset) {
-            return false;
-        }
-        offset += 8;
-    }
-    true
-}
-
 /// Loads the 8-aligned word `I` words past `p` with one machine load (the
 /// offset is an immediate). Containing-word reads ([`le_words_32`], the arena
 /// writer) load whole aligned words around a byte range, up to 7 bytes outside
@@ -587,28 +570,6 @@ mod tests {
         }
         payload.push(EMPTY_STRING_CODE);
         assert!(!is_plain_branch(&payload));
-    }
-
-    #[test]
-    fn word_equality_matches_slices() {
-        assert!(!equal_bytes(&[0], &[]));
-        for len in 0..=64 {
-            let data: Vec<u8> = (0..len).map(|i| (i * 37 + 5) as u8).collect();
-            for left in 0..8 {
-                for right in 0..8 {
-                    let mut a = vec![0xa5; left + len + 8];
-                    let mut b = vec![0x5a; right + len + 8];
-                    a[left..left + len].copy_from_slice(&data);
-                    b[right..right + len].copy_from_slice(&data);
-                    assert!(equal_bytes(&a[left..left + len], &b[right..right + len]));
-                    for changed in 0..len {
-                        b[right + changed] ^= 1;
-                        assert!(!equal_bytes(&a[left..left + len], &b[right..right + len]));
-                        b[right + changed] ^= 1;
-                    }
-                }
-            }
-        }
     }
 
     #[test]
