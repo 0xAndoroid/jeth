@@ -13,6 +13,7 @@ use crate::{InstructionContext, Ip};
 /// Implements the KECCAK256 instruction.
 ///
 /// Computes Keccak-256 hash of memory data.
+#[inline(always)]
 pub fn keccak256<WIRE: InterpreterTypes, H: Host + ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,

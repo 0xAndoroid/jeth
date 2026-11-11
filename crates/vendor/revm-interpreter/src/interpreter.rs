@@ -388,6 +388,7 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
     }
 
     inline_dispatch!(IW;
+        KECCAK256 => system::keccak256,
         MUL => arithmetic::mul,
         DIV => arithmetic::div,
         SIGNEXTEND => arithmetic::signextend,
