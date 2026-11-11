@@ -278,15 +278,19 @@ fn decode_branch_children<M: Memoization>(
 ) -> alloy_rlp::Result<()> {
     let mut count = 0usize;
     for slot in children.iter_mut() {
-        // pass 1 counted exactly 17 validated items over `p`
-        let (item, rest) = p.split_at(item_len(p)?);
-        p = rest;
-        if item == [EMPTY_STRING_CODE] {
+        // The first pass validated all 17 headers and their payload bounds.
+        // Handle the two canonical string forms directly, without deriving
+        // an item slice and then classifying the same header again.
+        if p[0] == EMPTY_STRING_CODE {
+            p = &p[1..];
             continue;
         }
-        if is_digest_item(item) {
-            slot.fill_digest(digest_item(item));
+        if p[0] == DIGEST_ITEM_PREFIX {
+            slot.fill_digest(digest_item(&p[..DIGEST_RLP_LENGTH]));
+            p = &p[DIGEST_RLP_LENGTH..];
         } else {
+            let (item, rest) = p.split_at(item_len(p)?);
+            p = rest;
             let mut child = Box::<Node<M>>::new_uninit();
             decode_node_zc_into(source, &mut &item[..], &mut child)?;
             // SAFETY: `Ok` return above ⇒ the callee wrote a fully initialized
