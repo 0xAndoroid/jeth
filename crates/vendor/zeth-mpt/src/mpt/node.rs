@@ -43,7 +43,7 @@ const FULL_KEY: Nibbles = Nibbles::unpack_array(&[0; 32]);
 /// four aligned-word loads ([`le_words_32`]) plus four byte swaps replace the
 /// byte-reversing copy loop. Other lengths take `Nibbles::unpack`.
 #[inline(always)]
-fn packed_key(key: &[u8]) -> Nibbles {
+pub(super) fn packed_key(key: &[u8]) -> Nibbles {
     if key.len() != 32 {
         return Nibbles::unpack(key);
     }
@@ -432,8 +432,8 @@ impl<M: Memoization> Slot<M> {
                 let child = Node::decode_child(digest, bytes)
                     .expect("MPT: invalid witness node")
                     .expect("MPT: Unresolved node access"); // digest-for-digest refusal
-                // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
-                // which a slot never holds: the child is absent.
+                                                            // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
+                                                            // which a slot never holds: the child is absent.
                 if matches!(*child, Node::Null) {
                     *self = Slot::Empty;
                     return None;

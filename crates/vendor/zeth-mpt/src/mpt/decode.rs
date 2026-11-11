@@ -18,7 +18,7 @@
 use super::{
     children::{Children, Slot},
     memoize::Memoization,
-    node::{Digest, Node},
+    node::{packed_key, Digest, Node},
     rlp::{DIGEST_ITEM_PREFIX, DIGEST_RLP_LENGTH},
 };
 use alloc::boxed::Box;
@@ -449,13 +449,18 @@ fn decode_path(buf: &mut &[u8]) -> alloy_rlp::Result<(Nibbles, bool)> {
     };
     // Strip the HP prefix: for odd length, the first nibble of the key is in the low nibble
     // of the first byte; for even length, skip the first byte entirely.
-    let nibbles = if odd_len {
+    let nibbles = if compact.len() == 32 {
+        // Gather the packed path and discard its HP prefix in whole words.
+        // The even form discards the entire first byte, including the lax
+        // padding nibble; the odd form keeps that nibble as path data.
+        packed_key(compact).slice_unchecked(if odd_len { 1 } else { 2 }, 64)
+    } else if odd_len {
         let first = compact[0] & 0x0f;
         let mut n = Nibbles::from_nibbles_unchecked([first]);
         n.extend(&Nibbles::unpack(&compact[1..]));
         n
     } else {
-        Nibbles::unpack(&compact[1..])
+        packed_key(&compact[1..])
     };
     Ok((nibbles, is_leaf))
 }
@@ -465,6 +470,40 @@ mod tests {
     use super::{super::memoize::Cache, *};
     use alloc::{vec, vec::Vec};
     use alloy_rlp::{Decodable, PayloadView};
+
+    #[test]
+    fn compact_paths_match_explicit_nibbles() {
+        for len in [1usize, 2, 16, 31, 32, 33] {
+            for flag in 0..4u8 {
+                let odd = flag & 1 != 0;
+                if len == 33 && odd {
+                    continue; // More than 64 path nibbles.
+                }
+                let mut compact: Vec<u8> = (0..len)
+                    .map(|i| (i as u8).wrapping_mul(53).wrapping_add(7))
+                    .collect();
+                compact[0] = (flag << 4) | 9;
+                let mut expected = Vec::new();
+                if odd {
+                    expected.push(9);
+                }
+                for &byte in &compact[1..] {
+                    expected.push(byte >> 4);
+                    expected.push(byte & 15);
+                }
+                let encoded = alloy_rlp::encode(compact.as_slice());
+                for alignment in 0..8 {
+                    let mut storage = vec![0u8; alignment];
+                    storage.extend_from_slice(&encoded);
+                    let mut input = &storage[alignment..];
+                    let (actual, leaf) = decode_path(&mut input).unwrap();
+                    assert!(input.is_empty());
+                    assert_eq!(leaf, flag >= 2);
+                    assert_eq!(actual, Nibbles::from_nibbles_unchecked(&expected));
+                }
+            }
+        }
+    }
 
     /// Reference decoder (upstream zeth-mpt's `Decodable` impl, scanning
     /// through `Header::decode_raw` into allocated values): the oracle the
