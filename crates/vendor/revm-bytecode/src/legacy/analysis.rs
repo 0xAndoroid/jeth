@@ -15,6 +15,18 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
     let end = range.end;
     let mut last_byte: u8 = 0;
 
+    // Four instructions advance at most 132 bytes. Leave at least one
+    // instruction for the scalar tail, which records the final opcode.
+    if bytecode.len() > 4 * 33 {
+        let batch_end = unsafe { end.sub(4 * 33) };
+        while iterator < batch_end {
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+            iterator = unsafe { scan_step(iterator, start, &mut jumps) };
+        }
+    }
+
     while iterator < end {
         last_byte = unsafe { *iterator };
         if last_byte == opcode::JUMPDEST {
@@ -60,6 +72,20 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
     (JumpTable::new(jumps), bytecode)
 }
 
+// SAFETY: The caller provides a readable opcode pointer. The returned
+// pointer may skip a truncated PUSH but is never dereferenced unchecked.
+#[inline(always)]
+unsafe fn scan_step(iterator: *const u8, start: *const u8, jumps: &mut BitVec<u8>) -> *const u8 {
+    let byte = unsafe { *iterator };
+    if byte == opcode::JUMPDEST {
+        unsafe { jumps.set_unchecked(iterator.offset_from_unsigned(start), true) };
+        iterator.wrapping_add(1)
+    } else {
+        let push = (byte as usize).wrapping_sub(opcode::PUSH1 as usize);
+        iterator.wrapping_add(if push < 32 { push + 2 } else { 1 })
+    }
+}
+
 // Only a special penultimate byte can require extra padding before a final
 // STOP. Check its instruction boundary on this uncommon suffix instead of
 // retaining the previous opcode at every step of the main scan.
@@ -87,6 +113,69 @@ const fn is_dupn_swapn_exchange(opcode: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Independent scalar oracle retains the original previous-opcode rule.
+    fn reference(raw: &[u8]) -> (Vec<bool>, Vec<u8>) {
+        let mut jumps = vec![false; raw.len()];
+        let (mut offset, mut previous, mut last) = (0, 0, 0);
+        while offset < raw.len() {
+            previous = last;
+            last = raw[offset];
+            jumps[offset] = last == opcode::JUMPDEST;
+            offset += if (opcode::PUSH1..=opcode::PUSH32).contains(&last) {
+                usize::from(last - opcode::PUSH1) + 2
+            } else {
+                1
+            };
+        }
+        let extra = offset - raw.len()
+            + if last == opcode::STOP {
+                usize::from(is_dupn_swapn_exchange(previous))
+            } else {
+                1 + usize::from(is_dupn_swapn_exchange(last))
+            };
+        let mut padded = raw.to_vec();
+        padded.resize(raw.len() + extra, 0);
+        (jumps, padded)
+    }
+
+    #[test]
+    fn scan_matches_reference_at_batch_boundaries() {
+        let mut state = 0x6d2b79f5u32;
+        for len in 0..=512 {
+            for mode in 0..20 {
+                let raw: Vec<_> = (0..len)
+                    .map(|i| {
+                        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                        match mode {
+                            0 => opcode::PUSH32,
+                            1 => opcode::JUMPDEST,
+                            2 => opcode::STOP,
+                            3 => {
+                                [opcode::PUSH1, opcode::JUMPDEST, opcode::DUPN, opcode::STOP][i % 4]
+                            }
+                            _ => (state >> 24) as u8,
+                        }
+                    })
+                    .collect();
+                let (expected, padding) = reference(&raw);
+                let (actual, padded) = analyze_legacy(raw.into());
+                assert_eq!(
+                    padded.as_ref(),
+                    padding.as_slice(),
+                    "len {len}, mode {mode}"
+                );
+                for (i, valid) in expected.into_iter().enumerate() {
+                    assert_eq!(
+                        actual.is_valid(i),
+                        valid,
+                        "len {len}, mode {mode}, offset {i}"
+                    );
+                }
+                assert!(!actual.is_valid(len));
+            }
+        }
+    }
 
     #[test]
     fn push_classification_and_truncated_immediates() {
