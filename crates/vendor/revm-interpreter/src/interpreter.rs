@@ -24,11 +24,57 @@ use crate::{
     host::DummyHost, instruction_context::InstructionContext, interpreter_types::*, Gas, Host,
     InstructionResult, InstructionTable, InterpreterAction,
 };
-use bytecode::{
-    opcode::{PUSH1, PUSH2},
-    Bytecode,
-};
+use bytecode::Bytecode;
 use primitives::{hardfork::SpecId, Bytes};
+
+// Keep the identity checks and direct calls tied to the same opcode list.
+macro_rules! inline_dispatch {
+    ($wire:ident; $( $opcode:ident => $module:ident::$name:ident $(::<$n:literal>)? ),+ $(,)?) => {
+        /// Executes until halt or yield, specializing only canonical instruction tables.
+        #[inline]
+        pub fn run_plain<H: Host + ?Sized>(
+            &mut self,
+            instruction_table: &InstructionTable<$wire, H>,
+            host: &mut H,
+        ) -> InterpreterAction {
+            use bytecode::opcode::*;
+            let canonical = true $( && instruction_table[$opcode as usize].is(
+                crate::Instruction::new(crate::instructions::$module::$name $(::<$n, $wire, H>)?)
+            ))+;
+            if canonical {
+                self.run_plain_inner::<H, true>(instruction_table, host)
+            } else {
+                self.run_plain_inner::<H, false>(instruction_table, host)
+            }
+        }
+
+        #[inline(always)]
+        fn run_plain_inner<H: Host + ?Sized, const INLINE: bool>(
+            &mut self,
+            instruction_table: &InstructionTable<$wire, H>,
+            host: &mut H,
+        ) -> InterpreterAction {
+            use bytecode::opcode::*;
+            let mut ip = self.bytecode.ip();
+            loop {
+                // SAFETY: analysed bytecode is padded with STOP, as in `step`.
+                let (opcode, next) = unsafe { (*ip, ip.add(1)) };
+                let context = InstructionContext { interpreter: self, host };
+                ip = match opcode {
+                    $( $opcode if INLINE => crate::instructions::$module::$name $(::<$n, $wire, H>)?(next, context), )+
+                    _ => {
+                        let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
+                        instruction.execute(next, context)
+                    }
+                };
+                if ip.is_null() {
+                    break;
+                }
+            }
+            self.take_next_action()
+        }
+    };
+}
 
 /// Main interpreter structure that contains all components defined in [`InterpreterTypes`].
 #[derive(Debug, Clone)]
@@ -341,59 +387,87 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         self.step(instruction_table, &mut DummyHost::default());
     }
 
-    /// Executes the interpreter until it returns or stops.
-    ///
-    /// The instruction pointer lives in a register for the whole run: it is loaded from the
-    /// bytecode once (where the frame starts or resumes) and persisted only when the frame
-    /// yields ([`set_action_at`](Self::set_action_at)).
-    #[inline]
-    pub fn run_plain<H: Host + ?Sized>(
-        &mut self,
-        instruction_table: &InstructionTable<IW, H>,
-        host: &mut H,
-    ) -> InterpreterAction {
-        let canonical_pushes = instruction_table[PUSH1 as usize].is(crate::Instruction::new(
-            crate::instructions::stack::push::<1, IW, H>,
-        )) && instruction_table[PUSH2 as usize].is(crate::Instruction::new(
-            crate::instructions::stack::push::<2, IW, H>,
-        ));
-        // Check once per run so custom instruction tables retain their semantics.
-        if canonical_pushes {
-            self.run_plain_inner::<H, true>(instruction_table, host)
-        } else {
-            self.run_plain_inner::<H, false>(instruction_table, host)
-        }
-    }
+    inline_dispatch!(IW;
+        ADD => arithmetic::add,
+        SUB => arithmetic::sub,
+        LT => bitwise::lt,
+        GT => bitwise::gt,
+        EQ => bitwise::eq,
+        ISZERO => bitwise::iszero,
+        AND => bitwise::bitand,
+        POP => stack::pop,
+        MLOAD => memory::mload,
+        MSTORE => memory::mstore,
+        JUMP => control::jump,
+        JUMPI => control::jumpi,
+        JUMPDEST => control::jumpdest,
+        PUSH0 => stack::push0,
+        PUSH1 => stack::push::<1>,
+        PUSH2 => stack::push::<2>,
+        PUSH3 => stack::push::<3>,
+        PUSH4 => stack::push::<4>,
+        PUSH5 => stack::push::<5>,
+        PUSH6 => stack::push::<6>,
+        PUSH7 => stack::push::<7>,
+        PUSH8 => stack::push::<8>,
+        PUSH9 => stack::push::<9>,
+        PUSH10 => stack::push::<10>,
+        PUSH11 => stack::push::<11>,
+        PUSH12 => stack::push::<12>,
+        PUSH13 => stack::push::<13>,
+        PUSH14 => stack::push::<14>,
+        PUSH15 => stack::push::<15>,
+        PUSH16 => stack::push::<16>,
+        PUSH17 => stack::push::<17>,
+        PUSH18 => stack::push::<18>,
+        PUSH19 => stack::push::<19>,
+        PUSH20 => stack::push::<20>,
+        PUSH21 => stack::push::<21>,
+        PUSH22 => stack::push::<22>,
+        PUSH23 => stack::push::<23>,
+        PUSH24 => stack::push::<24>,
+        PUSH25 => stack::push::<25>,
+        PUSH26 => stack::push::<26>,
+        PUSH27 => stack::push::<27>,
+        PUSH28 => stack::push::<28>,
+        PUSH29 => stack::push::<29>,
+        PUSH30 => stack::push::<30>,
+        PUSH31 => stack::push::<31>,
+        PUSH32 => stack::push::<32>,
+        DUP1 => stack::dup::<1>,
+        DUP2 => stack::dup::<2>,
+        DUP3 => stack::dup::<3>,
+        DUP4 => stack::dup::<4>,
+        DUP5 => stack::dup::<5>,
+        DUP6 => stack::dup::<6>,
+        DUP7 => stack::dup::<7>,
+        DUP8 => stack::dup::<8>,
+        DUP9 => stack::dup::<9>,
+        DUP10 => stack::dup::<10>,
+        DUP11 => stack::dup::<11>,
+        DUP12 => stack::dup::<12>,
+        DUP13 => stack::dup::<13>,
+        DUP14 => stack::dup::<14>,
+        DUP15 => stack::dup::<15>,
+        DUP16 => stack::dup::<16>,
+        SWAP1 => stack::swap::<1>,
+        SWAP2 => stack::swap::<2>,
+        SWAP3 => stack::swap::<3>,
+        SWAP4 => stack::swap::<4>,
+        SWAP5 => stack::swap::<5>,
+        SWAP6 => stack::swap::<6>,
+        SWAP7 => stack::swap::<7>,
+        SWAP8 => stack::swap::<8>,
+        SWAP9 => stack::swap::<9>,
+        SWAP10 => stack::swap::<10>,
+        SWAP11 => stack::swap::<11>,
+        SWAP12 => stack::swap::<12>,
+        SWAP13 => stack::swap::<13>,
+        SWAP14 => stack::swap::<14>,
+        SWAP15 => stack::swap::<15>,
+        SWAP16 => stack::swap::<16>,
+    );
 
-    #[inline(always)]
-    fn run_plain_inner<H: Host + ?Sized, const INLINE_PUSH: bool>(
-        &mut self,
-        instruction_table: &InstructionTable<IW, H>,
-        host: &mut H,
-    ) -> InterpreterAction {
-        let mut ip = self.bytecode.ip();
-        loop {
-            // SAFETY: analysed bytecode is padded with STOP, so `ip` stays inside it (see `step`).
-            let (opcode, next) = unsafe { (*ip, ip.add(1)) };
-            let context = InstructionContext {
-                interpreter: self,
-                host,
-            };
-            ip = match opcode {
-                PUSH1 if INLINE_PUSH => crate::instructions::stack::push::<1, IW, H>(next, context),
-                PUSH2 if INLINE_PUSH => crate::instructions::stack::push::<2, IW, H>(next, context),
-                _ => {
-                    let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
-                    instruction.execute(next, context)
-                }
-            };
-            // Null: the instruction halted or yielded and set the action.
-            if ip.is_null() {
-                break;
-            }
-        }
-        self.take_next_action()
-    }
 }
 
 /* used for cargo asm
