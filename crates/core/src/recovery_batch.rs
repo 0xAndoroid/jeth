@@ -239,6 +239,26 @@ struct Term {
     negated: Point,
 }
 
+/// Minimize the affine addition work after the GLV split. A bucket's first
+/// insertion is a copy; it cancels the corresponding running-sum addition
+/// in this estimate, leaving one weighted-result addition per live bucket.
+fn window_width(terms: usize) -> usize {
+    let points = 2 * terms;
+    (4usize..=12)
+        .min_by_key(|&width| {
+            let windows = 128usize.div_ceil(width);
+            let lower = windows - 1;
+            let top_bits = 128 - lower * width;
+            let lower_points = points - (points >> width);
+            let top_points = points - (points >> top_bits);
+            lower * (lower_points + (1 << (width - 1)))
+                + top_points
+                + (1 << top_bits)
+                + lower * width
+        })
+        .unwrap()
+}
+
 /// Pippenger MSM over the GLV-split terms with signed window digits.
 ///
 /// Adding 2^(w-1) to every window below the top one and then subtracting it
@@ -248,7 +268,7 @@ struct Term {
 /// unsigned digit plus the bias carry, which is at most 2^(128 - top_shift)
 /// (2^w for w = 8, 4 for w = 7), so no extra window is needed.
 fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
-    let width = if terms.len() < 512 { 7 } else { 8 };
+    let width = window_width(terms.len());
     let windows = 128usize.div_ceil(width);
     let half = 1usize << (width - 1);
     let top_shift = width * (windows - 1);
