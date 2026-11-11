@@ -40,23 +40,21 @@ impl<const N: usize> PartialEq for FixedBytes<N> {
         let a = self.0.as_ptr();
         let b = other.0.as_ptr();
         if (a as usize | b as usize) & 7 == 0 {
-            let mut difference = 0u64;
             for i in 0..N / 8 {
                 // SAFETY: the guard proves alignment and every full word lies
                 // inside the initialized byte array. Equality ignores byte order.
                 unsafe {
-                    difference |=
-                        a.add(8 * i).cast::<u64>().read() ^ b.add(8 * i).cast::<u64>().read();
+                    if a.add(8 * i).cast::<u64>().read() != b.add(8 * i).cast::<u64>().read() {
+                        return false;
+                    }
                 }
             }
             if N == 20 {
                 // SAFETY: the final four bytes are in bounds and four-aligned.
-                unsafe {
-                    difference |=
-                        u64::from(a.add(16).cast::<u32>().read() ^ b.add(16).cast::<u32>().read());
-                }
+                unsafe { a.add(16).cast::<u32>().read() == b.add(16).cast::<u32>().read() }
+            } else {
+                true
             }
-            difference == 0
         } else {
             unaligned_equality(&self.0, &other.0)
         }
