@@ -251,14 +251,10 @@ fn window_width(terms: usize) -> usize {
             let top_bits = 128 - lower * width;
             let lower_points = points - (points >> width);
             let top_points = points - (points >> top_bits);
-            let additions = lower * (lower_points + (1 << (width - 1)))
+            lower * (lower_points + (1 << (width - 1)))
                 + top_points
                 + (1 << top_bits)
-                + lower * width;
-            // Affine arithmetic dominates, but scanning each GLV half also
-            // shifts its scalar, selects a sign and indexes the bucket. Near
-            // an arithmetic tie, include that work rather than adding a round.
-            additions * 800 + windows * points * 25
+                + lower * width
         })
         .unwrap()
 }
