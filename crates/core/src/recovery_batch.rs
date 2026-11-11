@@ -297,14 +297,17 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
         push(k1, point.clone());
         push(k2, point.endomorphism());
     }
-    let mut buckets = alloc::vec![Point::infinity(); (1 << width) + 1];
+    let top_live = 1 << (128 - top_shift);
+    let mut buckets = alloc::vec![Point::infinity(); half.max(top_live) + 1];
     let mut result = Point::infinity();
     for window in (0..windows).rev() {
-        for _ in 0..width {
-            result = result.double();
-        }
         let top = window == windows - 1;
-        let live = if top { 1 << (128 - top_shift) } else { half };
+        if !top {
+            for _ in 0..width {
+                result = result.double();
+            }
+        }
+        let live = if top { top_live } else { half };
         buckets[1..=live].fill(Point::infinity());
         if top {
             for term in &split {
@@ -327,8 +330,14 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
                 }
             }
         }
+        // Empty upper buckets contribute neither a running sum nor weight.
+        // Interior empty buckets must remain in the weighted reduction.
+        let highest = buckets[1..=live]
+            .iter()
+            .rposition(|bucket| !bucket.is_infinity())
+            .map_or(0, |index| index + 1);
         let mut sum = Point::infinity();
-        for bucket in buckets[1..=live].iter().rev() {
+        for bucket in buckets[1..=highest].iter().rev() {
             sum = sum.add(bucket);
             result = result.add(&sum);
         }
