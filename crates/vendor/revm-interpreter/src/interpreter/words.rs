@@ -20,7 +20,7 @@
 //! ([`load_word`], [`store_word`]) that neither the abstract machine nor LLVM
 //! sees as accesses to the slice.
 
-use primitives::U256;
+use primitives::{Address, U256};
 
 /// Whether the five-word window is checked against the slice (see the module
 /// docs); `false` on the Jolt guest.
@@ -297,9 +297,45 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     U256::from_limbs(x)
 }
 
+/// Convert an address directly to a right-aligned EVM word.
+#[inline(always)]
+pub(crate) fn address_word(address: &Address) -> U256 {
+    #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+    {
+        // SAFETY: the Address supplies twenty valid bytes. The shared decoder
+        // reads only aligned words containing those bytes, using the existing
+        // guest containing-word contract, and shifts all outside bits away.
+        unsafe { read_be_immediate::<20>(address.as_slice().as_ptr()) }
+    }
+    #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
+    U256::from_be_slice(address.as_slice())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn address_word_matches_original_conversion() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..128 {
+            let mut bytes = [0u8; 20];
+            for byte in &mut bytes {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                *byte = state as u8;
+            }
+            let address = Address::from(bytes);
+            let expected: U256 = address.into_word().into();
+            assert_eq!(address_word(&address), expected);
+        }
+        let address = Address::from(core::array::from_fn(|i| i as u8));
+        assert_eq!(
+            address_word(&address).as_limbs(),
+            &[0x0c0d_0e0f_1011_1213, 0x0405_0607_0809_0a0b, 0x0001_0203, 0]
+        );
+    }
 
     /// Every alignment of the 32-byte word inside a buffer with slack on both
     /// sides (the window path), plus every alignment at the very start and
