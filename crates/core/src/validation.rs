@@ -17,9 +17,9 @@
 //! bench cross-checks this loop bit-for-bit against stateless 6e55612.
 
 use alloc::{collections::btree_map::BTreeMap, format, string::ToString, sync::Arc, vec::Vec};
-use alloy_consensus::{
-    proofs::calculate_receipt_root, BlockHeader, Header, ReceiptWithBloom, TxReceipt,
-};
+#[cfg(test)]
+use alloy_consensus::proofs::calculate_receipt_root;
+use alloy_consensus::{BlockHeader, Header, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{
     keccak256,
     map::{B256IndexMap, B256Map},
@@ -422,8 +422,180 @@ pub(crate) fn receipt_root_bloom(
             }
         })
         .collect();
-    let root = calculate_receipt_root(&receipts);
+    let root = alloy_trie::root::ordered_trie_root_with_encoder(&receipts, encode_receipt_prepared);
     (root, bloom.into_bloom())
+}
+
+/// The caller supplies 256 readable aligned source bytes and 256 writable
+/// destination bytes; LEAD is in 0..8 and dst + LEAD is word aligned. The
+/// regions do not overlap. Each instantiation initializes the same 256 bytes.
+#[inline(always)]
+unsafe fn write_receipt_bloom_at<const LEAD: usize>(dst: *mut u8, src: *const u64) {
+    use core::ptr::{read_volatile, write_volatile};
+    // SAFETY: the caller establishes the readable and writable ranges,
+    // non-overlap and the source/destination word alignment documented above.
+    unsafe {
+        if LEAD == 0 {
+            macro_rules! word {
+                ($i:expr) => {
+                    write_volatile(dst.cast::<u64>().add($i), read_volatile(src.add($i)));
+                };
+            }
+            word!(0);
+            word!(1);
+            word!(2);
+            word!(3);
+            word!(4);
+            word!(5);
+            word!(6);
+            word!(7);
+            word!(8);
+            word!(9);
+            word!(10);
+            word!(11);
+            word!(12);
+            word!(13);
+            word!(14);
+            word!(15);
+            word!(16);
+            word!(17);
+            word!(18);
+            word!(19);
+            word!(20);
+            word!(21);
+            word!(22);
+            word!(23);
+            word!(24);
+            word!(25);
+            word!(26);
+            word!(27);
+            word!(28);
+            word!(29);
+            word!(30);
+            word!(31);
+        } else {
+            let mut previous = read_volatile(src);
+            for i in 0..LEAD {
+                dst.add(i).write((previous >> (8 * i)) as u8);
+            }
+            let words = dst.add(LEAD).cast::<u64>();
+            let shift = 8 * LEAD;
+            macro_rules! word {
+                ($i:expr) => {
+                    let next = read_volatile(src.add($i));
+                    write_volatile(
+                        words.add($i - 1),
+                        (previous >> shift) | (next << (64 - shift)),
+                    );
+                    previous = next;
+                };
+            }
+            word!(1);
+            word!(2);
+            word!(3);
+            word!(4);
+            word!(5);
+            word!(6);
+            word!(7);
+            word!(8);
+            word!(9);
+            word!(10);
+            word!(11);
+            word!(12);
+            word!(13);
+            word!(14);
+            word!(15);
+            word!(16);
+            word!(17);
+            word!(18);
+            word!(19);
+            word!(20);
+            word!(21);
+            word!(22);
+            word!(23);
+            word!(24);
+            word!(25);
+            word!(26);
+            word!(27);
+            word!(28);
+            word!(29);
+            word!(30);
+            word!(31);
+            for i in LEAD..8 {
+                dst.add(248 + i).write((previous >> (8 * i)) as u8);
+            }
+        }
+    }
+}
+
+/// Copy one bloom into the final receipt buffer. An aligned source permits
+/// bounded word reads and aligned destination stores after a short byte head.
+/// Unaligned sources retain the library copy, including on native test hosts.
+fn append_receipt_bloom(out: &mut Vec<u8>, bloom: &[u8]) {
+    assert_eq!(bloom.len(), 256);
+    if !cfg!(target_endian = "little") || bloom.as_ptr() as usize & 7 != 0 {
+        out.extend_from_slice(bloom);
+        return;
+    }
+    out.reserve(256);
+    let old_len = out.len();
+    // SAFETY: reserve provides 256 writable spare bytes, and the immutable
+    // source cannot alias the exclusive vector borrow. Every word read stays
+    // within the 256-byte source and has checked alignment. Every word store
+    // is aligned and stays within the reserved destination. The byte head and
+    // tail complete the initialization before set_len exposes these bytes.
+    unsafe {
+        let src = bloom.as_ptr().cast::<u64>();
+        let dst = out.as_mut_ptr().add(old_len);
+        let lead = (8 - (dst as usize & 7)) & 7;
+        match lead {
+            0 => write_receipt_bloom_at::<0>(dst, src),
+            1 => write_receipt_bloom_at::<1>(dst, src),
+            2 => write_receipt_bloom_at::<2>(dst, src),
+            3 => write_receipt_bloom_at::<3>(dst, src),
+            4 => write_receipt_bloom_at::<4>(dst, src),
+            5 => write_receipt_bloom_at::<5>(dst, src),
+            6 => write_receipt_bloom_at::<6>(dst, src),
+            7 => write_receipt_bloom_at::<7>(dst, src),
+            _ => unreachable!(),
+        }
+        out.set_len(old_len + 256);
+    }
+}
+
+/// Encode the canonical receipt into the root builder's reusable vector.
+/// Retain the logs payload length for its list header instead of scanning the
+/// logs again after computing the outer receipt length.
+fn encode_receipt_prepared(value: &ReceiptWithBloom<&EthereumReceipt>, out: &mut Vec<u8>) {
+    use alloy_eips::eip2718::Typed2718;
+    use alloy_rlp::{Encodable, Header as RlpHeader};
+    let receipt = value.receipt;
+    let logs_header = RlpHeader {
+        list: true,
+        payload_length: receipt.logs.iter().map(Encodable::length).sum(),
+    };
+    let header = RlpHeader {
+        list: true,
+        payload_length: receipt.success.length()
+            + receipt.cumulative_gas_used.length()
+            + 259
+            + logs_header.length_with_payload(),
+    };
+    let typed = !receipt.tx_type.is_legacy();
+    out.reserve(header.length_with_payload() + usize::from(typed));
+    if typed {
+        out.push(receipt.tx_type.ty());
+    }
+    header.encode(out);
+    receipt.success.encode(out);
+    receipt.cumulative_gas_used.encode(out);
+    // A 256-byte bloom has the fixed canonical RLP string header b9 01 00.
+    out.extend_from_slice(&[0xb9, 0x01, 0x00]);
+    append_receipt_bloom(out, value.logs_bloom.as_slice());
+    logs_header.encode(out);
+    for log in &receipt.logs {
+        log.encode(out);
+    }
 }
 
 #[cfg(test)]
@@ -431,6 +603,116 @@ mod tests {
     use super::*;
     use alloy_consensus::TxType;
     use alloy_primitives::Log;
+
+    #[test]
+    fn receipt_bloom_copy_matches_all_alignments() {
+        #[repr(align(8))]
+        struct Aligned([u8; 264]);
+        let mut source = Aligned([0; 264]);
+        let mut seed = 0xab71_2849_ce63_d50fu64;
+        for _ in 0..32 {
+            for b in &mut source.0 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                *b = seed as u8;
+            }
+            for source_offset in 0..8 {
+                for destination_offset in 0..8 {
+                    let mut actual = Vec::with_capacity(272);
+                    let prefix = (destination_offset + 8 - (actual.as_ptr() as usize & 7)) & 7;
+                    actual.resize(prefix, 0xa5);
+                    assert_eq!(
+                        (actual.as_ptr() as usize + actual.len()) & 7,
+                        destination_offset
+                    );
+                    let mut expected = actual.clone();
+                    let bloom = &source.0[source_offset..source_offset + 256];
+                    expected.extend_from_slice(bloom);
+                    append_receipt_bloom(&mut actual, bloom);
+                    assert_eq!(actual, expected);
+                    assert_eq!(keccak256(&actual), keccak256(&expected));
+                    actual.push(0xc0);
+                    expected.push(0xc0);
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+        let mut growing = alloc::vec![0x7f];
+        let mut expected = growing.clone();
+        expected.extend_from_slice(&source.0[..256]);
+        append_receipt_bloom(&mut growing, &source.0[..256]);
+        assert_eq!(growing, expected);
+    }
+
+    #[test]
+    fn prepared_receipt_encoding_matches_reference() {
+        use alloy_eips::eip2718::Encodable2718;
+        let mut seed = 0x67b4_a21c_09e3_d85fu64;
+        let mut random = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut receipts = Vec::new();
+        for i in 0..192usize {
+            let mut logs = Vec::new();
+            for j in 0..i % 6 {
+                let mut address = [0u8; 20];
+                for b in &mut address {
+                    *b = random() as u8;
+                }
+                let mut topics = Vec::new();
+                for _ in 0..j % 5 {
+                    let mut topic = [0u8; 32];
+                    for b in &mut topic {
+                        *b = random() as u8;
+                    }
+                    topics.push(B256::from(topic));
+                }
+                let len = [0, 1, 55, 56, 255, 256, 511][(i + j) % 7];
+                let data: Vec<u8> = (0..len).map(|_| random() as u8).collect();
+                logs.push(Log::new_unchecked(
+                    Address::from(address),
+                    topics,
+                    data.into(),
+                ));
+            }
+            receipts.push(EthereumReceipt {
+                tx_type: [
+                    TxType::Legacy,
+                    TxType::Eip2930,
+                    TxType::Eip1559,
+                    TxType::Eip4844,
+                    TxType::Eip7702,
+                ][i % 5],
+                success: random() & 1 == 0,
+                cumulative_gas_used: random(),
+                logs,
+            });
+        }
+        let prepared: Vec<_> = receipts.iter().map(TxReceipt::with_bloom_ref).collect();
+        let mut actual = Vec::new();
+        let mut reference = Vec::new();
+        for receipt in &prepared {
+            actual.clear();
+            reference.clear();
+            encode_receipt_prepared(receipt, &mut actual);
+            receipt.encode_2718(&mut reference);
+            assert_eq!(actual, reference);
+            assert_eq!(keccak256(&actual), keccak256(&reference));
+        }
+        for n in [0, 1, 127, 128, 192] {
+            assert_eq!(
+                alloy_trie::root::ordered_trie_root_with_encoder(
+                    &prepared[..n],
+                    encode_receipt_prepared
+                ),
+                calculate_receipt_root(&prepared[..n])
+            );
+        }
+    }
 
     #[test]
     fn word_bloom_sets_each_protocol_bit() {

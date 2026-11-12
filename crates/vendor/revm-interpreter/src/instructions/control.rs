@@ -55,6 +55,35 @@ pub fn pc<WIRE: InterpreterTypes, H: ?Sized>(
     ip
 }
 
+/// Return data remains independently owned after the child memory is freed.
+/// At the common aligned 32-byte size, emit four bounded word moves directly.
+#[inline]
+fn own_return_bytes(bytes: &[u8]) -> Bytes {
+    if bytes.len() == 32 && bytes.as_ptr() as usize & 7 == 0 {
+        let mut output = std::vec::Vec::<u8>::with_capacity(32);
+        let dst = output.as_mut_ptr();
+        if dst as usize & 7 == 0 {
+            // SAFETY: both addresses have checked word alignment. The source
+            // contains 32 initialized bytes and the new vector owns 32 writable
+            // bytes. Four complete stores initialize the prefix before set_len.
+            unsafe {
+                let src = bytes.as_ptr().cast::<u64>();
+                let dst = dst.cast::<u64>();
+                dst.write_volatile(src.read_volatile());
+                dst.add(1).write_volatile(src.add(1).read_volatile());
+                dst.add(2).write_volatile(src.add(2).read_volatile());
+                dst.add(3).write_volatile(src.add(3).read_volatile());
+                output.set_len(32);
+            }
+        } else {
+            output.extend_from_slice(bytes);
+        }
+        output.into()
+    } else {
+        bytes.to_vec().into()
+    }
+}
+
 #[inline]
 /// Internal helper function for return operations.
 ///
@@ -74,7 +103,7 @@ fn return_inner(
         if !interpreter.resize_memory(gas_params, offset, len) {
             return core::ptr::null();
         }
-        output = interpreter.memory.slice_len(offset, len).to_vec().into()
+        output = own_return_bytes(&interpreter.memory.slice_len(offset, len))
     }
 
     interpreter.set_action_at(
@@ -134,4 +163,36 @@ pub fn unknown<WIRE: InterpreterTypes, H: ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
     context.interpreter.halt(InstructionResult::OpcodeNotFound)
+}
+
+#[cfg(test)]
+mod return_copy_tests {
+    use super::*;
+
+    #[test]
+    fn owned_return_words_match_slice_copy() {
+        #[repr(align(8))]
+        struct Aligned([u8; 264]);
+        let mut source = Aligned([0; 264]);
+        let mut seed = 0xb826_9a34_57df_c10eu64;
+        for _ in 0..32 {
+            for b in &mut source.0 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                *b = seed as u8;
+            }
+            for offset in 0..8 {
+                for len in [0, 1, 20, 31, 32, 33, 64, 256] {
+                    let expected = source.0[offset..offset + len].to_vec();
+                    let actual = own_return_bytes(&source.0[offset..offset + len]);
+                    assert_eq!(actual.as_ref(), expected.as_slice());
+                    let retained = actual.clone();
+                    drop(actual);
+                    source.0[offset] ^= 0xff;
+                    assert_eq!(retained.as_ref(), expected.as_slice());
+                }
+            }
+        }
+    }
 }
