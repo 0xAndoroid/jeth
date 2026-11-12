@@ -185,6 +185,51 @@ unsafe fn merge_final_block<const XOR: bool>(dst: *mut u64, src: *const u8, rem:
     }
 }
 
+/// Write each rate lane once for a fixed short message, including both
+/// padding bytes. Partial containing words obey the generic path's bounds.
+#[inline(always)]
+unsafe fn merge_short_block<const LEN: usize>(state: *mut u64, bytes: *const u8) {
+    const {
+        assert!(LEN < RATE_BYTES);
+    }
+    let words = LEN / 8;
+    let tail = LEN & 7;
+    let off = bytes as usize & 7;
+    let data = if off == 0 {
+        copy_words::<false>(state, bytes.cast(), words);
+        if tail == 0 {
+            0
+        } else {
+            load_word::<0>(bytes.cast::<u64>().add(words))
+        }
+    } else if LEN != 0 {
+        let last = gather_words::<false>(state, bytes, words);
+        if tail == 0 {
+            0
+        } else {
+            let shift = (off * 8) as u32;
+            let low = last >> shift;
+            if off + tail > 8 {
+                let base = (bytes as usize & !7) as *const u64;
+                low | (load_word::<1>(base.wrapping_add(words)) << (64 - shift))
+            } else {
+                low
+            }
+        }
+    } else {
+        0
+    };
+    let pad = 1u64 << (8 * tail);
+    let top = ((LEN >> 7) as u64) << 63;
+    write_volatile(state.add(words), (data & (pad - 1)) | pad | top);
+    for i in words + 1..RATE_WORDS - 1 {
+        write_volatile(state.add(i), 0);
+    }
+    if words < RATE_WORDS - 1 {
+        write_volatile(state.add(RATE_WORDS - 1), 1 << 63);
+    }
+}
+
 /// Writes the four digest lanes to the 32 bytes at `out` (any alignment).
 #[inline(always)]
 unsafe fn store_digest(state: *const u64, out: *mut u8) {
@@ -230,9 +275,147 @@ pub(crate) unsafe fn keccak256_into(bytes: *const u8, len: usize, out: *mut u8) 
     let mut src = bytes;
     let mut rem = len;
     if rem < RATE_BYTES {
-        // The padded message is the entire first block, i.e. the rate part of
-        // the state after absorption: write it there and permute.
-        merge_final_block::<false>(state, src, rem);
+        // Every possible short length selects the same padding grammar with
+        // constant lane counts. The range guard above makes the fallback dead.
+        match rem {
+            0 => merge_short_block::<0>(state, src),
+            1 => merge_short_block::<1>(state, src),
+            2 => merge_short_block::<2>(state, src),
+            3 => merge_short_block::<3>(state, src),
+            4 => merge_short_block::<4>(state, src),
+            5 => merge_short_block::<5>(state, src),
+            6 => merge_short_block::<6>(state, src),
+            7 => merge_short_block::<7>(state, src),
+            8 => merge_short_block::<8>(state, src),
+            9 => merge_short_block::<9>(state, src),
+            10 => merge_short_block::<10>(state, src),
+            11 => merge_short_block::<11>(state, src),
+            12 => merge_short_block::<12>(state, src),
+            13 => merge_short_block::<13>(state, src),
+            14 => merge_short_block::<14>(state, src),
+            15 => merge_short_block::<15>(state, src),
+            16 => merge_short_block::<16>(state, src),
+            17 => merge_short_block::<17>(state, src),
+            18 => merge_short_block::<18>(state, src),
+            19 => merge_short_block::<19>(state, src),
+            20 => merge_short_block::<20>(state, src),
+            21 => merge_short_block::<21>(state, src),
+            22 => merge_short_block::<22>(state, src),
+            23 => merge_short_block::<23>(state, src),
+            24 => merge_short_block::<24>(state, src),
+            25 => merge_short_block::<25>(state, src),
+            26 => merge_short_block::<26>(state, src),
+            27 => merge_short_block::<27>(state, src),
+            28 => merge_short_block::<28>(state, src),
+            29 => merge_short_block::<29>(state, src),
+            30 => merge_short_block::<30>(state, src),
+            31 => merge_short_block::<31>(state, src),
+            32 => merge_short_block::<32>(state, src),
+            33 => merge_short_block::<33>(state, src),
+            34 => merge_short_block::<34>(state, src),
+            35 => merge_short_block::<35>(state, src),
+            36 => merge_short_block::<36>(state, src),
+            37 => merge_short_block::<37>(state, src),
+            38 => merge_short_block::<38>(state, src),
+            39 => merge_short_block::<39>(state, src),
+            40 => merge_short_block::<40>(state, src),
+            41 => merge_short_block::<41>(state, src),
+            42 => merge_short_block::<42>(state, src),
+            43 => merge_short_block::<43>(state, src),
+            44 => merge_short_block::<44>(state, src),
+            45 => merge_short_block::<45>(state, src),
+            46 => merge_short_block::<46>(state, src),
+            47 => merge_short_block::<47>(state, src),
+            48 => merge_short_block::<48>(state, src),
+            49 => merge_short_block::<49>(state, src),
+            50 => merge_short_block::<50>(state, src),
+            51 => merge_short_block::<51>(state, src),
+            52 => merge_short_block::<52>(state, src),
+            53 => merge_short_block::<53>(state, src),
+            54 => merge_short_block::<54>(state, src),
+            55 => merge_short_block::<55>(state, src),
+            56 => merge_short_block::<56>(state, src),
+            57 => merge_short_block::<57>(state, src),
+            58 => merge_short_block::<58>(state, src),
+            59 => merge_short_block::<59>(state, src),
+            60 => merge_short_block::<60>(state, src),
+            61 => merge_short_block::<61>(state, src),
+            62 => merge_short_block::<62>(state, src),
+            63 => merge_short_block::<63>(state, src),
+            64 => merge_short_block::<64>(state, src),
+            65 => merge_short_block::<65>(state, src),
+            66 => merge_short_block::<66>(state, src),
+            67 => merge_short_block::<67>(state, src),
+            68 => merge_short_block::<68>(state, src),
+            69 => merge_short_block::<69>(state, src),
+            70 => merge_short_block::<70>(state, src),
+            71 => merge_short_block::<71>(state, src),
+            72 => merge_short_block::<72>(state, src),
+            73 => merge_short_block::<73>(state, src),
+            74 => merge_short_block::<74>(state, src),
+            75 => merge_short_block::<75>(state, src),
+            76 => merge_short_block::<76>(state, src),
+            77 => merge_short_block::<77>(state, src),
+            78 => merge_short_block::<78>(state, src),
+            79 => merge_short_block::<79>(state, src),
+            80 => merge_short_block::<80>(state, src),
+            81 => merge_short_block::<81>(state, src),
+            82 => merge_short_block::<82>(state, src),
+            83 => merge_short_block::<83>(state, src),
+            84 => merge_short_block::<84>(state, src),
+            85 => merge_short_block::<85>(state, src),
+            86 => merge_short_block::<86>(state, src),
+            87 => merge_short_block::<87>(state, src),
+            88 => merge_short_block::<88>(state, src),
+            89 => merge_short_block::<89>(state, src),
+            90 => merge_short_block::<90>(state, src),
+            91 => merge_short_block::<91>(state, src),
+            92 => merge_short_block::<92>(state, src),
+            93 => merge_short_block::<93>(state, src),
+            94 => merge_short_block::<94>(state, src),
+            95 => merge_short_block::<95>(state, src),
+            96 => merge_short_block::<96>(state, src),
+            97 => merge_short_block::<97>(state, src),
+            98 => merge_short_block::<98>(state, src),
+            99 => merge_short_block::<99>(state, src),
+            100 => merge_short_block::<100>(state, src),
+            101 => merge_short_block::<101>(state, src),
+            102 => merge_short_block::<102>(state, src),
+            103 => merge_short_block::<103>(state, src),
+            104 => merge_short_block::<104>(state, src),
+            105 => merge_short_block::<105>(state, src),
+            106 => merge_short_block::<106>(state, src),
+            107 => merge_short_block::<107>(state, src),
+            108 => merge_short_block::<108>(state, src),
+            109 => merge_short_block::<109>(state, src),
+            110 => merge_short_block::<110>(state, src),
+            111 => merge_short_block::<111>(state, src),
+            112 => merge_short_block::<112>(state, src),
+            113 => merge_short_block::<113>(state, src),
+            114 => merge_short_block::<114>(state, src),
+            115 => merge_short_block::<115>(state, src),
+            116 => merge_short_block::<116>(state, src),
+            117 => merge_short_block::<117>(state, src),
+            118 => merge_short_block::<118>(state, src),
+            119 => merge_short_block::<119>(state, src),
+            120 => merge_short_block::<120>(state, src),
+            121 => merge_short_block::<121>(state, src),
+            122 => merge_short_block::<122>(state, src),
+            123 => merge_short_block::<123>(state, src),
+            124 => merge_short_block::<124>(state, src),
+            125 => merge_short_block::<125>(state, src),
+            126 => merge_short_block::<126>(state, src),
+            127 => merge_short_block::<127>(state, src),
+            128 => merge_short_block::<128>(state, src),
+            129 => merge_short_block::<129>(state, src),
+            130 => merge_short_block::<130>(state, src),
+            131 => merge_short_block::<131>(state, src),
+            132 => merge_short_block::<132>(state, src),
+            133 => merge_short_block::<133>(state, src),
+            134 => merge_short_block::<134>(state, src),
+            135 => merge_short_block::<135>(state, src),
+            _ => unreachable!(),
+        }
         permute(state);
     } else {
         // First block: absorbing into the zero state is a copy.
@@ -363,6 +546,29 @@ mod tests {
                         want,
                         "len {len} in_off {in_off} out_off {out_off}"
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn overlapping_input_output_matches_reference() {
+        let mut rng = 0xa4b3_c2d1_e0f9_8765u64;
+        // Includes the address, storage-key, pair and bloom input sizes.
+        for len in (0..=300).chain([308, 340, 372, 404, 436, 468, 500, 512, 532, 1024, 2048]) {
+            let msg = random_bytes(&mut rng, len);
+            let want = reference(&msg);
+            for input_offset in 0..8 {
+                for output_offset in 0..8 {
+                    let mut storage = vec![0u64; (len + 96) / 8 + 1];
+                    let base = storage.as_mut_ptr().cast::<u8>();
+                    unsafe {
+                        let input = base.add(8 + input_offset);
+                        let output = base.add(8 + output_offset);
+                        core::ptr::copy_nonoverlapping(msg.as_ptr(), input, len);
+                        keccak256_into(input, len, output);
+                        assert_eq!(core::slice::from_raw_parts(output, 32), &want);
+                    }
                 }
             }
         }
