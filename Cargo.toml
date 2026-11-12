@@ -4,7 +4,7 @@ resolver = "2"
 # package (own [workspace] table) built exclusively through the `jolt` CLI for
 # riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
 # from native host builds.
-members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254", "crates/inlines/bls12-381"]
+members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254", "crates/inlines/bls12-381", "crates/vendor/revm-bytecode"]
 
 [workspace.package]
 version = "0.1.0"
@@ -84,6 +84,7 @@ zeth-mpt = { path = "crates/vendor/zeth-mpt" }
 # jeth-core); the a16z fork used by the jolt crates is a different source and is untouched.
 [patch.crates-io]
 ark-ff = { path = "crates/vendor/ark-ff" }
+revm-bytecode = { path = "crates/vendor/revm-bytecode" }
 
 [workspace.lints.rust]
 # Guest pointer APIs and aligned reads require unsafe; explicit blocks mark each operation.
