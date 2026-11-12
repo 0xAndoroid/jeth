@@ -25,7 +25,7 @@ use super::{
 };
 use alloy_primitives::B256;
 use alloy_rlp::{Encodable, EMPTY_STRING_CODE};
-use alloy_trie::nodes::encode_path_leaf;
+use alloy_trie::{nodes::encode_path_leaf, Nibbles};
 use core::ptr::{read_volatile, write_volatile};
 
 /// Scratch capacity for the arena encoder — a branch is ≤ 3 + 17×33 = 564 B,
@@ -50,20 +50,23 @@ impl Scratch {
 /// Write an RLP list header for `payload_len` at `buf[0..]`; returns its size.
 /// Mirrors `alloy_rlp::Header::encode` for lists (payloads here ≤ 1 KiB).
 #[inline(always)]
-fn write_list_header(buf: &mut [u8], payload_len: usize) -> usize {
-    if payload_len < 56 {
-        buf[0] = 0xc0 + payload_len as u8;
-        1
+fn write_list_header(buf: &mut Scratch, payload_len: usize) -> usize {
+    let (word, len): (u64, usize) = if payload_len < 56 {
+        (0xc0 + payload_len as u64, 1)
     } else if payload_len < 256 {
-        buf[0] = 0xf8;
-        buf[1] = payload_len as u8;
-        2
+        (0xf8 | ((payload_len as u64) << 8), 2)
     } else {
-        buf[0] = 0xf9;
-        buf[1] = (payload_len >> 8) as u8;
-        buf[2] = payload_len as u8;
-        3
-    }
+        (
+            0xf9 | ((((payload_len >> 8) & 0xff) as u64) << 8)
+                | (((payload_len & 0xff) as u64) << 16),
+            3,
+        )
+    };
+    // SAFETY: Scratch owns an initialized, 8-aligned buffer. The header is
+    // the first write for this node, and every payload byte is overwritten
+    // before hashing, so bytes beyond the header in this word are dead.
+    unsafe { write_volatile(buf.0.as_mut_ptr().cast::<u64>(), word.to_le()) };
+    len
 }
 
 /// Longest string item the arena encoder writes: the long form carries a
@@ -105,6 +108,54 @@ fn write_str_item(buf: &mut Scratch, cursor: &mut usize, bytes: &[u8]) {
     // SAFETY: `bytes` is a live slice of `len ≥ 1` bytes; the bound above is
     // the writer's capacity contract.
     unsafe { put_prefixed(buf, cursor, prefix, bytes.as_ptr(), len) }
+}
+
+/// Append a compact HP path as an RLP string without the byte-reversed
+/// SmallVec temporary used by encode_path_leaf. The nibble integer is
+/// left-aligned; remove its odd first nibble before assembling the header.
+#[inline(always)]
+fn write_path_item(buf: &mut Scratch, cursor: &mut usize, prefix: &Nibbles, is_leaf: bool) {
+    let len = prefix.len();
+    let odd = len & 1 != 0;
+    let mut packed = *prefix;
+    let limbs = *packed.as_mut_uint_unchecked().as_limbs();
+    let mut hp = if is_leaf { 0x20u64 } else { 0 };
+    if odd {
+        hp |= 0x10 | (limbs[3] >> 60);
+    }
+    let encoded_len = len / 2 + 1;
+    if encoded_len == 1 {
+        // All four HP flags are below 0x80: one byte is its own RLP item.
+        buf.0[*cursor] = hp as u8;
+        *cursor += 1;
+        return;
+    }
+    let words = if odd {
+        [
+            ((limbs[3] << 4) | (limbs[2] >> 60)).swap_bytes(),
+            ((limbs[2] << 4) | (limbs[1] >> 60)).swap_bytes(),
+            ((limbs[1] << 4) | (limbs[0] >> 60)).swap_bytes(),
+            (limbs[0] << 4).swap_bytes(),
+        ]
+    } else {
+        [
+            limbs[3].swap_bytes(),
+            limbs[2].swap_bytes(),
+            limbs[1].swap_bytes(),
+            limbs[0].swap_bytes(),
+        ]
+    };
+    let item = [
+        ((0x80 + encoded_len) as u64 | (hp << 8) | (words[0] << 16)).to_le(),
+        ((words[0] >> 48) | (words[1] << 16)).to_le(),
+        ((words[1] >> 48) | (words[2] << 16)).to_le(),
+        ((words[2] >> 48) | (words[3] << 16)).to_le(),
+        (words[3] >> 48).to_le(),
+    ];
+    debug_assert!(*cursor + encoded_len + 1 <= MAX_NODE_ENCODING);
+    // SAFETY: item owns 40 initialized, aligned bytes; the path item is at
+    // most 34 bytes and immediately follows the at-most-three-byte header.
+    unsafe { put_raw(buf, cursor, item.as_ptr().cast(), encoded_len + 1) };
 }
 
 /// Word-granular scratch writer. Every sub-word memory access is a multi-row
@@ -360,17 +411,15 @@ impl<M: Memoization> Node<M> {
             claimed + 3 <= MAX_NODE_ENCODING,
             "MPT: node encoding too large"
         );
-        let header_len = write_list_header(&mut scratch.0, claimed);
+        let header_len = write_list_header(scratch, claimed);
         let mut cursor = header_len;
         match &*self {
             Node::Leaf(prefix, value, _) => {
-                let path = encode_path_leaf(prefix, true);
-                write_str_item(scratch, &mut cursor, &path);
+                write_path_item(scratch, &mut cursor, prefix, true);
                 write_str_item(scratch, &mut cursor, value);
             }
             Node::Extension(prefix, child, _) => {
-                let path = encode_path_leaf(prefix, false);
-                write_str_item(scratch, &mut cursor, &path);
+                write_path_item(scratch, &mut cursor, prefix, false);
                 write_child_ref(scratch, &mut cursor, child);
             }
             Node::Branch(children, _) => {
@@ -489,6 +538,46 @@ fn str_item_length(bytes: &[u8]) -> usize {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
+
+    #[test]
+    fn path_items_match_reference_encoding() {
+        for len in 0..=64 {
+            let nibbles: Vec<u8> = (0..len).map(|i| ((i * 7 + 3) & 15) as u8).collect();
+            let prefix = Nibbles::from_nibbles_unchecked(&nibbles);
+            for leaf in [false, true] {
+                let compact = encode_path_leaf(&prefix, leaf);
+                let expected = alloy_rlp::encode(compact.as_slice());
+                for offset in 0..8 {
+                    let mut scratch = Scratch::new();
+                    scratch.0.fill(0xa5);
+                    let mut cursor = offset;
+                    write_path_item(&mut scratch, &mut cursor, &prefix, leaf);
+                    assert_eq!(cursor, offset + expected.len());
+                    assert_eq!(&scratch.0[offset..cursor], expected.as_slice());
+                    assert!(scratch.0[..offset].iter().all(|&b| b == 0xa5));
+                    assert!(scratch.0[cursor + 7..].iter().all(|&b| b == 0xa5));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn list_headers_match_rlp_encoding() {
+        for payload_length in 0..=MAX_NODE_ENCODING - 3 {
+            let mut expected = Vec::new();
+            alloy_rlp::Header {
+                list: true,
+                payload_length,
+            }
+            .encode(&mut expected);
+            let mut scratch = Scratch::new();
+            scratch.0.fill(0xa5);
+            let len = write_list_header(&mut scratch, payload_length);
+            assert_eq!(len, expected.len());
+            assert_eq!(&scratch.0[..len], expected.as_slice());
+            assert!(scratch.0[8..].iter().all(|&byte| byte == 0xa5));
+        }
+    }
 
     /// The word writer is byte-exact for every source offset, cursor offset
     /// and length, preserves everything below the cursor and clobbers at most

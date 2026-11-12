@@ -14,7 +14,7 @@
 
 use super::{
     children::{Children, Slot},
-    decode::le_words_32,
+    decode::{le_words_32, load_word},
     memoize::Memoization,
     nibbles::NibbleSlice,
     rlp::DigestResolver,
@@ -38,17 +38,24 @@ fn key_nibble(key: &[u8], d: usize) -> u8 {
 /// Sixty-four zero nibbles: the shape of every packed 32-byte key.
 const FULL_KEY: Nibbles = Nibbles::unpack_array(&[0; 32]);
 
-/// `Nibbles::unpack(key)`, assembled from whole words for the 32-byte hashed
-/// keys jeth looks up: the packed form is the key as a big-endian `U256`, so
-/// four aligned-word loads ([`le_words_32`]) plus four byte swaps replace the
-/// byte-reversing copy loop. Other lengths take `Nibbles::unpack`.
+/// `Nibbles::unpack(key)`, assembled from containing words. Short paths
+/// occupy the high bytes of the packed integer, just like full hashed keys.
 #[inline(always)]
-fn packed_key(key: &[u8]) -> Nibbles {
-    if key.len() != 32 {
+pub(super) fn packed_key(key: &[u8]) -> Nibbles {
+    if key.len() > 32 {
         return Nibbles::unpack(key);
     }
-    let w = le_words_32(key);
-    let mut nibbles = FULL_KEY;
+    let w = if key.len() == 32 {
+        le_words_32(key)
+    } else {
+        [
+            packed_limb(key, 0),
+            packed_limb(key, 8),
+            packed_limb(key, 16),
+            packed_limb(key, 24),
+        ]
+    };
+    let mut nibbles = FULL_KEY.slice_unchecked(0, key.len() * 2);
     *nibbles.as_mut_uint_unchecked() = U256::from_limbs([
         w[3].swap_bytes(),
         w[2].swap_bytes(),
@@ -56,6 +63,29 @@ fn packed_key(key: &[u8]) -> Nibbles {
         w[0].swap_bytes(),
     ]);
     nibbles
+}
+
+/// Up to eight live bytes, zero-padded on the right, as a little-endian limb.
+#[inline(always)]
+fn packed_limb(bytes: &[u8], start: usize) -> u64 {
+    if start >= bytes.len() {
+        return 0;
+    }
+    let len = (bytes.len() - start).min(8);
+    let address = bytes.as_ptr() as usize + start;
+    let offset = address & 7;
+    let base = (address & !7) as *const u64;
+    // SAFETY: the first aligned word contains bytes[start]. The second is
+    // read only when it also contains a live byte. load_word documents the
+    // containing-word machine reads, including the native implementation.
+    let mut word = unsafe { u64::from_le(load_word::<0>(base)) } >> (offset * 8);
+    if offset + len > 8 {
+        word |= unsafe { u64::from_le(load_word::<1>(base)) } << ((8 - offset) * 8);
+    }
+    if len < 8 {
+        word &= (1u64 << (len * 8)) - 1;
+    }
+    word
 }
 
 pub(super) type Child<M> = Box<Node<M>>;
@@ -432,8 +462,8 @@ impl<M: Memoization> Slot<M> {
                 let child = Node::decode_child(digest, bytes)
                     .expect("MPT: invalid witness node")
                     .expect("MPT: Unresolved node access"); // digest-for-digest refusal
-                // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
-                // which a slot never holds: the child is absent.
+                                                            // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
+                                                            // which a slot never holds: the child is absent.
                 if matches!(*child, Node::Null) {
                     *self = Slot::Empty;
                     return None;
@@ -453,15 +483,17 @@ mod tests {
     use super::*;
 
     /// The word-assembled packed key equals `Nibbles::unpack` for every
-    /// source alignment of a 32-byte key.
+    /// source alignment and every supported byte length.
     #[test]
     fn packed_key_matches_unpack() {
         let bytes: alloc::vec::Vec<u8> = (0..48u8)
             .map(|i| i.wrapping_mul(53).wrapping_add(7))
             .collect();
         for so in 0..8 {
-            let key = &bytes[so..so + 32];
-            assert_eq!(packed_key(key), Nibbles::unpack(key), "so={so}");
+            for len in 0..=32 {
+                let key = &bytes[so..so + len];
+                assert_eq!(packed_key(key), Nibbles::unpack(key), "so={so}, len={len}");
+            }
         }
         assert_eq!(packed_key(&bytes[..5]), Nibbles::unpack(&bytes[..5]));
     }
