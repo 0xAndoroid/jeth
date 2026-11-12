@@ -110,8 +110,10 @@ fn decode_node_zc_into<M: Memoization>(
             _ => Err(alloy_rlp::Error::UnexpectedLength),
         };
     }
-    let plain = is_plain_branch(payload);
-    let items = if plain { 17 } else { count_items(payload)? };
+    if try_plain_branch_into(payload, out) {
+        return Ok(());
+    }
+    let items = count_items(payload)?;
     match items {
         // branch node: 17-item node [ v0 ... v15, value ]
         17 => {
@@ -121,12 +123,7 @@ fn decode_node_zc_into<M: Memoization>(
             let Node::Branch(children, _) = &mut *node else {
                 unreachable!()
             };
-            let filled = if plain {
-                decode_plain_branch_children(payload, children);
-                Ok(())
-            } else {
-                decode_branch_children(source, payload, children)
-            };
+            let filled = decode_branch_children(source, payload, children);
             if filled.is_err() {
                 *node = Node::Null; // drops the partial branch
             }
@@ -272,6 +269,27 @@ fn item_len(p: &[u8]) -> alloy_rlp::Result<usize> {
 /// the general grammar, so this predicate never rejects a valid node.
 #[inline]
 pub fn is_plain_branch(payload: &[u8]) -> bool {
+    // At the maximum plain length, every child must be a digest. Constant
+    // offsets remove the general cursor walk while checking every header.
+    if payload.len() == 529 {
+        return payload[0] == DIGEST_ITEM_PREFIX
+            && payload[33] == DIGEST_ITEM_PREFIX
+            && payload[66] == DIGEST_ITEM_PREFIX
+            && payload[99] == DIGEST_ITEM_PREFIX
+            && payload[132] == DIGEST_ITEM_PREFIX
+            && payload[165] == DIGEST_ITEM_PREFIX
+            && payload[198] == DIGEST_ITEM_PREFIX
+            && payload[231] == DIGEST_ITEM_PREFIX
+            && payload[264] == DIGEST_ITEM_PREFIX
+            && payload[297] == DIGEST_ITEM_PREFIX
+            && payload[330] == DIGEST_ITEM_PREFIX
+            && payload[363] == DIGEST_ITEM_PREFIX
+            && payload[396] == DIGEST_ITEM_PREFIX
+            && payload[429] == DIGEST_ITEM_PREFIX
+            && payload[462] == DIGEST_ITEM_PREFIX
+            && payload[495] == DIGEST_ITEM_PREFIX
+            && payload[528] == EMPTY_STRING_CODE;
+    }
     if !(81..=529).contains(&payload.len()) || (payload.len() - 17) & 31 != 0 {
         return false;
     }
@@ -301,9 +319,264 @@ fn count_items(mut p: &[u8]) -> alloy_rlp::Result<usize> {
     Ok(n)
 }
 
+/// Check and fill a plain branch in one traversal. The length shape cheaply
+/// excludes other nodes. A rejected speculative branch contains only empty
+/// or digest slots, is dropped, and leaves a valid Null for the general parser.
+#[inline]
+fn try_plain_branch_into<M: Memoization>(payload: &[u8], out: &mut MaybeUninit<Node<M>>) -> bool {
+    if !(81..=529).contains(&payload.len()) || (payload.len() - 17) & 31 != 0 {
+        return false;
+    }
+    let node = out.write(Node::Branch(Children::default(), M::default()));
+    let Node::Branch(children, _) = &mut *node else {
+        unreachable!()
+    };
+    let filled = match payload.as_ptr() as usize & 7 {
+        0 => fill_plain_aligned::<0, M>(payload, children),
+        1 => fill_plain_aligned::<1, M>(payload, children),
+        2 => fill_plain_aligned::<2, M>(payload, children),
+        3 => fill_plain_aligned::<3, M>(payload, children),
+        4 => fill_plain_aligned::<4, M>(payload, children),
+        5 => fill_plain_aligned::<5, M>(payload, children),
+        6 => fill_plain_aligned::<6, M>(payload, children),
+        7 => fill_plain_aligned::<7, M>(payload, children),
+        _ => unreachable!(),
+    };
+    if !filled {
+        *node = Node::Null;
+    }
+    filled
+}
+
+/// Every accepted child consumes either 1 or 33 bytes, both 1 modulo 8.
+/// Thus child INDEX's digest starts at (START + INDEX + 1) modulo 8,
+/// irrespective of which earlier children were empty. Specialize that source
+/// alignment while retaining every prefix and length check.
+#[inline(always)]
+fn fill_plain_child<const START: usize, const INDEX: usize, M>(
+    p: &mut &[u8],
+    slot: &mut Slot<M>,
+) -> bool {
+    match p.first() {
+        Some(&EMPTY_STRING_CODE) => {
+            *p = &p[1..];
+            true
+        }
+        Some(&DIGEST_ITEM_PREFIX) if p.len() >= DIGEST_RLP_LENGTH => {
+            let ptr = p.as_ptr().wrapping_add(1) as usize;
+            let so = (START + INDEX + 1) & 7;
+            debug_assert_eq!(ptr & 7, so);
+            let base = (ptr & !7) as *const u64;
+            // Each containing word includes live digest bytes; the prefix and
+            // length guard above proves the same bounds as le_words_32.
+            let words = unsafe {
+                let a = u64::from_le(load_word::<0>(base));
+                let b = u64::from_le(load_word::<1>(base));
+                let c = u64::from_le(load_word::<2>(base));
+                let d = u64::from_le(load_word::<3>(base));
+                if so == 0 {
+                    [a, b, c, d]
+                } else {
+                    let e = u64::from_le(load_word::<4>(base));
+                    let right = 8 * so;
+                    let left = 64 - right;
+                    [
+                        (a >> right) | (b << left),
+                        (b >> right) | (c << left),
+                        (c >> right) | (d << left),
+                        (d >> right) | (e << left),
+                    ]
+                }
+            };
+            slot.fill_digest(Digest::from_le_limbs(words));
+            *p = &p[DIGEST_RLP_LENGTH..];
+            true
+        }
+        _ => false,
+    }
+}
+
+#[inline(always)]
+fn fill_plain_aligned<const START: usize, M>(mut p: &[u8], children: &mut Children<M>) -> bool {
+    if p.len() == 529 {
+        return fill_dense_aligned::<START, M>(p, children);
+    }
+    if !fill_plain_child::<START, 0, M>(&mut p, children.slot_mut(0)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 1, M>(&mut p, children.slot_mut(1)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 2, M>(&mut p, children.slot_mut(2)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 3, M>(&mut p, children.slot_mut(3)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 4, M>(&mut p, children.slot_mut(4)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 5, M>(&mut p, children.slot_mut(5)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 6, M>(&mut p, children.slot_mut(6)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 7, M>(&mut p, children.slot_mut(7)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 8, M>(&mut p, children.slot_mut(8)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 9, M>(&mut p, children.slot_mut(9)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 10, M>(&mut p, children.slot_mut(10)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 11, M>(&mut p, children.slot_mut(11)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 12, M>(&mut p, children.slot_mut(12)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 13, M>(&mut p, children.slot_mut(13)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 14, M>(&mut p, children.slot_mut(14)) {
+        return false;
+    }
+    if !fill_plain_child::<START, 15, M>(&mut p, children.slot_mut(15)) {
+        return false;
+    }
+    p == [EMPTY_STRING_CODE]
+}
+
+/// A 529-byte plain payload can only contain sixteen 33-byte digests
+/// followed by the empty value. Every offset is checked before its digest
+/// is loaded; on any mismatch the initialized branch is still drop-safe.
+#[inline(always)]
+fn fill_dense_aligned<const START: usize, M>(p: &[u8], children: &mut Children<M>) -> bool {
+    debug_assert_eq!(p.len(), 529);
+    if p[0] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[0..33];
+    if !fill_plain_child::<START, 0, M>(&mut item, children.slot_mut(0)) {
+        return false;
+    }
+    if p[33] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[33..66];
+    if !fill_plain_child::<START, 1, M>(&mut item, children.slot_mut(1)) {
+        return false;
+    }
+    if p[66] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[66..99];
+    if !fill_plain_child::<START, 2, M>(&mut item, children.slot_mut(2)) {
+        return false;
+    }
+    if p[99] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[99..132];
+    if !fill_plain_child::<START, 3, M>(&mut item, children.slot_mut(3)) {
+        return false;
+    }
+    if p[132] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[132..165];
+    if !fill_plain_child::<START, 4, M>(&mut item, children.slot_mut(4)) {
+        return false;
+    }
+    if p[165] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[165..198];
+    if !fill_plain_child::<START, 5, M>(&mut item, children.slot_mut(5)) {
+        return false;
+    }
+    if p[198] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[198..231];
+    if !fill_plain_child::<START, 6, M>(&mut item, children.slot_mut(6)) {
+        return false;
+    }
+    if p[231] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[231..264];
+    if !fill_plain_child::<START, 7, M>(&mut item, children.slot_mut(7)) {
+        return false;
+    }
+    if p[264] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[264..297];
+    if !fill_plain_child::<START, 8, M>(&mut item, children.slot_mut(8)) {
+        return false;
+    }
+    if p[297] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[297..330];
+    if !fill_plain_child::<START, 9, M>(&mut item, children.slot_mut(9)) {
+        return false;
+    }
+    if p[330] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[330..363];
+    if !fill_plain_child::<START, 10, M>(&mut item, children.slot_mut(10)) {
+        return false;
+    }
+    if p[363] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[363..396];
+    if !fill_plain_child::<START, 11, M>(&mut item, children.slot_mut(11)) {
+        return false;
+    }
+    if p[396] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[396..429];
+    if !fill_plain_child::<START, 12, M>(&mut item, children.slot_mut(12)) {
+        return false;
+    }
+    if p[429] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[429..462];
+    if !fill_plain_child::<START, 13, M>(&mut item, children.slot_mut(13)) {
+        return false;
+    }
+    if p[462] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[462..495];
+    if !fill_plain_child::<START, 14, M>(&mut item, children.slot_mut(14)) {
+        return false;
+    }
+    if p[495] != DIGEST_ITEM_PREFIX {
+        return false;
+    }
+    let mut item = &p[495..528];
+    if !fill_plain_child::<START, 15, M>(&mut item, children.slot_mut(15)) {
+        return false;
+    }
+    p[528] == EMPTY_STRING_CODE
+}
+
 /// Fill a branch after `is_plain_branch` validated every child boundary,
 /// the empty value, and at least two digests. No resource-owning children
 /// can appear here; the initialized branch remains valid after each write.
+#[cfg(test)]
 #[inline]
 fn decode_plain_branch_children<M: Memoization>(mut p: &[u8], children: &mut Children<M>) {
     debug_assert!(is_plain_branch(p));
@@ -594,6 +867,83 @@ mod tests {
             decode_plain_branch_children(&source, &mut actual);
             decode_branch_children(&source, &source, &mut expected).unwrap();
             assert!(actual == expected, "mask={mask}");
+            let mut direct = MaybeUninit::uninit();
+            assert!(try_plain_branch_into::<Cache>(&source, &mut direct));
+            // A true return guarantees a fully initialized branch.
+            let direct = unsafe { direct.assume_init() };
+            let Node::Branch(children, _) = direct else {
+                panic!("expected branch")
+            };
+            assert!(children == expected, "fused mask={mask}");
+        }
+    }
+
+    #[test]
+    fn speculative_plain_branch_matches_recognizer_on_malformed_inputs() {
+        fn check(p: &[u8]) {
+            let mut node = MaybeUninit::new(Node::<Cache>::Null);
+            let accepted = try_plain_branch_into(p, &mut node);
+            assert_eq!(accepted, is_plain_branch(p));
+            // Seeded Null or the fully initialized result may always be dropped.
+            let node = unsafe { node.assume_init() };
+            if !accepted {
+                assert!(matches!(node, Node::Null));
+            }
+        }
+        let mut payload = Vec::new();
+        for i in 0..16 {
+            payload.push(DIGEST_ITEM_PREFIX);
+            payload.extend_from_slice(&[i as u8; 32]);
+        }
+        payload.push(EMPTY_STRING_CODE);
+        for end in 0..=payload.len() {
+            check(&payload[..end]);
+        }
+        for child in 0..16 {
+            for prefix in 0..=255u8 {
+                payload[child * 33] = prefix;
+                check(&payload);
+            }
+            payload[child * 33] = DIGEST_ITEM_PREFIX;
+        }
+        for terminal in 0..=255u8 {
+            *payload.last_mut().unwrap() = terminal;
+            check(&payload);
+        }
+    }
+
+    #[test]
+    fn fused_plain_branches_match_for_every_source_alignment() {
+        for alignment in 0..8 {
+            for seed in 0..256u16 {
+                let mask = if seed == 0 {
+                    u16::MAX
+                } else {
+                    seed.wrapping_mul(257) ^ seed.rotate_left(5) | 3
+                };
+                let mut payload = Vec::new();
+                for i in 0..16 {
+                    if mask & (1 << i) == 0 {
+                        payload.push(EMPTY_STRING_CODE);
+                    } else {
+                        payload.push(DIGEST_ITEM_PREFIX);
+                        payload.extend_from_slice(&[i as u8; 32]);
+                    }
+                }
+                payload.push(EMPTY_STRING_CODE);
+                let mut storage = vec![0xaa; alignment];
+                storage.extend_from_slice(&payload);
+                let source = Bytes::from(storage).slice(alignment..);
+                let mut direct = MaybeUninit::uninit();
+                assert!(try_plain_branch_into::<Cache>(&source, &mut direct));
+                let direct = unsafe { direct.assume_init() };
+                let Node::Branch(actual, _) = direct else {
+                    panic!("expected branch")
+                };
+                let mut expected = Children::<Cache>::default();
+                decode_branch_children(&source, &source, &mut expected).unwrap();
+                assert!(actual == expected, "alignment={alignment} seed={seed}");
+            }
         }
     }
 
