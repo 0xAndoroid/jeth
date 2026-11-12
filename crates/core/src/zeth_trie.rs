@@ -98,20 +98,12 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
         Self::new(CachedTrie::from_digest(root))
     }
 
-    pub fn insert_with(&mut self, key: impl AsRef<[u8]>, value: T, r: &mut WitnessResolver) {
-        self.inner.insert_with(key, alloy_rlp::encode(value), r);
-    }
-
     pub fn remove_with(&mut self, key: impl AsRef<[u8]>, r: &mut WitnessResolver) -> bool {
         self.inner.remove_with(key, r)
     }
 
     pub fn get(&self, key: impl AsRef<[u8]>) -> alloy_rlp::Result<Option<T>> {
         self.inner.get(key).map(alloy_rlp::decode_exact).transpose()
-    }
-
-    pub fn insert(&mut self, key: impl AsRef<[u8]>, value: T) {
-        self.inner.insert(key, alloy_rlp::encode(value));
     }
 
     pub fn remove(&mut self, key: impl AsRef<[u8]>) -> bool {
@@ -121,6 +113,29 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
     pub fn hash(&mut self) -> B256 {
         self.inner.hash()
     }
+}
+
+/// Freeze each completed encoding while retaining the unused slab tail.
+/// BytesMut's split/freeze API owns the shared backing allocation; subsequent
+/// writes cannot mutate the immutable Bytes already installed in trie leaves.
+fn encode_trie_value<const MAX: usize>(
+    value: &impl alloy_rlp::Encodable,
+    slab: &mut alloy_primitives::bytes::BytesMut,
+) -> alloy_primitives::Bytes {
+    // The two private instantiations use the protocol maxima for U256 and
+    // TrieAccount. The existing BufMut implementation for MaybeUninit slices
+    // writes each byte before advancing; no initialized byte slice is forged.
+    let old_len = slab.len();
+    slab.reserve(MAX);
+    let mut remaining = &mut slab.spare_capacity_mut()[..MAX];
+    value.encode(&mut remaining);
+    let written = MAX - remaining.len();
+    // SAFETY: BufMut advances only over bytes initialized by the encoder.
+    // reserve provided the whole bounded view, and the old prefix stays live.
+    unsafe {
+        slab.set_len(old_len + written);
+    }
+    slab.split().freeze().into()
 }
 
 /// Storage tries are never materialized for reads —
@@ -358,23 +373,44 @@ impl StatelessTrie for SparseState {
         let storage_roots = storage_roots.get_mut();
         let resolver = resolver.get_mut();
 
+        // Each storage integer uses at most 33 RLP bytes; an account uses
+        // at most 110. Counting map lengths neither hashes nor reads advice.
+        // On a theoretical size overflow, normal BytesMut growth remains valid.
+        let slots = state
+            .storages
+            .values()
+            .try_fold(0usize, |n, storage| n.checked_add(storage.storage.len()));
+        let capacity = slots
+            .and_then(|n| n.checked_mul(33))
+            .and_then(|n| {
+                state
+                    .accounts
+                    .len()
+                    .checked_mul(110)
+                    .and_then(|a| n.checked_add(a))
+            })
+            .unwrap_or(0);
+        let mut encoded_values = alloy_primitives::bytes::BytesMut::with_capacity(capacity);
         let mut removed_accounts = Vec::new();
         // `state.accounts` is a foldhash HashMap — advice calls
         // (on-demand dirty-path resolution) must never be sequenced under
         // unsorted map iteration. Sorting also pins the perm order.
-        let mut accounts: Vec<_> = state.accounts.into_iter().collect();
-        accounts.sort_unstable_by_key(|(hashed_address, _)| *hashed_address);
+        // Sorting references keeps large account records in the post-state
+        // map. Its immutable borrow lasts through the loop; trie mutations
+        // affect self only. The key ordering and advice sequence are unchanged.
+        let mut accounts: Vec<_> = state.accounts.iter().collect();
+        accounts.sort_unstable_by_key(|(hashed_address, _)| **hashed_address);
         for (hashed_address, account) in accounts {
             let Some(account) = account else {
-                removed_accounts.push(hashed_address);
+                removed_accounts.push(*hashed_address);
                 continue;
             };
 
-            let storage_root = match state.storages.get(&hashed_address) {
-                None => match storage_roots.get(&hashed_address) {
+            let storage_root = match state.storages.get(hashed_address) {
+                None => match storage_roots.get(hashed_address) {
                     Some(root) => b256_from_le_words(*root),
                     None => state_trie
-                        .get(hashed_address)
+                        .get(*hashed_address)
                         .map_err(|_| StatelessTrieError::StatelessStateRootCalculationFailed)?
                         .map_or(EMPTY_ROOT_HASH, |a| a.storage_root),
                 },
@@ -384,17 +420,17 @@ impl StatelessTrie for SparseState {
                         // against the pre-trie would demand witness paths that
                         // legitimately don't exist (selfdestruct/recreate)
                         storages
-                            .entry(hashed_address)
+                            .entry(*hashed_address)
                             .insert_entry(RlpTrie::default())
                             .into_mut()
                     } else {
-                        match storages.entry(hashed_address) {
+                        match storages.entry(*hashed_address) {
                             Entry::Occupied(entry) => entry.into_mut(),
                             Entry::Vacant(entry) => {
-                                let anchor = match storage_roots.get(&hashed_address) {
+                                let anchor = match storage_roots.get(hashed_address) {
                                     Some(root) => b256_from_le_words(*root),
                                     None => state_trie
-                                        .get(hashed_address)
+                                        .get(*hashed_address)
                                         .map_err(|_| {
                                             StatelessTrieError::StatelessStateRootCalculationFailed
                                         })?
@@ -409,7 +445,11 @@ impl StatelessTrie for SparseState {
                     slots.sort_unstable_by_key(|(hashed_key, _)| *hashed_key);
                     for &(hashed_key, value) in &slots {
                         if !value.is_zero() {
-                            storage_trie.insert_with(hashed_key, *value, resolver);
+                            storage_trie.inner.insert_with(
+                                hashed_key,
+                                encode_trie_value::<33>(value, &mut encoded_values),
+                                resolver,
+                            );
                         }
                     }
                     // removals must happen last, otherwise unresolved orphans might still exist
@@ -430,7 +470,10 @@ impl StatelessTrie for SparseState {
                 storage_root,
                 code_hash: account.bytecode_hash.unwrap_or(KECCAK256_EMPTY),
             };
-            state_trie.insert(hashed_address, account);
+            state_trie.inner.insert(
+                *hashed_address,
+                encode_trie_value::<110>(&account, &mut encoded_values),
+            );
         }
         for hashed_address in &removed_accounts {
             self.remove_account(hashed_address);
@@ -442,5 +485,60 @@ impl StatelessTrie for SparseState {
         #[cfg(feature = "premeasure")]
         crate::premeasure::POST_ROOT.record();
         Ok(root)
+    }
+}
+
+#[cfg(test)]
+mod encoding_slab_tests {
+    use super::*;
+    use alloy_primitives::{bytes::BytesMut, keccak256};
+
+    #[test]
+    fn shared_value_encodings_and_roots_match_independent_allocations() {
+        let mut seed = 0x826e_c45b_710a_3df9u64;
+        let mut random = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        // Deliberately force growth while older immutable slices remain live.
+        let mut slab = BytesMut::with_capacity(1);
+        let mut retained = Vec::new();
+        let mut actual = CachedTrie::default();
+        let mut reference = CachedTrie::default();
+        for i in 0..256u64 {
+            let value =
+                U256::from_limbs([random(), random(), random(), random()]) >> (i as usize % 256);
+            let encoded = encode_trie_value::<33>(&value, &mut slab);
+            let expected = alloy_rlp::encode(value);
+            assert_eq!(encoded.as_ref(), expected.as_slice());
+            assert_eq!(keccak256(&encoded), keccak256(&expected));
+            let key = keccak256(i.to_be_bytes());
+            actual.insert(key, encoded.clone());
+            reference.insert(key, expected.clone());
+            retained.push((encoded, expected));
+            let account = TrieAccount {
+                nonce: random(),
+                balance: value,
+                storage_root: B256::from(value.to_be_bytes::<32>()),
+                code_hash: B256::from(
+                    U256::from_limbs([random(), random(), random(), random()]).to_be_bytes::<32>(),
+                ),
+            };
+            let encoded = encode_trie_value::<110>(&account, &mut slab);
+            let expected = alloy_rlp::encode(account);
+            assert_eq!(encoded.as_ref(), expected.as_slice());
+            assert_eq!(keccak256(&encoded), keccak256(&expected));
+            let key = keccak256((i + 256).to_be_bytes());
+            actual.insert(key, encoded.clone());
+            reference.insert(key, expected.clone());
+            retained.push((encoded, expected));
+        }
+        drop(slab);
+        for (encoded, expected) in retained {
+            assert_eq!(encoded.as_ref(), expected.as_slice());
+        }
+        assert_eq!(actual.hash(), reference.hash());
     }
 }

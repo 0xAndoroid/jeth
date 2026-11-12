@@ -1,5 +1,9 @@
 //! Deferred recovery equations; no validation output may precede `verify`.
 
+mod word_point;
+
+use word_point::{add_finite, Point, WordField};
+
 use crate::advice::advice_u64;
 use crate::crypto::{prepare_recovery, N};
 use alloc::vec::Vec;
@@ -231,8 +235,28 @@ fn challenge(digest: B256, index: usize) -> Secp256k1Fr {
 struct Term {
     biased: u128,
     top: usize,
-    point: Secp256k1Point,
-    negated: Secp256k1Point,
+    point: Point,
+    negated: Point,
+}
+
+/// Minimize the affine addition work after the GLV split. A bucket's first
+/// insertion is a copy; it cancels the corresponding running-sum addition
+/// in this estimate, leaving one weighted-result addition per live bucket.
+fn window_width(terms: usize) -> usize {
+    let points = 2 * terms;
+    (4usize..=12)
+        .min_by_key(|&width| {
+            let windows = 128usize.div_ceil(width);
+            let lower = windows - 1;
+            let top_bits = 128 - lower * width;
+            let lower_points = points - (points >> width);
+            let top_points = points - (points >> top_bits);
+            lower * (lower_points + (1 << (width - 1)))
+                + top_points
+                + (1 << top_bits)
+                + lower * width
+        })
+        .unwrap()
 }
 
 /// Pippenger MSM over the GLV-split terms with signed window digits.
@@ -243,14 +267,34 @@ struct Term {
 /// span 1..=2^(w-1) and its reduction chain halves. The top window keeps its
 /// unsigned digit plus the bias carry, which is at most 2^(128 - top_shift)
 /// (2^w for w = 8, 4 for w = 7), so no extra window is needed.
+#[inline(never)]
 fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
-    let width = if terms.len() < 512 { 7 } else { 8 };
+    match window_width(terms.len()) {
+        4 => pippenger_width::<4>(terms),
+        5 => pippenger_width::<5>(terms),
+        6 => pippenger_width::<6>(terms),
+        7 => pippenger_width::<7>(terms),
+        8 => pippenger_width::<8>(terms),
+        9 => pippenger_width::<9>(terms),
+        10 => pippenger_width::<10>(terms),
+        11 => pippenger_width::<11>(terms),
+        12 => pippenger_width::<12>(terms),
+        _ => unreachable!("window model only considers widths 4 through 12"),
+    }
+}
+
+fn pippenger_width<const WIDTH: usize>(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
+    let width = WIDTH;
     let windows = 128usize.div_ceil(width);
     let half = 1usize << (width - 1);
     let top_shift = width * (windows - 1);
     let bias = (0..windows - 1).fold(0u128, |bias, i| bias | (half as u128) << (width * i));
     let mut split = Vec::with_capacity(2 * terms.len());
     let mut push = |(negative, scalar): (bool, u128), point: Secp256k1Point| {
+        let point = Point::new_unchecked(WordField(point.x()), WordField(point.y()));
+        if point.is_infinity() {
+            return;
+        }
         let point = if negative { point.neg() } else { point };
         let (biased, overflow) = scalar.overflowing_add(bias);
         split.push(Term {
@@ -265,19 +309,19 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
         push(k1, point.clone());
         push(k2, point.endomorphism());
     }
-    let mut buckets = alloc::vec![Secp256k1Point::infinity(); (1 << width) + 1];
-    let mut result = Secp256k1Point::infinity();
+    let mut buckets = alloc::vec![Point::infinity(); (1 << width) + 1];
+    let mut result = Point::infinity();
     for window in (0..windows).rev() {
         for _ in 0..width {
             result = result.double();
         }
         let top = window == windows - 1;
         let live = if top { 1 << (128 - top_shift) } else { half };
-        buckets[1..=live].fill(Secp256k1Point::infinity());
+        buckets[1..=live].fill(Point::infinity());
         if top {
             for term in &split {
                 if term.top != 0 {
-                    buckets[term.top] = buckets[term.top].add(&term.point);
+                    buckets[term.top] = add_finite(&buckets[term.top], &term.point);
                 }
             }
         } else {
@@ -291,17 +335,17 @@ fn pippenger(terms: &[(Secp256k1Fr, Secp256k1Point)]) -> Secp256k1Point {
                     } else {
                         (digit.wrapping_neg(), &term.negated)
                     };
-                    buckets[index] = buckets[index].add(point);
+                    buckets[index] = add_finite(&buckets[index], point);
                 }
             }
         }
-        let mut sum = Secp256k1Point::infinity();
+        let mut sum = Point::infinity();
         for bucket in buckets[1..=live].iter().rev() {
             sum = sum.add(bucket);
             result = result.add(&sum);
         }
     }
-    result
+    Secp256k1Point::new_unchecked(result.x().0, result.y().0)
 }
 
 #[cfg(test)]

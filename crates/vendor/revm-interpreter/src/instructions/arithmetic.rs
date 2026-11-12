@@ -7,6 +7,65 @@ use crate::{
 use context_interface::Host;
 use primitives::U256;
 
+// Offset arithmetic commonly fits in one limb. Keep the full-width path for
+// every other value, including carry and borrow propagation across all limbs.
+#[inline(always)]
+pub(super) fn add_word(a: U256, b: U256) -> U256 {
+    let x = a.as_limbs();
+    let y = b.as_limbs();
+    if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
+        let (low, carry) = x[0].overflowing_add(y[0]);
+        U256::from_limbs([low, carry as u64, 0, 0])
+    } else {
+        a.wrapping_add(b)
+    }
+}
+
+// Two one-limb operands have an exact two-limb product.
+#[inline(always)]
+pub(super) fn mul_word(a: U256, b: U256) -> U256 {
+    let x = a.as_limbs();
+    let y = b.as_limbs();
+    if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
+        let product = (x[0] as u128) * (y[0] as u128);
+        U256::from_limbs([product as u64, (product >> 64) as u64, 0, 0])
+    } else if (x[1] | x[2] | x[3]) == 0 {
+        mul_by_word(b, x[0])
+    } else if (y[1] | y[2] | y[3]) == 0 {
+        mul_by_word(a, y[0])
+    } else {
+        a.wrapping_mul(b)
+    }
+}
+
+// Each product plus its incoming carry fits in u128. The final high carry
+// is discarded, exactly as required by multiplication modulo 2^256.
+#[inline(always)]
+fn mul_by_word(value: U256, word: u64) -> U256 {
+    let a = value.as_limbs();
+    let p0 = (a[0] as u128) * (word as u128);
+    let p1 = (a[1] as u128) * (word as u128) + (p0 >> 64);
+    let p2 = (a[2] as u128) * (word as u128) + (p1 >> 64);
+    let p3 = a[3].wrapping_mul(word).wrapping_add((p2 >> 64) as u64);
+    U256::from_limbs([p0 as u64, p1 as u64, p2 as u64, p3])
+}
+
+// Division by zero is an EVM zero result. For two one-limb operands the
+// quotient is also one limb; retain the ordinary U256 algorithm otherwise.
+#[inline(always)]
+pub(super) fn div_word(a: U256, b: &mut U256) {
+    if b.is_zero() {
+        return;
+    }
+    let x = a.as_limbs();
+    let y = b.as_limbs();
+    if (x[1] | x[2] | x[3] | y[1] | y[2] | y[3]) == 0 {
+        *b = U256::from(x[0] / y[0]);
+    } else {
+        *b = a.wrapping_div(*b);
+    }
+}
+
 /// Implements the ADD instruction - adds two values from stack.
 pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
@@ -14,18 +73,19 @@ pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
 ) -> Ip {
     static_gas!(context.interpreter, ADD);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = op1.wrapping_add(*op2);
+    *op2 = add_word(op1, *op2);
     ip
 }
 
 /// Implements the MUL instruction - multiplies two values from stack.
+#[inline(always)]
 pub fn mul<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
     static_gas!(context.interpreter, MUL);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = op1.wrapping_mul(*op2);
+    *op2 = mul_word(op1, *op2);
     ip
 }
 
@@ -41,15 +101,14 @@ pub fn sub<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// Implements the DIV instruction - divides two values from stack.
+#[inline(always)]
 pub fn div<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
     static_gas!(context.interpreter, DIV);
     popn_top!([op1], op2, context.interpreter);
-    if !op2.is_zero() {
-        *op2 = op1.wrapping_div(*op2);
-    }
+    div_word(op1, op2);
     ip
 }
 
@@ -191,6 +250,7 @@ pub fn exp<WIRE: InterpreterTypes, H: Host + ?Sized>(
 ///
 /// Similarly, if `b == 0` then the yellow paper says the output should start with all zeros,
 /// then end with bits from `b`; this is equal to `y & mask` where `&` is bitwise `AND`.
+#[inline(always)]
 pub fn signextend<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -206,4 +266,72 @@ pub fn signextend<WIRE: InterpreterTypes, H: ?Sized>(
         *x = if bit { *x | !mask } else { *x & mask };
     }
     ip
+}
+
+#[cfg(test)]
+mod small_word_tests {
+    use super::{add_word, div_word, mul_word};
+    use primitives::U256;
+
+    #[test]
+    fn small_arithmetic_matches_full_width() {
+        let mut values = vec![U256::ZERO, U256::from(1), U256::from(u64::MAX), U256::MAX];
+        for limb in 0..4 {
+            for x in [1, u64::MAX] {
+                let mut words = [0; 4];
+                words[limb] = x;
+                values.push(U256::from_limbs(words));
+            }
+        }
+        for &a in &values {
+            for &b in &values {
+                assert_eq!(add_word(a, b), a.wrapping_add(b));
+                assert_eq!(mul_word(a, b), a.wrapping_mul(b));
+                assert_eq!(
+                    {
+                        let mut result = b;
+                        div_word(a, &mut result);
+                        result
+                    },
+                    if b.is_zero() {
+                        U256::ZERO
+                    } else {
+                        a.wrapping_div(b)
+                    }
+                );
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..128 {
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            let a = U256::from_limbs(core::array::from_fn(|_| next()));
+            let b = U256::from_limbs(core::array::from_fn(|_| next()));
+            for (a, b) in [
+                (a, b),
+                (U256::from(a.as_limbs()[0]), U256::from(b.as_limbs()[0])),
+                (a, U256::from(b.as_limbs()[0])),
+                (U256::from(a.as_limbs()[0]), b),
+            ] {
+                assert_eq!(add_word(a, b), a.wrapping_add(b));
+                assert_eq!(mul_word(a, b), a.wrapping_mul(b));
+                assert_eq!(
+                    {
+                        let mut result = b;
+                        div_word(a, &mut result);
+                        result
+                    },
+                    if b.is_zero() {
+                        U256::ZERO
+                    } else {
+                        a.wrapping_div(b)
+                    }
+                );
+            }
+        }
+    }
 }

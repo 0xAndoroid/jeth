@@ -17,7 +17,7 @@
 //! payload length is untrusted advice, sealed against the bytes written.
 use super::{
     advice::{advice_assert_eq, advice_u64},
-    children::Slot,
+    children::{Children, Slot},
     decode::load_word,
     memoize::Memoization,
     node::Node,
@@ -25,7 +25,7 @@ use super::{
 };
 use alloy_primitives::B256;
 use alloy_rlp::{Encodable, EMPTY_STRING_CODE};
-use alloy_trie::nodes::encode_path_leaf;
+use alloy_trie::{nodes::encode_path_leaf, Nibbles};
 use core::ptr::{read_volatile, write_volatile};
 
 /// Scratch capacity for the arena encoder — a branch is ≤ 3 + 17×33 = 564 B,
@@ -50,20 +50,23 @@ impl Scratch {
 /// Write an RLP list header for `payload_len` at `buf[0..]`; returns its size.
 /// Mirrors `alloy_rlp::Header::encode` for lists (payloads here ≤ 1 KiB).
 #[inline(always)]
-fn write_list_header(buf: &mut [u8], payload_len: usize) -> usize {
-    if payload_len < 56 {
-        buf[0] = 0xc0 + payload_len as u8;
-        1
+fn write_list_header(buf: &mut Scratch, payload_len: usize) -> usize {
+    let (word, len): (u64, usize) = if payload_len < 56 {
+        (0xc0 + payload_len as u64, 1)
     } else if payload_len < 256 {
-        buf[0] = 0xf8;
-        buf[1] = payload_len as u8;
-        2
+        (0xf8 | ((payload_len as u64) << 8), 2)
     } else {
-        buf[0] = 0xf9;
-        buf[1] = (payload_len >> 8) as u8;
-        buf[2] = payload_len as u8;
-        3
-    }
+        (
+            0xf9 | ((((payload_len >> 8) & 0xff) as u64) << 8)
+                | (((payload_len & 0xff) as u64) << 16),
+            3,
+        )
+    };
+    // SAFETY: Scratch owns an initialized, 8-aligned buffer. The header is
+    // the first write for this node, and every payload byte is overwritten
+    // before hashing, so bytes beyond the header in this word are dead.
+    unsafe { write_volatile(buf.0.as_mut_ptr().cast::<u64>(), word.to_le()) };
+    len
 }
 
 /// Longest string item the arena encoder writes: the long form carries a
@@ -105,6 +108,54 @@ fn write_str_item(buf: &mut Scratch, cursor: &mut usize, bytes: &[u8]) {
     // SAFETY: `bytes` is a live slice of `len ≥ 1` bytes; the bound above is
     // the writer's capacity contract.
     unsafe { put_prefixed(buf, cursor, prefix, bytes.as_ptr(), len) }
+}
+
+/// Append a compact HP path as an RLP string without the byte-reversed
+/// SmallVec temporary used by encode_path_leaf. The nibble integer is
+/// left-aligned; remove its odd first nibble before assembling the header.
+#[inline(always)]
+fn write_path_item(buf: &mut Scratch, cursor: &mut usize, prefix: &Nibbles, is_leaf: bool) {
+    let len = prefix.len();
+    let odd = len & 1 != 0;
+    let mut packed = *prefix;
+    let limbs = *packed.as_mut_uint_unchecked().as_limbs();
+    let mut hp = if is_leaf { 0x20u64 } else { 0 };
+    if odd {
+        hp |= 0x10 | (limbs[3] >> 60);
+    }
+    let encoded_len = len / 2 + 1;
+    if encoded_len == 1 {
+        // All four HP flags are below 0x80: one byte is its own RLP item.
+        buf.0[*cursor] = hp as u8;
+        *cursor += 1;
+        return;
+    }
+    let words = if odd {
+        [
+            ((limbs[3] << 4) | (limbs[2] >> 60)).swap_bytes(),
+            ((limbs[2] << 4) | (limbs[1] >> 60)).swap_bytes(),
+            ((limbs[1] << 4) | (limbs[0] >> 60)).swap_bytes(),
+            (limbs[0] << 4).swap_bytes(),
+        ]
+    } else {
+        [
+            limbs[3].swap_bytes(),
+            limbs[2].swap_bytes(),
+            limbs[1].swap_bytes(),
+            limbs[0].swap_bytes(),
+        ]
+    };
+    let item = [
+        ((0x80 + encoded_len) as u64 | (hp << 8) | (words[0] << 16)).to_le(),
+        ((words[0] >> 48) | (words[1] << 16)).to_le(),
+        ((words[1] >> 48) | (words[2] << 16)).to_le(),
+        ((words[2] >> 48) | (words[3] << 16)).to_le(),
+        (words[3] >> 48).to_le(),
+    ];
+    debug_assert!(*cursor + encoded_len + 1 <= MAX_NODE_ENCODING);
+    // SAFETY: item owns 40 initialized, aligned bytes; the path item is at
+    // most 34 bytes and immediately follows the at-most-three-byte header.
+    unsafe { put_raw(buf, cursor, item.as_ptr().cast(), encoded_len + 1) };
 }
 
 /// Word-granular scratch writer. Every sub-word memory access is a multi-row
@@ -203,8 +254,33 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
 #[inline(always)]
 unsafe fn put_window33(dst: *mut u64, d: usize, v: [u64; 5], so: usize) {
     debug_assert!(d < 8 && so < 8);
+    match d {
+        0 => put_window33_at::<0>(dst, v, so),
+        1 => put_window33_at::<1>(dst, v, so),
+        2 => put_window33_at::<2>(dst, v, so),
+        3 => put_window33_at::<3>(dst, v, so),
+        4 => put_window33_at::<4>(dst, v, so),
+        5 => put_window33_at::<5>(dst, v, so),
+        6 => put_window33_at::<6>(dst, v, so),
+        7 => put_window33_at::<7>(dst, v, so),
+        _ => unreachable!(),
+    }
+}
+
+/// Specialize destination alignment so aligned digest sources use immediate
+/// shifts. The writable range is the same five words as `put_window33`.
+#[inline(always)]
+unsafe fn put_window33_at<const D: usize>(dst: *mut u64, v: [u64; 5], so: usize) {
+    let d = D;
     let keep = !(u64::MAX << (8 * d));
-    let merge = |x: u64| (read_volatile(dst) & keep) | (x & !keep);
+    let merge = |x: u64| {
+        if D == 0 {
+            // The whole destination word is overwritten at zero offset.
+            x
+        } else {
+            (read_volatile(dst) & keep) | (x & !keep)
+        }
+    };
     let s = so.wrapping_sub(d) & 7;
     if s == 0 {
         write_volatile(dst, merge(v[0]));
@@ -360,22 +436,34 @@ impl<M: Memoization> Node<M> {
             claimed + 3 <= MAX_NODE_ENCODING,
             "MPT: node encoding too large"
         );
-        let header_len = write_list_header(&mut scratch.0, claimed);
+        let header_len = write_list_header(scratch, claimed);
         let mut cursor = header_len;
         match &*self {
             Node::Leaf(prefix, value, _) => {
-                let path = encode_path_leaf(prefix, true);
-                write_str_item(scratch, &mut cursor, &path);
+                write_path_item(scratch, &mut cursor, prefix, true);
                 write_str_item(scratch, &mut cursor, value);
             }
             Node::Extension(prefix, child, _) => {
-                let path = encode_path_leaf(prefix, false);
-                write_str_item(scratch, &mut cursor, &path);
+                write_path_item(scratch, &mut cursor, prefix, false);
                 write_child_ref(scratch, &mut cursor, child);
             }
             Node::Branch(children, _) => {
-                for slot in children.iter() {
-                    write_slot_ref(scratch, &mut cursor, slot);
+                if claimed == 529 && write_dense_children(scratch, children) {
+                    cursor = 531;
+                } else {
+                    let start = cursor;
+                    let plain = match header_len {
+                        1 => write_plain_children::<M, 1>(scratch, &mut cursor, children),
+                        2 => write_plain_children::<M, 2>(scratch, &mut cursor, children),
+                        3 => write_plain_children::<M, 3>(scratch, &mut cursor, children),
+                        _ => unreachable!(),
+                    };
+                    if !plain {
+                        cursor = start;
+                        for slot in children.iter() {
+                            write_slot_ref(scratch, &mut cursor, slot);
+                        }
+                    }
                 }
                 // EMPTY_STRING_CODE for the missing branch value
                 scratch.0[cursor] = EMPTY_STRING_CODE;
@@ -413,6 +501,254 @@ impl<M: Memoization> Node<M> {
             _ => unreachable!(),
         }
     }
+}
+
+/// Insert the prefix directly at the final destination alignment. This
+/// avoids first shifting a digest into a temporary five-word encoded view.
+/// The source consists of four initialized aligned words and the destination
+/// has five writable aligned words, with owned scratch slack after the item.
+#[inline(always)]
+unsafe fn write_direct_digest_at<const D: usize>(dst: *mut u64, src: *const u64) {
+    let [a, b, c, d] = [
+        load_word::<0>(src),
+        load_word::<1>(src),
+        load_word::<2>(src),
+        load_word::<3>(src),
+    ];
+    let keep = if D == 0 {
+        0
+    } else {
+        read_volatile(dst) & !(u64::MAX << (8 * D))
+    };
+    if D == 7 {
+        write_volatile(dst, keep | (0xa0u64 << 56));
+        write_volatile(dst.add(1), a);
+        write_volatile(dst.add(2), b);
+        write_volatile(dst.add(3), c);
+        write_volatile(dst.add(4), d);
+    } else {
+        let shift = 8 * (D + 1);
+        write_volatile(dst, keep | (0xa0u64 << (8 * D)) | (a << shift));
+        write_volatile(dst.add(1), (a >> (64 - shift)) | (b << shift));
+        write_volatile(dst.add(2), (b >> (64 - shift)) | (c << shift));
+        write_volatile(dst.add(3), (c >> (64 - shift)) | (d << shift));
+        write_volatile(dst.add(4), d >> (64 - shift));
+    }
+}
+
+#[inline(always)]
+unsafe fn write_direct_digest(dst: *mut u64, alignment: usize, src: *const u64) {
+    match alignment {
+        0 => write_direct_digest_at::<0>(dst, src),
+        1 => write_direct_digest_at::<1>(dst, src),
+        2 => write_direct_digest_at::<2>(dst, src),
+        3 => write_direct_digest_at::<3>(dst, src),
+        4 => write_direct_digest_at::<4>(dst, src),
+        5 => write_direct_digest_at::<5>(dst, src),
+        6 => write_direct_digest_at::<6>(dst, src),
+        7 => write_direct_digest_at::<7>(dst, src),
+        _ => unreachable!(),
+    }
+}
+
+/// Empty and digest references both advance by one byte modulo eight.
+/// Thus the child position fixes alignment even when its absolute offset varies.
+/// Check actual references and let the caller overwrite any partial failure.
+#[inline]
+fn write_plain_children<M: Memoization, const HEADER: usize>(
+    buf: &mut Scratch,
+    cursor: &mut usize,
+    children: &Children<M>,
+) -> bool {
+    macro_rules! child {
+        ($i:literal) => {
+            if !write_plain_ref(buf, cursor, children.get($i), (HEADER + $i) & 7) {
+                return false;
+            }
+        };
+    }
+    child!(0);
+    child!(1);
+    child!(2);
+    child!(3);
+    child!(4);
+    child!(5);
+    child!(6);
+    child!(7);
+    child!(8);
+    child!(9);
+    child!(10);
+    child!(11);
+    child!(12);
+    child!(13);
+    child!(14);
+    child!(15);
+    true
+}
+
+#[inline(always)]
+fn write_plain_ref<M: Memoization>(
+    buf: &mut Scratch,
+    cursor: &mut usize,
+    slot: &Slot<M>,
+    alignment: usize,
+) -> bool {
+    debug_assert_eq!(*cursor & 7, alignment);
+    let words = match slot {
+        Slot::Empty => {
+            if alignment == 0 {
+                // SAFETY: position-derived alignment is zero and Scratch has
+                // room for this word. All bytes after this item are overwritten
+                // by later items or excluded from the final hashed prefix.
+                unsafe {
+                    write_volatile(buf.0.as_mut_ptr().add(*cursor).cast::<u64>(), 0x80);
+                }
+            } else if alignment == 1 {
+                // SAFETY: preserve the one preceding byte in an initialized
+                // aligned Scratch word; only future bytes may be clobbered.
+                unsafe {
+                    let dst = buf.0.as_mut_ptr().add(*cursor - 1).cast::<u64>();
+                    write_volatile(dst, (read_volatile(dst) & 0xff) | 0x8000);
+                }
+            } else {
+                buf.0[*cursor] = EMPTY_STRING_CODE;
+            }
+            *cursor += 1;
+            return true;
+        }
+        Slot::Digest(digest) => {
+            // SAFETY: checked slot position fixes alignment and bounds;
+            // Digest holds four initialized aligned source words.
+            unsafe {
+                write_direct_digest(
+                    buf.0.as_mut_ptr().add(*cursor & !7).cast(),
+                    alignment,
+                    digest.as_ptr().cast(),
+                );
+            }
+            *cursor += DIGEST_RLP_LENGTH;
+            return true;
+        }
+        Slot::Node(child) => {
+            let cache = match &**child {
+                Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => {
+                    cache
+                }
+                _ => return false,
+            };
+            let reference = cache.get().expect("MPT: child encoded before its parent");
+            if reference.len() != DIGEST_RLP_LENGTH {
+                return false;
+            }
+            // SAFETY: RlpNode owns five initialized aligned words.
+            let p = reference.as_ptr().cast::<u64>();
+            unsafe {
+                [
+                    load_word::<0>(p),
+                    load_word::<1>(p),
+                    load_word::<2>(p),
+                    load_word::<3>(p),
+                    load_word::<4>(p),
+                ]
+            }
+        }
+    };
+    // SAFETY: Each preceding checked slot contributed one or 33 bytes.
+    // The cursor therefore has the supplied position-derived alignment and
+    // is at most 3 + 15*33. The five-word destination is inside Scratch.
+    unsafe {
+        put_window33(
+            buf.0.as_mut_ptr().add(*cursor & !7).cast(),
+            alignment,
+            words,
+            0,
+        );
+    }
+    *cursor += DIGEST_RLP_LENGTH;
+    true
+}
+
+/// A dense branch has sixteen 33-byte references after its three-byte header.
+/// Check each actual reference; the advised length alone is not trusted.
+/// On failure the caller overwrites the partial output with the general writer.
+#[inline]
+fn write_dense_children<M: Memoization>(buf: &mut Scratch, children: &Children<M>) -> bool {
+    macro_rules! child {
+        ($i:literal, $offset:literal, $align:literal) => {
+            if !write_dense_ref::<M, $offset, $align>(buf, children.get($i)) {
+                return false;
+            }
+        };
+    }
+    child!(0, 3, 3);
+    child!(1, 36, 4);
+    child!(2, 69, 5);
+    child!(3, 102, 6);
+    child!(4, 135, 7);
+    child!(5, 168, 0);
+    child!(6, 201, 1);
+    child!(7, 234, 2);
+    child!(8, 267, 3);
+    child!(9, 300, 4);
+    child!(10, 333, 5);
+    child!(11, 366, 6);
+    child!(12, 399, 7);
+    child!(13, 432, 0);
+    child!(14, 465, 1);
+    child!(15, 498, 2);
+    true
+}
+
+/// Write one checked digest reference at a constant destination offset.
+#[inline(always)]
+fn write_dense_ref<M: Memoization, const OFFSET: usize, const ALIGN: usize>(
+    buf: &mut Scratch,
+    slot: &Slot<M>,
+) -> bool {
+    let words = match slot {
+        Slot::Empty => return false,
+        Slot::Digest(digest) => {
+            // SAFETY: private instantiations have OFFSET = 3 + 33*i,
+            // ALIGN = OFFSET modulo eight, and i < 16. Digest is aligned.
+            unsafe {
+                write_direct_digest_at::<ALIGN>(
+                    buf.0.as_mut_ptr().add(OFFSET & !7).cast(),
+                    digest.as_ptr().cast(),
+                );
+            }
+            return true;
+        }
+        Slot::Node(child) => {
+            let cache = match &**child {
+                Node::Leaf(.., cache) | Node::Extension(.., cache) | Node::Branch(.., cache) => {
+                    cache
+                }
+                _ => return false,
+            };
+            let reference = cache.get().expect("MPT: child encoded before its parent");
+            if reference.len() != DIGEST_RLP_LENGTH {
+                return false;
+            }
+            // SAFETY: RlpNode owns five initialized, eight-aligned words.
+            let p = reference.as_ptr().cast::<u64>();
+            unsafe {
+                [
+                    load_word::<0>(p),
+                    load_word::<1>(p),
+                    load_word::<2>(p),
+                    load_word::<3>(p),
+                    load_word::<4>(p),
+                ]
+            }
+        }
+    };
+    // SAFETY: these private instantiations have OFFSET = 3 + 33*i, i < 16,
+    // ALIGN = OFFSET % 8. Scratch has five writable words at each destination.
+    // Bytes below OFFSET survive, and excess tail bytes are overwritten later.
+    unsafe {
+        put_window33_at::<ALIGN>(buf.0.as_mut_ptr().add(OFFSET & !7).cast(), words, 0);
+    }
+    true
 }
 
 /// Append a child reference (post-order-memoized: cached / digest / null).
@@ -489,6 +825,130 @@ fn str_item_length(bytes: &[u8]) -> usize {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
+
+    #[test]
+    fn direct_digest_words_match_reference() {
+        let mut seed = 0x24b7_d93a_e106_c58fu64;
+        for _ in 0..256 {
+            let mut words = [0u64; 4];
+            for w in &mut words {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                *w = seed;
+            }
+            let bytes: Vec<_> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let expected = alloy_rlp::encode(bytes.as_slice());
+            for offset in 0..8 {
+                let mut scratch = Scratch::new();
+                scratch.0.fill(0x5a);
+                unsafe {
+                    write_direct_digest(scratch.0.as_mut_ptr().cast(), offset, words.as_ptr());
+                }
+                assert!(scratch.0[..offset].iter().all(|b| *b == 0x5a));
+                assert_eq!(&scratch.0[offset..offset + 33], expected.as_slice());
+                assert!(scratch.0[40..].iter().all(|b| *b == 0x5a));
+            }
+        }
+    }
+
+    #[test]
+    fn dense_and_sparse_encodings_match_reference() {
+        use super::super::{memoize::Cache, node::Digest};
+        use alloc::boxed::Box;
+        use alloy_primitives::{keccak256, Bytes};
+        let mut seed = 0x7165_9dcb_83e2_4a01u64;
+        for case in 0..512usize {
+            let mut children = Children::<Cache>::default();
+            for i in 0..16u8 {
+                let mut bytes = [0u8; 64];
+                for byte in &mut bytes {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    *byte = seed as u8;
+                }
+                let slot = if case >= 256 && (usize::from(i) * 5 + case) % 16 >= case % 17 {
+                    Slot::Empty
+                } else if case < 128 || seed & 3 == 0 {
+                    Slot::Digest(Digest(B256::from_slice(&bytes[..32])))
+                } else if case >= 256 && seed & 3 == 1 {
+                    Slot::Empty
+                } else {
+                    let len = if case < 256 {
+                        64
+                    } else {
+                        (seed as usize >> 8) % 65
+                    };
+                    Slot::Node(Box::new(Node::Leaf(
+                        Nibbles::from_nibbles_unchecked(&[i, (seed & 15) as u8]),
+                        Bytes::copy_from_slice(&bytes[..len]),
+                        Cache::default(),
+                    )))
+                };
+                *children.slot_mut(i) = slot;
+            }
+            let mut node = Node::Branch(children, Cache::default());
+            // The retained Encodable path is independent of the arena writer.
+            let reference = node.rlp_nodes()[0].clone();
+            let expected_hash = keccak256(&reference);
+            let mut scratch = Scratch::new();
+            node.memoize_arena(&mut scratch);
+            let actual = node.rlp_encoded();
+            assert_eq!(actual.as_slice(), reference.as_ref());
+            assert_eq!(node.hash(), expected_hash);
+            assert_eq!(&scratch.0[..actual.len()], actual.as_slice());
+            // Check the specialized writer directly on the same random tree.
+            // Sparse and inline references must remain eligible for fallback.
+            if let Node::Branch(children, _) = &node {
+                let mut trial = Scratch::new();
+                let success = write_dense_children(&mut trial, children);
+                if success {
+                    assert_eq!(&trial.0[3..531], &actual[3..531]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn path_items_match_reference_encoding() {
+        for len in 0..=64 {
+            let nibbles: Vec<u8> = (0..len).map(|i| ((i * 7 + 3) & 15) as u8).collect();
+            let prefix = Nibbles::from_nibbles_unchecked(&nibbles);
+            for leaf in [false, true] {
+                let compact = encode_path_leaf(&prefix, leaf);
+                let expected = alloy_rlp::encode(compact.as_slice());
+                for offset in 0..8 {
+                    let mut scratch = Scratch::new();
+                    scratch.0.fill(0xa5);
+                    let mut cursor = offset;
+                    write_path_item(&mut scratch, &mut cursor, &prefix, leaf);
+                    assert_eq!(cursor, offset + expected.len());
+                    assert_eq!(&scratch.0[offset..cursor], expected.as_slice());
+                    assert!(scratch.0[..offset].iter().all(|&b| b == 0xa5));
+                    assert!(scratch.0[cursor + 7..].iter().all(|&b| b == 0xa5));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn list_headers_match_rlp_encoding() {
+        for payload_length in 0..=MAX_NODE_ENCODING - 3 {
+            let mut expected = Vec::new();
+            alloy_rlp::Header {
+                list: true,
+                payload_length,
+            }
+            .encode(&mut expected);
+            let mut scratch = Scratch::new();
+            scratch.0.fill(0xa5);
+            let len = write_list_header(&mut scratch, payload_length);
+            assert_eq!(len, expected.len());
+            assert_eq!(&scratch.0[..len], expected.as_slice());
+            assert!(scratch.0[8..].iter().all(|&byte| byte == 0xa5));
+        }
+    }
 
     /// The word writer is byte-exact for every source offset, cursor offset
     /// and length, preserves everything below the cursor and clobbers at most

@@ -198,14 +198,35 @@ impl<M: Memoization> Children<M> {
     /// Encode every dirty child through the reused arena scratch buffer.
     /// Empty and digest slots cost a tag test; clean children a cache test;
     /// neither a call.
+    #[inline(always)]
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
-        for slot in &mut self.0 {
-            if let Slot::Node(child) = slot {
-                if child.needs_memo() {
-                    child.encode_dirty(scratch);
+        // The branch width and visit order are fixed by the trie grammar.
+        // Keep each cache test and recursive call in its original position.
+        macro_rules! visit {
+            ($i:literal) => {
+                if let Slot::Node(child) = &mut self.0[$i] {
+                    if child.needs_memo() {
+                        child.encode_dirty(scratch);
+                    }
                 }
-            }
+            };
         }
+        visit!(0);
+        visit!(1);
+        visit!(2);
+        visit!(3);
+        visit!(4);
+        visit!(5);
+        visit!(6);
+        visit!(7);
+        visit!(8);
+        visit!(9);
+        visit!(10);
+        visit!(11);
+        visit!(12);
+        visit!(13);
+        visit!(14);
+        visit!(15);
     }
 }
 
@@ -216,5 +237,53 @@ impl<M, C: Into<Child<M>>, const N: usize> From<[(u8, C); N]> for Children<M> {
             children.insert(idx, child.into());
         }
         children
+    }
+}
+
+#[cfg(test)]
+mod visit_tests {
+    use super::super::memoize::Cache;
+    use super::*;
+    use alloy_primitives::{keccak256, Bytes, B256};
+    use alloy_trie::Nibbles;
+
+    #[test]
+    fn dirty_child_visits_match_reference() {
+        let mut seed = 0x92a6_f38c_17bd_504eu64;
+        for case in 0..256usize {
+            let mut children = Children::<Cache>::default();
+            for i in 0..16u8 {
+                let mut value = [0u8; 64];
+                for b in &mut value {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    *b = seed as u8;
+                }
+                let slot = match seed & 3 {
+                    0 => Slot::Empty,
+                    1 => Slot::Digest(Digest(B256::from_slice(&value[..32]))),
+                    _ => {
+                        let mut child = Node::Leaf(
+                            Nibbles::from_nibbles_unchecked(&[i, (seed >> 8 & 15) as u8]),
+                            Bytes::copy_from_slice(&value[..(seed as usize >> 10) % 65]),
+                            Cache::default(),
+                        );
+                        // Interleave previously clean and still-dirty nodes.
+                        if (case + usize::from(i)) & 1 == 0 {
+                            child.memoize_arena(&mut Scratch::new());
+                        }
+                        Slot::Node(Box::new(child))
+                    }
+                };
+                *children.slot_mut(i) = slot;
+            }
+            let mut node = Node::Branch(children, Cache::default());
+            let reference = node.rlp_nodes()[0].clone();
+            let mut scratch = Scratch::new();
+            node.memoize_arena(&mut scratch);
+            assert_eq!(node.rlp_encoded().as_slice(), reference.as_ref());
+            assert_eq!(node.hash(), keccak256(&reference));
+        }
     }
 }

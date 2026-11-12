@@ -2643,6 +2643,7 @@ dependencies = [
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
+ "jolt-inlines-sdk",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-sdk",
@@ -4242,13 +4243,15 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "10.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdbb3a3d735efa94c91f2ef6bf20a35f99a77bc78f3e25bd758336901bdf9661"
 dependencies = [
+ "anyhow",
  "bitvec",
+ "paste",
  "phf 0.13.1",
+ "rand 0.9.5",
  "revm-primitives",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

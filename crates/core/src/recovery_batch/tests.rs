@@ -225,7 +225,7 @@ fn forged_equation_behind_a_shared_key_must_panic() {
 #[test]
 fn pippenger_batch_matches_independent_recovery() {
     let mut equations = Vec::new();
-    // 99 equations at the mid-check (w = 7 windows), 598 at the end (w = 8).
+    // Exercise both the intermediate batch of 99 equations and the full 598.
     for i in 2..600u64 {
         equations.push(recovered_equation(i));
         if i == 100 {
@@ -241,7 +241,7 @@ fn pippenger_batch_matches_independent_recovery() {
 #[test]
 #[should_panic(expected = "invalid recovery batch")]
 fn forged_key_in_wide_batch_must_panic() {
-    // 598 equations select the w = 8 window path.
+    // Reject one forged key among 598 independently recovered equations.
     let mut equations: Vec<_> = (2..600u64).map(recovered_equation).collect();
     equations[300].key = Secp256k1Point::generator();
     Batch { equations }.verify();
@@ -256,4 +256,175 @@ fn transaction_key_must_be_finite_and_on_curve() {
     assert!(verify_pubkey(&key, &sig, B256::ZERO).is_none());
     key[64] = 1;
     assert!(verify_pubkey(&key, &sig, B256::ZERO).is_none());
+}
+
+fn randomized_signatures() -> Vec<([u8; 64], u8, [u8; 32])> {
+    let mut state = 0xd4e1_8a73_09bc_52f6u64;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    (0..48)
+        .map(|_| {
+            let secret = U256::from(next().max(1)).to_be_bytes::<32>();
+            let key = SigningKey::from_slice(&secret).unwrap();
+            let message = U256::from_limbs(core::array::from_fn(|_| next())).to_be_bytes();
+            let (sig, id) = key.sign_prehash_recoverable(&message);
+            (sig.to_bytes().into(), id.to_byte(), message)
+        })
+        .collect()
+}
+
+#[test]
+fn randomized_deferred_batch_matches_single_recovery() {
+    for (sig, id, message) in randomized_signatures() {
+        let expected = ecrecover(&sig.into(), id, &message.into()).unwrap().0;
+        assert_eq!(inline_ecrecover(&sig, id, &message), Some(expected));
+    }
+    verify();
+}
+
+#[test]
+fn one_invalid_signature_among_random_valid_signatures() {
+    let signatures = randomized_signatures();
+    let (valid, id, message) = signatures[17];
+    let r = U256::from_be_slice(&valid[..32]);
+    let s = U256::from_be_slice(&valid[32..]);
+    let cases = [
+        (signature(U256::ZERO, s), id),
+        (signature(r, U256::ZERO), id),
+        (signature(N, s), id),
+        (signature(r, N), id),
+        (signature(U256::MAX, s), id),
+        (signature(r, U256::MAX), id),
+        (valid, 4),
+        (valid, 255),
+    ];
+    for (bad, bad_id) in cases {
+        for (index, &(sig, recid, msg)) in signatures.iter().enumerate() {
+            let (sig, recid, msg) = if index == 17 {
+                (bad, bad_id, message)
+            } else {
+                (sig, recid, msg)
+            };
+            let expected = RecoveryId::from_byte(recid)
+                .and_then(|_| ecrecover(&sig.into(), recid, &msg.into()).ok())
+                .map(|address| address.0);
+            assert_eq!(inline_ecrecover(&sig, recid, &msg), expected);
+            assert_eq!(expected.is_none(), index == 17);
+        }
+        verify();
+    }
+}
+
+#[test]
+fn randomized_high_s_and_wrong_parity_match_single_recovery() {
+    for (sig, id, msg) in randomized_signatures().into_iter().take(12) {
+        let r = U256::from_be_slice(&sig[..32]);
+        let s = U256::from_be_slice(&sig[32..]);
+        let high = signature(r, N - s);
+        assert_eq!(
+            inline_ecrecover(&high, id ^ 1, &msg),
+            Some(ecrecover(&sig.into(), id, &msg.into()).unwrap().0)
+        );
+        let expected = ecrecover(&sig.into(), id ^ 1, &msg.into())
+            .ok()
+            .map(|x| x.0);
+        assert_eq!(inline_ecrecover(&sig, id ^ 1, &msg), expected);
+    }
+    verify();
+}
+
+#[test]
+#[should_panic(expected = "invalid recovery batch")]
+fn one_wrong_key_in_randomized_batch_is_rejected() {
+    let mut equations = Vec::new();
+    for (sig, id, msg) in randomized_signatures() {
+        let key = VerifyingKey::recover_from_prehash(
+            &msg,
+            &KSignature::from_slice(&sig).unwrap(),
+            RecoveryId::from_byte(id).unwrap(),
+        )
+        .unwrap();
+        let mut equation = prepare_recovery(&sig, id, &msg).unwrap();
+        equation.key = key_point(&key);
+        equations.push(equation);
+    }
+    equations[17].key = equations[17].key.neg();
+    Batch { equations }.verify();
+}
+
+#[test]
+fn signed_window_reconstruction_including_top_carry() {
+    let mut state = 0x7b13_508a_c6f4_219du128;
+    for width in 4usize..=12 {
+        let windows = 128usize.div_ceil(width);
+        let half = 1usize << (width - 1);
+        let top_shift = width * (windows - 1);
+        let bias = (0..windows - 1).fold(0u128, |acc, i| acc | (half as u128) << (width * i));
+        for case in 0..130 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let scalar = match case {
+                0 => 0,
+                1 => u128::MAX,
+                _ => state,
+            };
+            let (biased, overflow) = scalar.overflowing_add(bias);
+            let top = (biased >> top_shift) | (overflow as u128) << (128 - top_shift);
+            let mut reconstructed = U256::from(top);
+            for window in (0..windows - 1).rev() {
+                reconstructed <<= width;
+                let digit = ((biased >> (window * width)) as usize & ((1 << width) - 1)) as isize
+                    - half as isize;
+                if digit < 0 {
+                    reconstructed -= U256::from((-digit) as usize);
+                } else {
+                    reconstructed += U256::from(digit as usize);
+                }
+            }
+            assert_eq!(
+                reconstructed,
+                U256::from(scalar),
+                "width {width} case {case}"
+            );
+        }
+    }
+}
+
+#[test]
+fn msm_ignores_infinity_terms_and_zero_scalars() {
+    let zero = scalar([0; 32]);
+    let one = scalar(U256::from(1).to_be_bytes());
+    assert!(pippenger(&[
+        (one, Secp256k1Point::infinity()),
+        (zero, Secp256k1Point::generator()),
+    ])
+    .is_infinity());
+}
+
+#[test]
+fn specialized_windows_match_binary_scalar_multiplication() {
+    let a = scalar([0xd3; 32]);
+    let b = scalar([0x79; 32]);
+    let total = a.add(&b.dbl());
+    let g = Secp256k1Point::generator();
+    let terms = [(a, g.clone()), (b, g.double())];
+    let limbs = total.e();
+    let mut expected = Secp256k1Point::infinity();
+    for bit in (0..256).rev() {
+        expected = expected.double();
+        if (limbs[bit / 64] >> (bit % 64)) & 1 != 0 {
+            expected = expected.add(&g);
+        }
+    }
+    macro_rules! check {
+        ($($width:literal),*) => { $(
+            assert_eq!(pippenger_width::<$width>(&terms).to_u64_arr(), expected.to_u64_arr());
+        )* };
+    }
+    check!(4, 5, 6, 7, 8, 9, 10, 11, 12);
 }

@@ -296,9 +296,33 @@ impl SharedMemory {
     /// Resizes the memory in-place so that `len` is equal to `new_len`.
     #[inline]
     pub fn resize(&mut self, new_size: usize) {
-        self.buffer()
-            .dbg_borrow_mut()
-            .resize(self.my_checkpoint + new_size, 0);
+        let mut buffer = self.buffer().dbg_borrow_mut();
+        let new_len = self.my_checkpoint + new_size;
+        let old_len = buffer.len();
+        if new_len > old_len && (old_len | new_len) & 31 == 0 {
+            buffer.reserve(new_len - old_len);
+            let base = buffer.as_mut_ptr();
+            if base as usize & 7 == 0 {
+                // SAFETY: reserve provides the full range, its endpoints are
+                // multiples of 32, and the allocation is checked for word
+                // alignment. Initialize every newly visible byte before
+                // setting the length, including storage reused after a child.
+                unsafe {
+                    let mut dst = base.add(old_len).cast::<u64>();
+                    let end = base.add(new_len).cast::<u64>();
+                    while dst != end {
+                        dst.write_volatile(0);
+                        dst.add(1).write_volatile(0);
+                        dst.add(2).write_volatile(0);
+                        dst.add(3).write_volatile(0);
+                        dst = dst.add(4);
+                    }
+                    buffer.set_len(new_len);
+                }
+                return;
+            }
+        }
+        buffer.resize(new_len, 0);
     }
 
     /// Returns a byte slice of the memory region at the given offset.
@@ -606,6 +630,17 @@ pub const fn num_words(len: usize) -> usize {
     len.div_ceil(32)
 }
 
+// Round the inclusive last byte for nonempty ranges. Constant opcode lengths
+// then need only one saturating add, one shift and one increment.
+#[inline(always)]
+const fn range_words(offset: usize, len: usize) -> usize {
+    if len == 0 {
+        num_words(offset)
+    } else {
+        offset.saturating_add(len - 1) / 32 + 1
+    }
+}
+
 /// Performs EVM memory resize.
 #[inline]
 pub fn resize_memory<Memory: MemoryTr>(
@@ -620,7 +655,7 @@ pub fn resize_memory<Memory: MemoryTr>(
         return Err(InstructionResult::MemoryLimitOOG);
     }
 
-    let new_num_words = num_words(offset.saturating_add(len));
+    let new_num_words = range_words(offset, len);
     if new_num_words > gas.memory().words_num {
         return resize_memory_cold(gas, memory, gas_table, new_num_words);
     }
@@ -653,6 +688,81 @@ fn resize_memory_cold<Memory: MemoryTr>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_rounding_matches_saturating_end() {
+        let edges = [
+            0,
+            1,
+            7,
+            8,
+            31,
+            32,
+            33,
+            63,
+            64,
+            65,
+            usize::MAX - 33,
+            usize::MAX - 32,
+            usize::MAX - 31,
+            usize::MAX - 1,
+            usize::MAX,
+        ];
+        for offset in edges {
+            for len in edges {
+                assert_eq!(
+                    range_words(offset, len),
+                    num_words(offset.saturating_add(len)),
+                    "offset {offset} len {len}"
+                );
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..1024 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let offset = state as usize;
+            let len = state.rotate_left(23) as usize;
+            assert_eq!(
+                range_words(offset, len),
+                num_words(offset.saturating_add(len))
+            );
+        }
+    }
+
+    #[test]
+    fn reused_child_memory_has_no_previous_bytes() {
+        for parent_size in [0, 1, 31, 32, 64] {
+            let mut parent = SharedMemory::with_capacity(1024);
+            parent.resize(parent_size);
+            parent.set(0, &vec![0xa5; parent_size]);
+            for size in [1, 31, 32, 33, 64, 256] {
+                let mut first = parent.new_child_context();
+                first.resize(size);
+                first.set(0, &vec![0xdd; size]);
+                drop(first);
+                parent.free_child_context();
+
+                let mut reused = parent.new_child_context();
+                assert_eq!(reused.len(), 0);
+                reused.resize(size);
+                reused.set(0, &[0x7b]);
+                assert_eq!(reused.slice_range(0..size)[0], 0x7b);
+                assert!(reused.slice_range(1..size).iter().all(|&b| b == 0));
+                reused.resize(0);
+                reused.resize(size);
+                assert!(reused.slice_range(0..size).iter().all(|&b| b == 0));
+                drop(reused);
+                parent.free_child_context();
+                assert_eq!(parent.len(), parent_size);
+                assert!(parent
+                    .slice_range(0..parent_size)
+                    .iter()
+                    .all(|&b| b == 0xa5));
+            }
+        }
+    }
 
     #[test]
     fn test_num_words() {
