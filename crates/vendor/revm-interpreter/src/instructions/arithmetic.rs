@@ -71,7 +71,7 @@ pub fn add<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::add::<false, _, _>(ip, context, &mut 0)
+    super::cached::add::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the MUL instruction - multiplies two values from stack.
@@ -80,7 +80,7 @@ pub fn mul<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::mul::<false, _, _>(ip, context, &mut 0)
+    super::cached::mul::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the SUB instruction - subtracts two values from stack.
@@ -88,7 +88,7 @@ pub fn sub<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::sub::<false, _, _>(ip, context, &mut 0)
+    super::cached::sub::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the DIV instruction - divides two values from stack.
@@ -97,7 +97,7 @@ pub fn div<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::div::<false, _, _>(ip, context, &mut 0)
+    super::cached::div::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the SDIV instruction.

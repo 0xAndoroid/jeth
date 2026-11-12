@@ -49,6 +49,11 @@ impl Clone for Stack {
 
 impl StackTr for Stack {
     #[inline]
+    fn take_for_run(&mut self) -> Option<Self> {
+        Some(core::mem::replace(self, Self::invalid()))
+    }
+
+    #[inline]
     fn len(&self) -> usize {
         self.len()
     }

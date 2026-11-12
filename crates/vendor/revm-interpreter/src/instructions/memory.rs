@@ -13,12 +13,7 @@ pub fn mload<WIRE: InterpreterTypes, H: Host + ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, MLOAD);
-    popn_top!([], top, context.interpreter);
-    let offset = as_usize_or_fail!(context.interpreter, top);
-    resize_memory!(context.interpreter, context.host.gas_params(), offset, 32);
-    *top = context.interpreter.memory.get_u256(offset);
-    ip
+    super::cached::mload::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the MSTORE instruction.
@@ -29,12 +24,7 @@ pub fn mstore<WIRE: InterpreterTypes, H: Host + ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, MSTORE);
-    popn!([offset, value], context.interpreter);
-    let offset = as_usize_or_fail!(context.interpreter, offset);
-    resize_memory!(context.interpreter, context.host.gas_params(), offset, 32);
-    context.interpreter.memory.set_u256(offset, value);
-    ip
+    super::cached::mstore::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the MSTORE8 instruction.

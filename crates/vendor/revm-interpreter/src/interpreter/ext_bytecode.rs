@@ -155,8 +155,14 @@ impl Jumps for ExtBytecode {
 
     #[inline]
     fn jump_target(&self, offset: usize) -> Ip {
-        // SAFETY: the caller validated `offset` against the jump table, so it is in bounds.
-        unsafe { self.base.bytes_ref().as_ptr().add(offset) }
+        // SAFETY: a validated JUMPDEST is a readable byte of this allocation,
+        // so its in-bounds address is non-null. State that existing invariant
+        // explicitly for the continuation classifier; no runtime check is added.
+        unsafe {
+            let target = self.base.bytes_ref().as_ptr().add(offset);
+            core::hint::assert_unchecked(!target.is_null());
+            target
+        }
     }
 
     // `ip` is the run loop's pointer into this bytecode (see [`Ip`]).

@@ -650,16 +650,47 @@ pub fn resize_memory<Memory: MemoryTr>(
     offset: usize,
     len: usize,
 ) -> Result<(), InstructionResult> {
+    if let Some(words) = memory_expansion(gas, memory, offset, len)? {
+        resize_memory_cold(gas, memory, gas_table, words)?;
+    }
+    Ok(())
+}
+
+// Shared validation preserves limit priority and saturating range rounding.
+#[inline(always)]
+fn memory_expansion<Memory: MemoryTr>(
+    gas: &crate::Gas,
+    memory: &Memory,
+    offset: usize,
+    len: usize,
+) -> Result<Option<usize>, InstructionResult> {
     #[cfg(feature = "memory_limit")]
     if memory.limit_reached(offset, len) {
         return Err(InstructionResult::MemoryLimitOOG);
     }
+    #[cfg(not(feature = "memory_limit"))]
+    let _ = memory;
+    let words = range_words(offset, len);
+    Ok((words > gas.memory().words_num).then_some(words))
+}
 
-    let new_num_words = range_words(offset, len);
-    if new_num_words > gas.memory().words_num {
-        return resize_memory_cold(gas, memory, gas_table, new_num_words);
+/// Keep the ordinary gas budget canonical whenever expansion can call the host
+/// or mutate memory gas. The hot, already-expanded path uses no gas budget.
+#[inline(always)]
+pub(crate) fn resize_memory_cached<Memory: MemoryTr, H: context_interface::Host + ?Sized>(
+    gas: &mut crate::Gas,
+    memory: &mut Memory,
+    host: &H,
+    remaining: &mut u64,
+    offset: usize,
+    len: usize,
+) -> Result<(), InstructionResult> {
+    if let Some(words) = memory_expansion(gas, memory, offset, len)? {
+        gas.set_remaining(*remaining);
+        let result = resize_memory_cold(gas, memory, host.gas_params(), words);
+        *remaining = gas.remaining();
+        return result;
     }
-
     Ok(())
 }
 

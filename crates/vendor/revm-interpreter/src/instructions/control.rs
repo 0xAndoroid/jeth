@@ -15,7 +15,7 @@ pub fn jump<ITy: InterpreterTypes, H: ?Sized>(
     _ip: Ip,
     context: InstructionContext<'_, H, ITy>,
 ) -> Ip {
-    super::cached::jump::<false, _, _>(_ip, context, &mut 0)
+    super::cached::jump::<false, _, _>(_ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the JUMPI instruction.
@@ -26,7 +26,7 @@ pub fn jumpi<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::jumpi::<false, _, _>(ip, context, &mut 0)
+    super::cached::jumpi::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the JUMPDEST instruction.
@@ -36,7 +36,7 @@ pub fn jumpdest<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::jumpdest::<false, _, _>(ip, context, &mut 0)
+    super::cached::jumpdest::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the PC instruction.

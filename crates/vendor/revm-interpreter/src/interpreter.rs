@@ -16,6 +16,7 @@ pub use ext_bytecode::ExtBytecode;
 pub use input::InputsImpl;
 pub use return_data::ReturnDataImpl;
 pub use runtime_flags::RuntimeFlags;
+pub(crate) use shared_memory::resize_memory_cached;
 pub use shared_memory::{num_words, resize_memory, SharedMemory};
 pub use stack::{Stack, STACK_LIMIT};
 
@@ -27,41 +28,49 @@ use crate::{
 use bytecode::Bytecode;
 use primitives::{hardfork::SpecId, Bytes};
 
-// Keep the existing classifier. Only these host-free kernels use local gas.
+// Keep the classifier; memory kernels synchronize before cold expansion.
 macro_rules! cached_dispatch {
-    (control::jump, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure jump, $ip, $interpreter, $host, $remaining, $table) };
-    (control::jumpi, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure jumpi, $ip, $interpreter, $host, $remaining, $table) };
-    (arithmetic::add, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure add, $ip, $interpreter, $host, $remaining, $table) };
-    (arithmetic::sub, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure sub, $ip, $interpreter, $host, $remaining, $table) };
-    (arithmetic::mul, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure mul, $ip, $interpreter, $host, $remaining, $table) };
-    (arithmetic::div, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure div, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::lt, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure lt, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::gt, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure gt, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::eq, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure eq, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::iszero, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure iszero, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::bitand, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure bitand, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::bitor, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure bitor, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::not, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure not, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::shl, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure shl, $ip, $interpreter, $host, $remaining, $table) };
-    (bitwise::shr, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure shr, $ip, $interpreter, $host, $remaining, $table) };
-    (stack::pop, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure pop, $ip, $interpreter, $host, $remaining, $table) };
-    (stack::push0, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure push0, $ip, $interpreter, $host, $remaining, $table) };
-    (control::jumpdest, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@pure jumpdest, $ip, $interpreter, $host, $remaining, $table) };
-    (stack::push::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@generic push::<$n>, $ip, $interpreter, $host, $remaining, $table) };
-    (stack::dup::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@generic dup::<$n>, $ip, $interpreter, $host, $remaining, $table) };
-    (stack::swap::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => { cached_dispatch!(@generic swap::<$n>, $ip, $interpreter, $host, $remaining, $table) };
-    (@pure $name:ident, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => {
+    (memory::mload, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure mload, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (memory::mstore, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure mstore, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (system::caller, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure caller, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (system::calldatasize, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure calldatasize, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (system::returndatasize, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure returndatasize, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (system::gas, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure gas, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (system::calldataload, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure calldataload, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (control::jump, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure jump, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (control::jumpi, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure jumpi, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (arithmetic::add, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure add, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (arithmetic::sub, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure sub, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (arithmetic::mul, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure mul, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (arithmetic::div, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure div, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::lt, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure lt, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::gt, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure gt, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::eq, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure eq, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::iszero, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure iszero, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::bitand, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure bitand, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::bitor, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure bitor, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::not, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure not, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::shl, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure shl, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (bitwise::shr, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure shr, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (stack::pop, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure pop, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (stack::push0, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure push0, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (control::jumpdest, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@pure jumpdest, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (stack::push::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@generic push::<$n>, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (stack::dup::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@generic dup::<$n>, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (stack::swap::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => { cached_dispatch!(@generic swap::<$n>, $ip, $interpreter, $host, $remaining, $stack, $table) };
+    (@pure $name:ident, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => {
         crate::instructions::cached::$name::<true, _, _>($ip, InstructionContext {
             interpreter: &mut *$interpreter, host: &mut *$host,
-        }, $remaining)
+        }, $remaining, Some(&mut *$stack))
     };
-    (@generic $name:ident::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => {
+    (@generic $name:ident::<$n:literal>, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => {
         crate::instructions::cached::$name::<$n, true, _, _>($ip, InstructionContext {
             interpreter: &mut *$interpreter, host: &mut *$host,
-        }, $remaining)
+        }, $remaining, Some(&mut *$stack))
     };
-    ($module:ident::$name:ident $(::<$n:literal>)?, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $table:expr) => {{
+    ($module:ident::$name:ident $(::<$n:literal>)?, $ip:expr, $interpreter:expr, $host:expr, $remaining:expr, $stack:expr, $table:expr) => {{
         let cache = $remaining;
+        core::mem::swap(&mut $interpreter.stack, &mut *$stack);
         $interpreter.gas.set_remaining(*cache);
         let next = crate::instructions::$module::$name $(::<$n, _, _>)?($ip, InstructionContext {
             interpreter: &mut *$interpreter, host: &mut *$host,
@@ -70,7 +79,8 @@ macro_rules! cached_dispatch {
         if (*cache as i64) < 0 && !next.is_null() {
             return $interpreter.run_plain_inner::<_, false>($table, $host, next);
         }
-        next
+        core::mem::swap(&mut $interpreter.stack, &mut *$stack);
+        crate::instructions::cached::Flow::from_ip(next)
     }};
 }
 
@@ -90,10 +100,21 @@ macro_rules! inline_dispatch {
             ))+;
             let ip = self.bytecode.ip();
             if canonical && self.gas.remaining() <= i64::MAX as u64 {
-                self.run_plain_inner::<H, true>(instruction_table, host, ip)
+                self.run_plain_action::<H, true>(instruction_table, host, ip)
             } else {
-                self.run_plain_inner::<H, false>(instruction_table, host, ip)
+                self.run_plain_action::<H, false>(instruction_table, host, ip)
             }
+        }
+
+        // Extract the large action after the loop. Its return destination
+        // need not occupy a register throughout every opcode dispatch.
+        #[inline(always)]
+        fn run_plain_action<H: Host + ?Sized, const INLINE: bool>(
+            &mut self, instruction_table: &InstructionTable<$wire, H>,
+            host: &mut H, ip: Ip,
+        ) -> InterpreterAction {
+            self.run_plain_inner::<H, INLINE>(instruction_table, host, ip);
+            self.take_next_action()
         }
 
         #[inline(never)]
@@ -102,16 +123,25 @@ macro_rules! inline_dispatch {
             instruction_table: &InstructionTable<$wire, H>,
             host: &mut H,
             mut ip: Ip,
-        ) -> InterpreterAction {
+        ) {
             use bytecode::opcode::*;
-            let mut remaining = if INLINE { self.gas.remaining() } else { 0 };
+            if !INLINE {
+                return self.run_plain_uncached(instruction_table, host, ip);
+            }
+            let Some(mut stack) = self.stack.take_for_run() else {
+                return self.run_plain_uncached(instruction_table, host, ip);
+            };
+            // Select ownership once. Pure kernels receive a known Some borrow,
+            // so no optional-stack tag is tested inside the opcode loop.
+            let mut remaining = self.gas.remaining();
             loop {
                 // SAFETY: analysed bytecode is padded with STOP, as in `step`.
                 let (opcode, next) = unsafe { (*ip, ip.add(1)) };
-                ip = match opcode {
-                    $( $opcode if INLINE => cached_dispatch!($module::$name $(::<$n>)?, next, self, host, &mut remaining, instruction_table), )+
+                let flow = match opcode {
+                    $( $opcode if INLINE => cached_dispatch!($module::$name $(::<$n>)?, next, self, host, &mut remaining, &mut stack, instruction_table), )+
                     _ => {
                         let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
+                        core::mem::swap(&mut self.stack, &mut stack);
                         if INLINE { self.gas.set_remaining(remaining); }
                         let next = instruction.execute(next, InstructionContext { interpreter: self, host });
                         if INLINE {
@@ -120,16 +150,33 @@ macro_rules! inline_dispatch {
                                 return self.run_plain_inner::<H, false>(instruction_table, host, next);
                             }
                         }
-                        next
+                        core::mem::swap(&mut self.stack, &mut stack);
+                        crate::instructions::cached::Flow::from_ip(next)
                     }
                 };
-                if ip.is_null() {
+                match flow {
+                    crate::instructions::cached::Flow::Continue(next) => ip = next,
                     // Failures synchronized before constructing the action. OOG
-                    // has spent the gas; do not restore the old local budget.
-                    break;
+                    // has spent the gas; never restore the old local budget.
+                    crate::instructions::cached::Flow::Halt(_) => break,
                 }
             }
-            self.take_next_action()
+            self.stack = stack;
+        }
+
+        #[inline(always)]
+        fn run_plain_uncached<H: Host + ?Sized>(
+            &mut self, instruction_table: &InstructionTable<$wire, H>,
+            host: &mut H, mut ip: Ip,
+        ) {
+            loop {
+                // SAFETY: the same analysed-bytecode padding contract as step.
+                let (opcode, next) = unsafe { (*ip, ip.add(1)) };
+                let instruction = unsafe { instruction_table.get_unchecked(opcode as usize) };
+                ip = instruction.execute(next, InstructionContext { interpreter: self, host });
+                if ip.is_null() { break; }
+            }
+
         }
     };
 }
@@ -640,7 +687,7 @@ mod tests {
             let mut plain = make();
             let actual = cached.run_plain(&table, &mut DummyHost::default());
             let plain_ip = plain.bytecode.ip();
-            let expected = plain.run_plain_inner::<DummyHost, false>(
+            let expected = plain.run_plain_action::<DummyHost, false>(
                 &table,
                 &mut DummyHost::default(),
                 plain_ip,
@@ -652,6 +699,247 @@ mod tests {
             result = Some(actual);
         }
         result.unwrap()
+    }
+
+    #[test]
+    fn cached_stack_fallback_observes_and_replaces_stack() {
+        use bytecode::opcode::*;
+        use primitives::U256;
+        fn observe(ip: Ip, context: InstructionContext<'_, DummyHost, EthInterpreter>) -> Ip {
+            assert_eq!(
+                context.interpreter.stack.data(),
+                &[U256::from(7), U256::from(8)]
+            );
+            context.interpreter.stack = Stack::new();
+            assert!(context.interpreter.stack.push(U256::from(9)));
+            ip
+        }
+        let mut table = crate::instructions::instruction_table::<EthInterpreter, DummyHost>();
+        table[ADDRESS as usize] = crate::Instruction::new(observe);
+        let make = || {
+            Interpreter::<EthInterpreter>::new(
+                SharedMemory::new(),
+                ExtBytecode::new(Bytecode::new_raw(Bytes::from_static(&[
+                    PUSH1, 7, PUSH1, 8, ADDRESS, DUP1, ADD, STOP,
+                ]))),
+                InputsImpl::default(),
+                false,
+                SpecId::OSAKA,
+                100,
+            )
+        };
+        let mut cached = make();
+        let mut plain = make();
+        let actual = cached.run_plain(&table, &mut DummyHost::default());
+        let ip = plain.bytecode.ip();
+        let expected = plain.run_plain_action::<_, false>(&table, &mut DummyHost::default(), ip);
+        assert_eq!(actual, expected);
+        assert_eq!(cached.gas, plain.gas);
+        assert_eq!(cached.stack, plain.stack);
+        assert_eq!(cached.stack.data(), &[U256::from(18)]);
+    }
+
+    #[test]
+    fn cached_stack_exact_fault_boundaries_match_unsigned_path() {
+        use bytecode::opcode::*;
+        for code in [
+            &[PUSH1, 7, CALL][..],
+            &[PUSH1, 7, CREATE][..],
+            &[PUSH0, PUSH0, RETURN][..],
+            &[PUSH0, PUSH0, REVERT][..],
+        ] {
+            compare_cached_path(code, 100, 0, SpecId::OSAKA, false);
+        }
+        for height in [0, 1, 2, 1022, 1023, 1024] {
+            for gas in [0, 1, 2, 3, 5, 6, 8, 9, 100] {
+                for code in [
+                    &[PUSH1, 1, DUP1, SWAP1, POP, ADD, STOP][..],
+                    &[POP, CALLDATASIZE, DUP1, ADD, STOP][..],
+                    &[PUSH1, 0, JUMPI, STOP][..],
+                ] {
+                    compare_cached_path(code, gas, height, SpecId::OSAKA, false);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_environment_values_match_unsigned_path() {
+        use bytecode::opcode::*;
+        use primitives::{Address, U256};
+        let table = crate::instructions::instruction_table::<EthInterpreter, DummyHost>();
+        for len in [0, 1, 31, 32, 33, 63, 64, 65] {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 7 + 3) as u8).collect();
+            for offset in [
+                U256::ZERO,
+                U256::from(1),
+                U256::from(31),
+                U256::from(32),
+                U256::from(64),
+                U256::MAX,
+            ] {
+                let make = || {
+                    let mut i = Interpreter::<EthInterpreter>::new(
+                        SharedMemory::new(),
+                        ExtBytecode::new(Bytecode::new_raw(Bytes::from_static(&[
+                            CALLDATALOAD,
+                            CALLDATASIZE,
+                            CALLER,
+                            RETURNDATASIZE,
+                            GAS,
+                            STOP,
+                        ]))),
+                        InputsImpl {
+                            caller_address: Address::from([0x53; 20]),
+                            input: crate::CallInput::Bytes(Bytes::copy_from_slice(&bytes)),
+                            ..InputsImpl::default()
+                        },
+                        false,
+                        SpecId::OSAKA,
+                        100,
+                    );
+                    i.return_data.set_buffer(Bytes::from_static(&[4, 3, 2, 1]));
+                    assert!(i.stack.push(offset));
+                    i
+                };
+                let mut cached = make();
+                let mut plain = make();
+                let actual = cached.run_plain(&table, &mut DummyHost::default());
+                let ip = plain.bytecode.ip();
+                let expected =
+                    plain.run_plain_action::<_, false>(&table, &mut DummyHost::default(), ip);
+                assert_eq!(actual, expected);
+                assert_eq!(cached.gas, plain.gas);
+                assert_eq!(cached.stack, plain.stack);
+                assert_eq!(cached.bytecode.pc(), plain.bytecode.pc());
+                let mut word = [0u8; 32];
+                if offset < U256::from(len) {
+                    let start = offset.to::<usize>();
+                    let n = (len - start).min(32);
+                    word[..n].copy_from_slice(&bytes[start..start + n]);
+                }
+                assert_eq!(cached.stack.data()[0], U256::from_be_bytes(word));
+                assert_eq!(cached.stack.data()[1], U256::from(len));
+                assert_eq!(cached.stack.data()[2], U256::from_be_slice(&[0x53; 20]));
+                assert_eq!(cached.stack.data()[3], U256::from(4));
+                assert_eq!(cached.stack.data()[4], U256::from(89));
+            }
+        }
+    }
+
+    #[test]
+    fn cached_environment_faults_match_unsigned_path() {
+        use bytecode::opcode::*;
+        for opcode in [CALLER, CALLDATASIZE, RETURNDATASIZE, GAS] {
+            for gas in [0, 1, 2, 3, 4, 5, 100, i64::MAX as u64, u64::MAX] {
+                for height in [0, 1023, 1024] {
+                    for spec in [SpecId::FRONTIER, SpecId::BYZANTIUM, SpecId::OSAKA] {
+                        compare_cached_path(&[opcode, STOP], gas, height, spec, false);
+                        compare_cached_path(&[PUSH0, POP, opcode, STOP], gas, height, spec, false);
+                    }
+                }
+            }
+        }
+        for gas in 0..15 {
+            for height in [0, 1, 1023, 1024] {
+                compare_cached_path(
+                    &[CALLDATALOAD, GAS, STOP],
+                    gas,
+                    height,
+                    SpecId::OSAKA,
+                    false,
+                );
+            }
+        }
+        compare_cached_path(
+            &[GAS, GAS, ADD, CALLDATASIZE, CALLER, RETURNDATASIZE, STOP],
+            100,
+            0,
+            SpecId::OSAKA,
+            false,
+        );
+    }
+
+    #[test]
+    fn cached_memory_boundaries_match_unsigned_path() {
+        use bytecode::opcode::*;
+        use primitives::U256;
+        let table = crate::instructions::instruction_table::<EthInterpreter, DummyHost>();
+        for opcode in [MLOAD, MSTORE] {
+            for gas in [0, 2, 3, 5, 6, 9, 100, i64::MAX as u64, u64::MAX] {
+                for offset in [
+                    U256::ZERO,
+                    U256::from(1),
+                    U256::from(31),
+                    U256::from(32),
+                    U256::from(64),
+                    U256::from(usize::MAX),
+                    U256::MAX,
+                ] {
+                    for initial_words in [0, 4] {
+                        for limit in [0, 31, 32, 64, u64::MAX] {
+                            // A practically unbounded gas budget can authorize an
+                            // impossible native allocation; exercise saturation at
+                            // bounded budgets and full-width gas at small offsets.
+                            if offset == U256::from(usize::MAX) && gas > 100 && limit == u64::MAX {
+                                continue;
+                            }
+                            let make = || {
+                                let mut i = Interpreter::<EthInterpreter>::new(
+                                    SharedMemory::new(),
+                                    ExtBytecode::new(Bytecode::new_raw(Bytes::from(vec![
+                                        opcode, GAS, STOP,
+                                    ]))),
+                                    InputsImpl::default(),
+                                    false,
+                                    SpecId::OSAKA,
+                                    u64::MAX,
+                                );
+                                if initial_words != 0 {
+                                    assert!(i.resize_memory(
+                                        DummyHost::default().gas_params(),
+                                        0,
+                                        initial_words * 32
+                                    ));
+                                    // Isolate execution budgets while retaining the charged memory state.
+                                }
+                                i.gas.set_remaining(gas);
+                                i.memory.set_memory_limit(limit);
+                                if opcode == MSTORE {
+                                    assert!(i.stack.push(U256::MAX));
+                                }
+                                assert!(i.stack.push(offset));
+                                i
+                            };
+                            let mut cached = make();
+                            let mut plain = make();
+                            let actual = cached.run_plain(&table, &mut DummyHost::default());
+                            let ip = plain.bytecode.ip();
+                            let expected = plain.run_plain_action::<DummyHost, false>(
+                                &table,
+                                &mut DummyHost::default(),
+                                ip,
+                            );
+                            assert_eq!(actual, expected);
+                            assert_eq!(cached.gas, plain.gas);
+                            assert_eq!(cached.stack, plain.stack);
+                            assert_eq!(
+                                &*cached.memory.context_memory(),
+                                &*plain.memory.context_memory()
+                            );
+                            assert_eq!(cached.bytecode.pc(), plain.bytecode.pc());
+                        }
+                    }
+                }
+            }
+        }
+        for height in [0, 1, 2, 1024] {
+            for gas in [0, 2, 3, 6, 100] {
+                for code in [&[MLOAD, STOP][..], &[MSTORE, STOP][..]] {
+                    compare_cached_path(code, gas, height, SpecId::OSAKA, false);
+                }
+            }
+        }
     }
 
     #[test]
@@ -770,7 +1058,7 @@ mod tests {
         let actual = cached.run_plain(&table, &mut DummyHost::default());
         let plain_ip = plain.bytecode.ip();
         let expected =
-            plain.run_plain_inner::<DummyHost, false>(&table, &mut DummyHost::default(), plain_ip);
+            plain.run_plain_action::<DummyHost, false>(&table, &mut DummyHost::default(), plain_ip);
         assert_eq!(actual, expected);
         assert_eq!(cached.gas, plain.gas);
         assert_eq!(cached.stack, plain.stack);

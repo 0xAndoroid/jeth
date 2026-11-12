@@ -234,6 +234,38 @@ pub(crate) fn bswap64(x: u64) -> u64 {
     x.swap_bytes()
 }
 
+/// Swap exactly the four live bytes of a partial PUSH chunk.
+#[inline(always)]
+fn bswap32(x: u64) -> u32 {
+    #[cfg(target_arch = "riscv64")]
+    {
+        let mut out = x;
+        // SAFETY: register-only butterfly. The masks discard sign extension
+        // from the word shifts in the low 32 bits; the return cast discards the rest.
+        unsafe {
+            core::arch::asm!(
+                "beqz {o}, 2f",
+                "srliw {t}, {o}, 16",
+                "slliw {o}, {o}, 16",
+                "or {o}, {o}, {t}",
+                "srli {t}, {o}, 8",
+                "and {t}, {t}, {mask}",
+                "and {o}, {o}, {mask}",
+                "slli {o}, {o}, 8",
+                "or {o}, {o}, {t}",
+                "2:",
+                o = inout(reg) out,
+                t = out(reg) _,
+                mask = in(reg) 0x00ff_00ff_00ff_00ffu64,
+                options(pure, nomem, nostack),
+            );
+        }
+        out as u32
+    }
+    #[cfg(not(target_arch = "riscv64"))]
+    (x as u32).swap_bytes()
+}
+
 /// The `N`-byte (1..=32) big-endian PUSH immediate at `p` as a `U256`, read
 /// with aligned `LD`s only.
 ///
@@ -282,7 +314,14 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     // the most significant limb of the left-aligned value.
     let mut y = [0u64; 4];
     for m in 0..c {
-        y[3 - m] = bswap64((w[m] >> sh) | ((w[m + 1] << (63 - sh)) << 1));
+        let chunk = (w[m] >> sh) | ((w[m + 1] << (63 - sh)) << 1);
+        y[3 - m] = if N % 8 == 4 && m + 1 == c {
+            // The following right alignment discards the low 32 bits of
+            // this final chunk, so only its four immediate bytes matter.
+            (bswap32(chunk) as u64) << 32
+        } else {
+            bswap64(chunk)
+        };
     }
     // Right-align by the 32 - N missing bytes: `d` whole limbs and `r` bits.
     let d = (32 - N) / 8;
@@ -369,6 +408,18 @@ mod tests {
             let want = U256::try_from_be_slice(imm).unwrap();
             let got = unsafe { read_be_immediate::<N>(imm.as_ptr()) };
             assert_eq!(got, want, "N {N} off {off}");
+        }
+    }
+
+    #[test]
+    fn partial_swap_matches_byte_reference() {
+        for byte in 0..4 {
+            for value in [0u32, 1, 0x80, 0xff] {
+                let x = value << (byte * 8);
+                assert_eq!(bswap32(x as u64), x.swap_bytes());
+                assert_eq!(bswap32((u64::MAX << 32) | x as u64), x.swap_bytes());
+                assert_eq!(bswap32(!x as u64), (!x).swap_bytes());
+            }
         }
     }
 

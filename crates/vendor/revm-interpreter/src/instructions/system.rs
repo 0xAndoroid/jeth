@@ -5,8 +5,7 @@ use crate::{
     CallInput, InstructionResult,
 };
 use context_interface::Host;
-use core::ptr;
-use primitives::{B256, KECCAK_EMPTY, U256};
+use primitives::{KECCAK_EMPTY, U256};
 
 use crate::{InstructionContext, Ip};
 
@@ -64,17 +63,7 @@ pub fn caller<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, CALLER);
-    push!(
-        context.interpreter,
-        context
-            .interpreter
-            .input
-            .caller_address()
-            .into_word()
-            .into()
-    );
-    ip
+    super::cached::caller::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the CODESIZE instruction.
@@ -136,28 +125,7 @@ pub fn calldataload<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, CALLDATALOAD);
-    popn_top!([], offset_ptr, context.interpreter);
-    let mut word = B256::ZERO;
-    let offset = as_usize_saturated!(*offset_ptr);
-    let input = context.interpreter.input.input();
-    let input_len = input.len();
-    if offset < input_len {
-        let input = &*input.as_bytes_memory(&context.interpreter.memory);
-        if offset + 32 <= input_len {
-            // Word-wise (see interpreter::words).
-            *offset_ptr = crate::interpreter::words::read_u256_be(input, offset);
-            return ip;
-        }
-        let count = 32.min(input_len - offset);
-        // SAFETY: `count` is bounded by the calldata length.
-        // This is `word[..count].copy_from_slice(input[offset..offset + count])`, written using
-        // raw pointers as apparently the compiler cannot optimize the slice version, and using
-        // `get_unchecked` twice is uglier.
-        unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), word.as_mut_ptr(), count) };
-    }
-    *offset_ptr = word.into();
-    ip
+    super::cached::calldataload::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the CALLDATASIZE instruction.
@@ -168,12 +136,7 @@ pub fn calldatasize<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, CALLDATASIZE);
-    push!(
-        context.interpreter,
-        U256::from(context.interpreter.input.input().len())
-    );
-    ip
+    super::cached::calldatasize::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the CALLVALUE instruction.
@@ -239,13 +202,7 @@ pub fn returndatasize<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, RETURNDATASIZE);
-    check!(context.interpreter, BYZANTIUM);
-    push!(
-        context.interpreter,
-        U256::from(context.interpreter.return_data.buffer().len())
-    );
-    ip
+    super::cached::returndatasize::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
@@ -301,8 +258,5 @@ pub fn gas<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    static_gas!(context.interpreter, GAS);
-    let gas = &context.interpreter.gas;
-    push!(context.interpreter, U256::from(gas.remaining()));
-    ip
+    super::cached::gas::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }

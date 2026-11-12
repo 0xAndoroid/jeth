@@ -13,7 +13,7 @@ pub fn lt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::lt::<false, _, _>(ip, context, &mut 0)
+    super::cached::lt::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the GT instruction - greater than comparison.
@@ -22,7 +22,18 @@ pub fn gt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::gt::<false, _, _>(ip, context, &mut 0)
+    super::cached::gt::<false, _, _>(ip, context, &mut 0, None).into_ip()
+}
+
+// Equality may reject a differing low limb before reading/reducing the rest.
+#[inline(always)]
+pub(crate) fn equal_word(left: &U256, right: &U256) -> bool {
+    let a = left.as_limbs();
+    let b = right.as_limbs();
+    if a[0] != b[0] {
+        return false;
+    }
+    ((a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3])) == 0
 }
 
 // Unsigned ordering is determined by the first unequal limb from the high end.
@@ -89,7 +100,7 @@ pub fn eq<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::eq::<false, _, _>(ip, context, &mut 0)
+    super::cached::eq::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the ISZERO instruction.
@@ -99,7 +110,7 @@ pub fn iszero<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::iszero::<false, _, _>(ip, context, &mut 0)
+    super::cached::iszero::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the AND instruction.
@@ -109,7 +120,7 @@ pub fn bitand<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::bitand::<false, _, _>(ip, context, &mut 0)
+    super::cached::bitand::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the OR instruction.
@@ -120,7 +131,7 @@ pub fn bitor<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::bitor::<false, _, _>(ip, context, &mut 0)
+    super::cached::bitor::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the XOR instruction.
@@ -144,7 +155,7 @@ pub fn not<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::not::<false, _, _>(ip, context, &mut 0)
+    super::cached::not::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the BYTE instruction.
@@ -172,7 +183,7 @@ pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::shl::<false, _, _>(ip, context, &mut 0)
+    super::cached::shl::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
@@ -181,7 +192,7 @@ pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::shr::<false, _, _>(ip, context, &mut 0)
+    super::cached::shr::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 // Each whole-limb case shifts only the live limbs. Double shifts keep the
@@ -253,6 +264,25 @@ mod tests {
         InstructionContext, Interpreter,
     };
     use primitives::{hardfork::SpecId, uint, U256};
+
+    #[test]
+    fn equality_limb_shortcut_matches_full_width_reference() {
+        for seed in [0u64, 1, 0x8000_0000_0000_0000, u64::MAX] {
+            let original = [seed, seed.rotate_left(7), !seed, seed.rotate_right(13)];
+            let a = U256::from_limbs(original);
+            assert!(super::equal_word(&a, &a));
+            for limb in 0..4 {
+                for mask in [1, 0x8000_0000_0000_0000, u64::MAX] {
+                    let mut changed = original;
+                    changed[limb] ^= mask;
+                    let b = U256::from_limbs(changed);
+                    assert_eq!(super::equal_word(&a, &b), a == b);
+                    assert_eq!(super::equal_word(&b, &a), b == a);
+                }
+            }
+        }
+        assert!(!super::equal_word(&U256::ZERO, &U256::MAX));
+    }
 
     #[test]
     fn limb_order_matches_full_width_comparison() {

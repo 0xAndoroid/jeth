@@ -158,6 +158,18 @@ pub trait MemoryTr {
 
 /// Functions needed for Interpreter Stack operations.
 pub trait StackTr {
+    /// Moves a stack into the run loop, leaving an empty placeholder.
+    ///
+    /// The loop restores it before calling an instruction outside its private
+    /// kernels and when returning. Custom stack implementations keep the
+    /// ordinary path by returning `None`.
+    fn take_for_run(&mut self) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// Returns stack length.
     fn len(&self) -> usize;
 

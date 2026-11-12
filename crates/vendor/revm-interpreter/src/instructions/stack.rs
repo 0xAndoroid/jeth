@@ -13,7 +13,7 @@ pub fn pop<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::pop::<false, _, _>(ip, context, &mut 0)
+    super::cached::pop::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// EIP-3855: PUSH0 instruction
@@ -23,7 +23,7 @@ pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::push0::<false, _, _>(ip, context, &mut 0)
+    super::cached::push0::<false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the PUSH1-PUSH32 instructions.
@@ -36,7 +36,7 @@ pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::push::<N, false, _, _>(ip, context, &mut 0)
+    super::cached::push::<N, false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the DUP1-DUP16 instructions.
@@ -46,7 +46,7 @@ pub fn dup<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::dup::<N, false, _, _>(ip, context, &mut 0)
+    super::cached::dup::<N, false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the SWAP1-SWAP16 instructions.
@@ -56,7 +56,7 @@ pub fn swap<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
-    super::cached::swap::<N, false, _, _>(ip, context, &mut 0)
+    super::cached::swap::<N, false, _, _>(ip, context, &mut 0, None).into_ip()
 }
 
 /// Implements the DUPN instruction.
