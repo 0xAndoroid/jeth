@@ -2643,6 +2643,7 @@ dependencies = [
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
+ "jolt-inlines-sdk",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-sdk",
