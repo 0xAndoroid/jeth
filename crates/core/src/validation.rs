@@ -117,6 +117,16 @@ pub fn validate_recovered_pertx(
         .block_executor_factory()
         .create_executor(evm, context);
 
+    // Reserve the actual block-wide call buffer without exposing any bytes.
+    // Expansion gas and zero initialization still occur in SharedMemory.
+    executor
+        .evm_mut()
+        .ctx()
+        .local
+        .shared_memory_buffer
+        .borrow_mut()
+        .reserve(1024 * 1024);
+
     executor
         .apply_pre_execution_changes()
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;

@@ -296,9 +296,33 @@ impl SharedMemory {
     /// Resizes the memory in-place so that `len` is equal to `new_len`.
     #[inline]
     pub fn resize(&mut self, new_size: usize) {
-        self.buffer()
-            .dbg_borrow_mut()
-            .resize(self.my_checkpoint + new_size, 0);
+        let mut buffer = self.buffer().dbg_borrow_mut();
+        let new_len = self.my_checkpoint + new_size;
+        let old_len = buffer.len();
+        if new_len > old_len && (old_len | new_len) & 31 == 0 {
+            buffer.reserve(new_len - old_len);
+            let base = buffer.as_mut_ptr();
+            if base as usize & 7 == 0 {
+                // SAFETY: reserve provides the full range, its endpoints are
+                // multiples of 32, and the allocation is checked for word
+                // alignment. Initialize every newly visible byte before
+                // setting the length, including storage reused after a child.
+                unsafe {
+                    let mut dst = base.add(old_len).cast::<u64>();
+                    let end = base.add(new_len).cast::<u64>();
+                    while dst != end {
+                        dst.write_volatile(0);
+                        dst.add(1).write_volatile(0);
+                        dst.add(2).write_volatile(0);
+                        dst.add(3).write_volatile(0);
+                        dst = dst.add(4);
+                    }
+                    buffer.set_len(new_len);
+                }
+                return;
+            }
+        }
+        buffer.resize(new_len, 0);
     }
 
     /// Returns a byte slice of the memory region at the given offset.
@@ -767,6 +791,39 @@ mod tests {
         assert_eq!(sm1.buffer_ref().len(), 32);
         assert_eq!(sm1.my_checkpoint, 0);
         assert_eq!(sm1.len(), 32);
+    }
+
+    #[test]
+    fn reused_child_memory_has_no_previous_bytes() {
+        for parent_size in [0, 1, 31, 32, 64] {
+            let mut parent = SharedMemory::with_capacity(1024);
+            parent.resize(parent_size);
+            parent.set(0, &vec![0xa5; parent_size]);
+            for size in [1, 31, 32, 33, 64, 256] {
+                let mut first = parent.new_child_context();
+                first.resize(size);
+                first.set(0, &vec![0xdd; size]);
+                drop(first);
+                parent.free_child_context();
+
+                let mut reused = parent.new_child_context();
+                assert_eq!(reused.len(), 0);
+                reused.resize(size);
+                reused.set(0, &[0x7b]);
+                assert_eq!(reused.slice_range(0..size)[0], 0x7b);
+                assert!(reused.slice_range(1..size).iter().all(|&b| b == 0));
+                reused.resize(0);
+                reused.resize(size);
+                assert!(reused.slice_range(0..size).iter().all(|&b| b == 0));
+                drop(reused);
+                parent.free_child_context();
+                assert_eq!(parent.len(), parent_size);
+                assert!(parent
+                    .slice_range(0..parent_size)
+                    .iter()
+                    .all(|&b| b == 0xa5));
+            }
+        }
     }
 
     #[test]

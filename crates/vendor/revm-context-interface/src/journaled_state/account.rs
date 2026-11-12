@@ -186,8 +186,10 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
                     if is_cold && skip_cold_load {
                         return Err(JournalLoadError::ColdLoadSkipped);
                     }
+                    // A warm slot already has this transaction id and a clear
+                    // cold flag. Only cold slots need rebasing and marking.
+                    slot.mark_warm_with_transaction_id(self.transaction_id);
                 }
-                slot.mark_warm_with_transaction_id(self.transaction_id);
                 (slot, is_cold)
             }
             Entry::Vacant(vac) => {
@@ -486,5 +488,78 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
     fn load_code(&mut self) -> Result<&Bytecode, JournalLoadErasedError> {
         self.load_code_preserve_error()
             .map_err(|i| i.map(ErasedError::new))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use database_interface::EmptyDB;
+
+    #[test]
+    fn warm_slot_skips_writes_but_cold_slots_still_rebase() {
+        let address = Address::ZERO;
+        let key = U256::from(1);
+        let mut account = Account::default();
+        let mut slot = EvmStorageSlot::new(U256::from(3), 1);
+        slot.present_value = U256::from(5);
+        account.storage.insert(key, slot);
+        let mut entries: Vec<JournalEntry> = Vec::new();
+        let access_list = AddressMap::default();
+        let mut db = EmptyDB::default();
+        {
+            let mut journal = JournaledAccount::new(
+                address,
+                &mut account,
+                &mut entries,
+                &mut db,
+                &access_list,
+                1,
+            );
+            let loaded = journal.sload_concrete_error(key, true).unwrap();
+            assert!(!loaded.is_cold);
+            assert_eq!(loaded.original_value(), U256::from(3));
+            assert_eq!(loaded.present_value(), U256::from(5));
+        }
+        assert!(entries.is_empty());
+        {
+            let mut journal = JournaledAccount::new(
+                address,
+                &mut account,
+                &mut entries,
+                &mut db,
+                &access_list,
+                2,
+            );
+            assert!(matches!(
+                journal.sload_concrete_error(key, true),
+                Err(JournalLoadError::ColdLoadSkipped)
+            ));
+            assert_eq!(
+                journal.account.storage[&key].original_value(),
+                U256::from(3)
+            );
+            let loaded = journal.sload_concrete_error(key, false).unwrap();
+            assert!(loaded.is_cold);
+            assert_eq!(loaded.original_value(), U256::from(5));
+            assert_eq!(loaded.transaction_id, 2);
+            assert!(!loaded.is_cold_transaction_id(2));
+        }
+        assert_eq!(entries, vec![JournalEntry::StorageWarmed { address, key }]);
+        account.storage.get_mut(&key).unwrap().mark_cold();
+        let mut access_list = AddressMap::default();
+        access_list.insert(address, HashSet::from_iter([key]));
+        let mut journal = JournaledAccount::new(
+            address,
+            &mut account,
+            &mut entries,
+            &mut db,
+            &access_list,
+            2,
+        );
+        let loaded = journal.sload_concrete_error(key, true).unwrap();
+        assert!(!loaded.is_cold);
+        assert!(!loaded.is_cold_transaction_id(2));
+        assert_eq!(entries.len(), 1);
     }
 }

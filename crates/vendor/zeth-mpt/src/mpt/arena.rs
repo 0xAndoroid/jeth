@@ -254,8 +254,33 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
 #[inline(always)]
 unsafe fn put_window33(dst: *mut u64, d: usize, v: [u64; 5], so: usize) {
     debug_assert!(d < 8 && so < 8);
+    match d {
+        0 => put_window33_at::<0>(dst, v, so),
+        1 => put_window33_at::<1>(dst, v, so),
+        2 => put_window33_at::<2>(dst, v, so),
+        3 => put_window33_at::<3>(dst, v, so),
+        4 => put_window33_at::<4>(dst, v, so),
+        5 => put_window33_at::<5>(dst, v, so),
+        6 => put_window33_at::<6>(dst, v, so),
+        7 => put_window33_at::<7>(dst, v, so),
+        _ => unreachable!(),
+    }
+}
+
+/// Specialize destination alignment so aligned digest sources use immediate
+/// shifts. The writable range is the same five words as `put_window33`.
+#[inline(always)]
+unsafe fn put_window33_at<const D: usize>(dst: *mut u64, v: [u64; 5], so: usize) {
+    let d = D;
     let keep = !(u64::MAX << (8 * d));
-    let merge = |x: u64| (read_volatile(dst) & keep) | (x & !keep);
+    let merge = |x: u64| {
+        if D == 0 {
+            // The whole destination word is overwritten at zero offset.
+            x
+        } else {
+            (read_volatile(dst) & keep) | (x & !keep)
+        }
+    };
     let s = so.wrapping_sub(d) & 7;
     if s == 0 {
         write_volatile(dst, merge(v[0]));
