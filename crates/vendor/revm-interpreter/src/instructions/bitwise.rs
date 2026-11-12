@@ -7,25 +7,96 @@ use crate::{
 use core::cmp::Ordering;
 use primitives::U256;
 
+// Equality may reject a differing low limb before reading/reducing the rest.
+#[inline(always)]
+pub(crate) fn equal_word(left: &U256, right: &U256) -> bool {
+    let a = left.as_limbs();
+    let b = right.as_limbs();
+    if a[0] != b[0] {
+        return false;
+    }
+    ((a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3])) == 0
+}
+
+// Unsigned ordering is determined by the first unequal limb from the high end.
+// Avoid computing a full subtraction and equality reduction just for its ordering.
+#[inline(always)]
+pub(crate) fn less_word(left: &U256, right: &U256) -> bool {
+    let a = left.as_limbs();
+    let b = right.as_limbs();
+    if a[3] != b[3] {
+        a[3] < b[3]
+    } else if a[2] != b[2] {
+        a[2] < b[2]
+    } else if a[1] != b[1] {
+        a[1] < b[1]
+    } else {
+        a[0] < b[0]
+    }
+}
+
+// Each whole-limb case shifts only the live limbs. Double shifts keep the
+// carry expression defined at a zero residual without an extra branch.
+#[inline(always)]
+pub(crate) fn shift_word<const LEFT: bool>(value: U256, shift: usize) -> U256 {
+    if shift >= 256 {
+        return U256::ZERO;
+    }
+    let [a, b, c, d] = *value.as_limbs();
+    let words = shift / 64;
+    let bits = shift % 64;
+    let inv = 63 - bits;
+    let limbs = if LEFT {
+        let carry = |x: u64| (x >> inv) >> 1;
+        match words {
+            0 => [
+                a << bits,
+                (b << bits) | carry(a),
+                (c << bits) | carry(b),
+                (d << bits) | carry(c),
+            ],
+            1 => [0, a << bits, (b << bits) | carry(a), (c << bits) | carry(b)],
+            2 => [0, 0, a << bits, (b << bits) | carry(a)],
+            _ => [0, 0, 0, a << bits],
+        }
+    } else {
+        let carry = |x: u64| (x << inv) << 1;
+        match words {
+            0 => [
+                (a >> bits) | carry(b),
+                (b >> bits) | carry(c),
+                (c >> bits) | carry(d),
+                d >> bits,
+            ],
+            1 => [(b >> bits) | carry(c), (c >> bits) | carry(d), d >> bits, 0],
+            2 => [(c >> bits) | carry(d), d >> bits, 0, 0],
+            _ => [d >> bits, 0, 0, 0],
+        }
+    };
+    U256::from_limbs(limbs)
+}
+
 /// Implements the LT instruction - less than comparison.
+#[inline(always)]
 pub fn lt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
     static_gas!(context.interpreter, LT);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(op1 < *op2);
+    *op2 = U256::from(less_word(&op1, op2));
     ip
 }
 
 /// Implements the GT instruction - greater than comparison.
+#[inline(always)]
 pub fn gt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
 ) -> Ip {
     static_gas!(context.interpreter, GT);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(op1 > *op2);
+    *op2 = U256::from(less_word(op2, &op1));
     ip
 }
 
@@ -45,6 +116,7 @@ pub fn clz<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the SLT instruction.
 ///
 /// Signed less than comparison of two values from stack.
+#[inline(always)]
 pub fn slt<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -77,7 +149,7 @@ pub fn eq<WIRE: InterpreterTypes, H: ?Sized>(
 ) -> Ip {
     static_gas!(context.interpreter, EQ);
     popn_top!([op1], op2, context.interpreter);
-    *op2 = U256::from(op1 == *op2);
+    *op2 = U256::from(equal_word(&op1, op2));
     ip
 }
 
@@ -110,6 +182,7 @@ pub fn bitand<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the OR instruction.
 ///
 /// Bitwise OR of two values from stack.
+#[inline(always)]
 pub fn bitor<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -136,6 +209,7 @@ pub fn bitxor<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the NOT instruction.
 ///
 /// Bitwise NOT (negation) of the top stack value.
+#[inline(always)]
 pub fn not<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -166,6 +240,7 @@ pub fn byte<WIRE: InterpreterTypes, H: ?Sized>(
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
+#[inline(always)]
 pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -174,15 +249,12 @@ pub fn shl<WIRE: InterpreterTypes, H: ?Sized>(
     check!(context.interpreter, CONSTANTINOPLE);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
-    *op2 = if shift < 256 {
-        *op2 << shift
-    } else {
-        U256::ZERO
-    };
+    *op2 = shift_word::<true>(*op2, shift);
     ip
 }
 
 /// EIP-145: Bitwise shifting instructions in EVM
+#[inline(always)]
 pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -191,11 +263,7 @@ pub fn shr<WIRE: InterpreterTypes, H: ?Sized>(
     check!(context.interpreter, CONSTANTINOPLE);
     popn_top!([op1], op2, context.interpreter);
     let shift = as_usize_saturated!(op1);
-    *op2 = if shift < 256 {
-        *op2 >> shift
-    } else {
-        U256::ZERO
-    };
+    *op2 = shift_word::<false>(*op2, shift);
     ip
 }
 
@@ -227,6 +295,91 @@ mod tests {
         InstructionContext, Interpreter,
     };
     use primitives::{hardfork::SpecId, uint, U256};
+
+    #[test]
+    fn equality_limb_shortcut_matches_full_width_reference() {
+        for seed in [0u64, 1, 0x8000_0000_0000_0000, u64::MAX] {
+            let original = [seed, seed.rotate_left(7), !seed, seed.rotate_right(13)];
+            let a = U256::from_limbs(original);
+            assert!(super::equal_word(&a, &a));
+            for limb in 0..4 {
+                for mask in [1, 0x8000_0000_0000_0000, u64::MAX] {
+                    let mut changed = original;
+                    changed[limb] ^= mask;
+                    let b = U256::from_limbs(changed);
+                    assert_eq!(super::equal_word(&a, &b), a == b);
+                    assert_eq!(super::equal_word(&b, &a), b == a);
+                }
+            }
+        }
+        assert!(!super::equal_word(&U256::ZERO, &U256::MAX));
+    }
+
+    #[test]
+    fn limb_order_matches_full_width_comparison() {
+        let check = |a: U256, b: U256| {
+            assert_eq!(super::less_word(&a, &b), a < b);
+            assert_eq!(super::less_word(&b, &a), a > b);
+            assert!(!super::less_word(&a, &a));
+        };
+        check(U256::ZERO, U256::MAX);
+        for limb in 0..4 {
+            for value in [0, 1, u64::MAX / 2, u64::MAX - 1] {
+                let mut a = [u64::MAX; 4];
+                let mut b = [0; 4];
+                for i in limb + 1..4 {
+                    a[i] = 0xaaaa_5555_ffff_0000;
+                    b[i] = a[i];
+                }
+                a[limb] = value;
+                b[limb] = value + 1;
+                check(U256::from_limbs(a), U256::from_limbs(b));
+            }
+        }
+        let mut state = 0x3141_5926_5358_9793u64;
+        for _ in 0..512 {
+            let mut word = || {
+                U256::from_limbs(core::array::from_fn(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state
+                }))
+            };
+            let a = word();
+            let b = word();
+            check(a, b);
+        }
+    }
+
+    #[test]
+    fn limb_shifts_match_full_width_operations() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..32 {
+            let value = U256::from_limbs(core::array::from_fn(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            }));
+            for shift in 0..=300 {
+                let left = if shift < 256 {
+                    value << shift
+                } else {
+                    U256::ZERO
+                };
+                let right = if shift < 256 {
+                    value >> shift
+                } else {
+                    U256::ZERO
+                };
+                assert_eq!(super::shift_word::<true>(value, shift), left);
+                assert_eq!(super::shift_word::<false>(value, shift), right);
+            }
+            assert_eq!(super::shift_word::<true>(value, usize::MAX), U256::ZERO);
+            assert_eq!(super::shift_word::<false>(value, usize::MAX), U256::ZERO);
+        }
+    }
 
     #[test]
     fn test_shift_left() {

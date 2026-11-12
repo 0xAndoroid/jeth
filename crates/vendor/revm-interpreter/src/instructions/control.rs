@@ -23,6 +23,7 @@ pub fn jump<ITy: InterpreterTypes, H: ?Sized>(
 /// Implements the JUMPI instruction.
 ///
 /// Conditional jump to a valid destination if condition is true.
+#[inline(always)]
 pub fn jumpi<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
