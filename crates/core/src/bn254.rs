@@ -1,12 +1,10 @@
 //! bn254 G1 scalar multiplication for the ecmul precompile (0x07).
 //!
-//! revm's arkworks backend multiplies through `Affine::mul_bigint`: plain
-//! double-and-add over the full 254-bit scalar (~254 doublings + ~127 mixed
-//! additions). ark-bn254 ships GLV parameters for G1, so k = k1 + λ·k2 with
-//! |k1|, |k2| < 2^128 halves the doublings (128 doublings + ~96 additions from
-//! the {P, φ(P), P+φ(P)} table). Same group element, same canonical affine
-//! output. Parsing and encoding mirror revm-precompile's `bn254::arkworks`
-//! byte for byte, including the two rejection variants.
+//! The existing bn254 GLV parameters split the scalar into two short signed
+//! components. A shared signed-window loop uses affine odd-multiple tables;
+//! the endomorphism derives the second table from the first after one batch
+//! normalization. Parsing, scalar reduction and encoding retain revm's
+//! canonical-input checks and failure variants.
 
 use ark_bn254::{g1::Config, Fq, Fr, G1Affine};
 use ark_ec::{scalar_mul::glv::GLVConfig, AffineRepr};
@@ -43,13 +41,92 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], Precompile
         p
     };
     let k = Fr::from_be_bytes_mod_order(scalar);
-    let product = Config::glv_mul_affine(p, k);
+    let product = window_glv_mul(p, k);
     let mut out = [0u8; 64];
     if let Some((x, y)) = product.xy() {
         write_fq(&mut out[..32], x);
         write_fq(&mut out[32..], y);
     }
     Ok(out)
+}
+
+/// Shared signed-window loop for the two existing bn254 GLV components.
+fn window_glv_mul(p: G1Affine, k: Fr) -> G1Affine {
+    use alloc::vec::Vec;
+    use ark_bn254::G1Projective;
+    use ark_ec::CurveGroup;
+    use ark_ff::AdditiveGroup;
+
+    const WIDTH: usize = 4;
+    if p.is_zero() || k.is_zero() {
+        return G1Affine::identity();
+    }
+    if k == Fr::from(1u64) {
+        return p;
+    }
+    let ((positive_1, k1), (positive_2, k2)) = Config::scalar_decomposition(k);
+    let digits_1 = sparse_window_digits::<WIDTH>(k1.into_bigint());
+    let digits_2 = sparse_window_digits::<WIDTH>(k2.into_bigint());
+
+    // Normalize only the odd multiples of P. The endomorphism then gives the
+    // second affine table without another inversion.
+    let mut odd = Vec::with_capacity(1 << (WIDTH - 2));
+    odd.push(p.into_group());
+    let twice = odd[0].double();
+    for i in 1..(1 << (WIDTH - 2)) {
+        odd.push(odd[i - 1] + twice);
+    }
+    let first = G1Projective::normalize_batch(&odd);
+    let second: Vec<_> = first.iter().map(Config::endomorphism_affine).collect();
+    let mut result = G1Projective::zero();
+    for i in (0..digits_1.len().max(digits_2.len())).rev() {
+        result.double_in_place();
+        for (digits, table, positive) in [
+            (&digits_1, &first, positive_1),
+            (&digits_2, &second, positive_2),
+        ] {
+            let digit = digits.get(i).copied().unwrap_or(0);
+            if digit != 0 {
+                let point = table[(digit.unsigned_abs() as usize - 1) / 2];
+                result += if (digit < 0) != !positive {
+                    -point
+                } else {
+                    point
+                };
+            }
+        }
+    }
+    result.into_affine()
+}
+
+/// Skip the window-sized zero run guaranteed after each nonzero wNAF digit.
+fn sparse_window_digits<const WIDTH: usize>(mut value: ark_ff::BigInt<4>) -> alloc::vec::Vec<i64> {
+    use ark_ff::BigInteger;
+    let mut digits = alloc::vec::Vec::new();
+    let mut position = 0usize;
+    while !value.is_zero() {
+        if value.is_even() {
+            value.div2();
+            position += 1;
+            continue;
+        }
+        let low = (value.0[0] & ((1u64 << WIDTH) - 1)) as i64;
+        let digit = if low >= 1 << (WIDTH - 1) {
+            low - (1 << WIDTH)
+        } else {
+            low
+        };
+        digits.resize(position, 0);
+        digits.push(digit);
+        if digit > 0 {
+            value.sub_with_borrow(&ark_ff::BigInt::from(digit as u64));
+        } else {
+            value.add_with_carry(&ark_ff::BigInt::from((-digit) as u64));
+        }
+        value.divn(WIDTH as u32);
+        position += WIDTH;
+    }
+    digits
 }
 
 #[cfg(test)]
@@ -162,5 +239,161 @@ mod tests {
             g1_mul(&non_canonical, &one),
             Err(PrecompileHalt::Bn254FieldPointNotAMember)
         );
+    }
+
+    #[test]
+    fn field_square_matches_original_montgomery() {
+        use ark_bn254::FqConfig;
+        use ark_ff::{AdditiveGroup, Field, MontConfig};
+        let mut state = 0x54_32_BA_25_4A_11_2026u64;
+        for a in [Fq::ZERO, Fq::ONE, -Fq::ONE]
+            .into_iter()
+            .chain((0..10_000).map(|_| Fq::from_be_bytes_mod_order(&random_bytes(&mut state))))
+        {
+            let mut original = a;
+            <FqConfig as MontConfig<4>>::square_in_place(&mut original);
+            assert_eq!(a.square(), original);
+        }
+    }
+
+    fn encode_g2(point: ark_bn254::G2Affine) -> [u8; 128] {
+        let mut out = [0u8; 128];
+        if let Some((x, y)) = point.xy() {
+            for (chunk, value) in out.chunks_exact_mut(32).zip([x.c1, x.c0, y.c1, y.c0]) {
+                write_fq(chunk, value);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn bn254_precompile_edges_and_gas() {
+        use ark_bn254::{Fq2, G2Affine};
+        use ark_ff::Field;
+        use reth_evm::revm::precompile::bn254::{run_add, run_mul, run_pair};
+        let p = G1Affine::generator();
+        let zero = encode(G1Affine::identity());
+        let encoded = encode(p);
+        let negative = encode(-p);
+        assert_eq!(
+            DefaultCrypto.bn254_g1_add(&encoded, &zero).unwrap(),
+            encoded
+        );
+        assert_eq!(
+            DefaultCrypto.bn254_g1_add(&encoded, &negative).unwrap(),
+            zero
+        );
+        assert_eq!(
+            DefaultCrypto.bn254_g1_add(&encoded, &encoded).unwrap(),
+            encode((p + p).into_affine())
+        );
+        for (left, right) in [
+            (zero, zero),
+            (encoded, zero),
+            (encoded, encoded),
+            (encoded, negative),
+        ] {
+            let input = [left.as_slice(), right.as_slice()].concat();
+            let result = run_add(&input, 150, 150).unwrap();
+            assert_eq!(result.gas_used, 150);
+            assert_eq!(
+                result.bytes.as_ref(),
+                DefaultCrypto.bn254_g1_add(&left, &right).unwrap()
+            );
+            assert_eq!(run_add(&input, 150, 149), Err(PrecompileHalt::OutOfGas));
+        }
+        for scalar in [[0u8; 32], [0xff; 32]] {
+            let input = [encoded.as_slice(), scalar.as_slice()].concat();
+            let result = run_mul(&input, 6000, 6000).unwrap();
+            assert_eq!(result.gas_used, 6000);
+            assert_eq!(result.bytes.as_ref(), g1_mul(&encoded, &scalar).unwrap());
+            assert_eq!(run_mul(&input, 6000, 5999), Err(PrecompileHalt::OutOfGas));
+        }
+        let q = encode_g2(G2Affine::generator());
+        let single = [encoded.as_slice(), q.as_slice()].concat();
+        let cancelled = [single.as_slice(), negative.as_slice(), q.as_slice()].concat();
+        let infinity = [zero.as_slice(), q.as_slice()].concat();
+        for (input, expected) in [
+            (vec![], true),
+            (single, false),
+            (cancelled, true),
+            (infinity, true),
+        ] {
+            let gas = 45000 + 34000 * (input.len() / 192) as u64;
+            let result = run_pair(&input, 34000, 45000, gas).unwrap();
+            assert_eq!(result.gas_used, gas);
+            let mut output = [0u8; 32];
+            output[31] = u8::from(expected);
+            assert_eq!(result.bytes.as_ref(), output);
+            assert_eq!(
+                run_pair(&input, 34000, 45000, gas - 1),
+                Err(PrecompileHalt::OutOfGas)
+            );
+        }
+        assert_eq!(
+            run_pair(&[0u8; 191], 34000, 45000, u64::MAX),
+            Err(PrecompileHalt::Bn254PairLength)
+        );
+        let non_subgroup = (0..1000u64)
+            .filter_map(|i| {
+                G2Affine::get_point_from_x_unchecked(Fq2::new(Fq::from(i), Fq::ONE), false)
+            })
+            .find(|q| !q.is_in_correct_subgroup_assuming_on_curve())
+            .expect("deterministically find an on-curve point outside G2");
+        assert!(non_subgroup.is_on_curve());
+        let bad_q = encode_g2(non_subgroup);
+        for g1 in [zero, encoded] {
+            assert_eq!(
+                DefaultCrypto.bn254_pairing_check(&[(&g1, &bad_q)]),
+                Err(PrecompileHalt::Bn254AffineGFailedToCreate)
+            );
+        }
+        let mut invalid = [0u8; 64];
+        for (i, limb) in Fq::MODULUS.0.iter().enumerate() {
+            invalid[24 - 8 * i..32 - 8 * i].copy_from_slice(&limb.to_be_bytes());
+        }
+        assert_eq!(
+            DefaultCrypto.bn254_g1_add(&invalid, &zero),
+            Err(PrecompileHalt::Bn254FieldPointNotAMember)
+        );
+        assert_eq!(
+            DefaultCrypto.bn254_pairing_check(&[(&invalid, &q)]),
+            Err(PrecompileHalt::Bn254FieldPointNotAMember)
+        );
+    }
+
+    #[test]
+    fn sparse_digits_match_arkworks_wnaf() {
+        use ark_ff::{AdditiveGroup, BigInteger, Field};
+        let mut state = 0x8877_6655_4433_2211u64;
+        for scalar in [Fr::ZERO, Fr::ONE, -Fr::ONE]
+            .into_iter()
+            .chain((0..10_000).map(|_| Fr::from_be_bytes_mod_order(&random_bytes(&mut state))))
+        {
+            let n = scalar.into_bigint();
+            assert_eq!(sparse_window_digits::<4>(n), n.find_wnaf(4).unwrap());
+        }
+        for bit in 0..254 {
+            let mut n = BigInt::<4>::from(0u64);
+            n.0[bit / 64] = 1u64 << (bit % 64);
+            for value in [
+                n,
+                {
+                    let mut x = n;
+                    x.sub_with_borrow(&BigInt::from(1u64));
+                    x
+                },
+                {
+                    let mut x = n;
+                    x.add_with_carry(&BigInt::from(1u64));
+                    x
+                },
+            ] {
+                assert_eq!(
+                    sparse_window_digits::<4>(value),
+                    value.find_wnaf(4).unwrap()
+                );
+            }
+        }
     }
 }
