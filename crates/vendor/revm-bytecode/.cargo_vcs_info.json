@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "31bee691659382520449de95a03ecd69abf71825"
+  },
+  "path_in_vcs": "crates/bytecode"
+}
