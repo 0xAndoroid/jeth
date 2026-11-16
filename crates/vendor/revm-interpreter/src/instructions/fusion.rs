@@ -29,10 +29,16 @@ pub(crate) fn matches<W: InterpreterTypes, H: Host + ?Sized>(
     let jumpi: fn(Ip, InstructionContext<'_, H, W>) -> Ip = control::jumpi;
     let dest: fn(Ip, InstructionContext<'_, H, W>) -> Ip = control::jumpdest;
     let push: fn(Ip, InstructionContext<'_, H, W>) -> Ip = push2;
+    let iszero: fn(Ip, InstructionContext<'_, H, W>) -> Ip = test_jump::<false, _, _>;
+    let eq: fn(Ip, InstructionContext<'_, H, W>) -> Ip = test_jump::<true, _, _>;
     core::ptr::fn_addr_eq(table[JUMP as usize].fn_, jump)
         && core::ptr::fn_addr_eq(table[JUMPI as usize].fn_, jumpi)
         && core::ptr::fn_addr_eq(table[JUMPDEST as usize].fn_, dest)
         && core::ptr::fn_addr_eq(table[PUSH2 as usize].fn_, push)
+        // Not redundant: a custom ISZERO or EQ that delegates to the default handler reaches
+        // `test_jump`, which would fuse and hand it the state after the jump.
+        && core::ptr::fn_addr_eq(table[ISZERO as usize].fn_, iszero)
+        && core::ptr::fn_addr_eq(table[EQ as usize].fn_, eq)
 }
 
 pub(crate) fn test_jump<const EQUAL: bool, W: InterpreterTypes, H: Host + ?Sized>(

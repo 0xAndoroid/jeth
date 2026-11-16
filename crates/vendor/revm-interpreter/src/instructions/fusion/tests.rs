@@ -267,3 +267,62 @@ fn inspector_step_executes_only_push() {
     assert_eq!(i.stack.data(), &[U256::from(4)]);
     assert_eq!(i.gas.remaining(), 97);
 }
+
+fn run<EXT: Default>(
+    table: &InstructionTable<EthInterpreter<EXT>, DummyHost>,
+    code: &[u8],
+    values: &[U256],
+) -> (InstructionResult, Interpreter<EthInterpreter<EXT>>) {
+    let mut i = Interpreter::<EthInterpreter<EXT>>::new(
+        SharedMemory::new(),
+        ExtBytecode::new(Bytecode::new_raw(Bytes::copy_from_slice(code))),
+        InputsImpl::default(),
+        false,
+        SpecId::AMSTERDAM,
+        100,
+    );
+    for &value in values {
+        assert!(i.stack.push(value));
+    }
+    let action = i.run_plain(table, &mut DummyHost::default());
+    (action.instruction_result().unwrap(), i)
+}
+
+type Observed = EthInterpreter<(usize, u64, usize)>;
+
+fn observe<const OP: u8>(ip: Ip, context: InstructionContext<'_, DummyHost, Observed>) -> Ip {
+    let InstructionContext { interpreter, host } = context;
+    let default = instruction_table::<Observed, DummyHost>()[OP as usize];
+    let next = default.execute(
+        ip,
+        InstructionContext {
+            interpreter: &mut *interpreter,
+            host,
+        },
+    );
+    interpreter.extend = (
+        interpreter.stack.len(),
+        interpreter.gas.remaining(),
+        interpreter.bytecode.pc_of(next),
+    );
+    next
+}
+
+#[test]
+fn handler_wrapping_iszero_or_eq_sees_one_opcode() {
+    let cases: [(u8, Instruction<Observed, DummyHost>, &[U256]); 2] = [
+        (ISZERO, Instruction::new(observe::<ISZERO>), &[U256::ZERO]),
+        (
+            EQ,
+            Instruction::new(observe::<EQ>),
+            &[U256::ZERO, U256::ZERO],
+        ),
+    ];
+    for (op, wrapper, values) in cases {
+        let mut table = instruction_table::<Observed, DummyHost>();
+        table[op as usize] = wrapper;
+        let (result, i) = run(&table, &[op, PUSH2, 0, 5, JUMPI, JUMPDEST, STOP], values);
+        assert_eq!(result, InstructionResult::Stop);
+        assert_eq!(i.extend, (1, 97, 1), "op={op:#x}");
+    }
+}
