@@ -217,20 +217,50 @@ mod tests {
     }
 
     #[test]
+    fn hit_after_eviction_returns_the_queried_points_preparation() {
+        let mut cache = Cache::default();
+        let (p, generator) = (g1(G1Affine::generator()), g2(G2Affine::generator()));
+        let multiples: Vec<_> = (2..)
+            .take(CAPACITY + 1)
+            .map(|c: u64| {
+                let point = G2Affine::generator().mul_bigint([c]).into_affine();
+                let negated = -G1Affine::generator().mul_bigint([c]).into_affine();
+                (g2(point), g1(negated))
+            })
+            .collect();
+        for (point, _) in &multiples {
+            compare(&mut cache, &[(&p, point)]);
+        }
+        for (i, (point, negated)) in multiples.iter().enumerate() {
+            let (_, other) = &multiples[(i + 1) % multiples.len()];
+            compare(&mut cache, &[(&p, point), (other, &generator)]);
+            compare(&mut cache, &[(&p, point), (negated, &generator)]);
+            assert!(cache.check(&[(&p, point), (negated, &generator)]).unwrap());
+        }
+    }
+
+    #[test]
     fn infinity_does_not_bypass_validation() {
         let mut cache = Cache::default();
-        let (a, b) = (g1(G1Affine::generator()), g2(G2Affine::generator()));
+        let a = g1(G1Affine::generator());
         let (zero1, zero2) = ([0u8; 64], [0u8; 128]);
-        compare(&mut cache, &[(&zero1, &b)]);
         compare(&mut cache, &[(&a, &zero2)]);
         compare(&mut cache, &[(&zero1, &zero2)]);
-        compare(&mut cache, &[(&a, &b)]); // Populate a valid entry.
-        let mut bad = b;
-        bad[127] ^= 1;
-        compare(&mut cache, &[(&zero1, &bad)]);
-        assert!(cache.check(&[(&zero1, &bad)]).is_err());
-        bad[..32].fill(255);
-        compare(&mut cache, &[(&zero1, &bad)]);
+        let twice = G2Affine::generator().mul_bigint([2u64]).into_affine();
+        for b in [g2(G2Affine::generator()), g2(twice)] {
+            compare(&mut cache, &[(&zero1, &b)]);
+            compare(&mut cache, &[(&a, &b)]);
+            let mut bad = b;
+            bad[127] ^= 1;
+            compare(&mut cache, &[(&zero1, &bad)]);
+            assert!(cache.check(&[(&zero1, &bad)]).is_err());
+            bad[..32].fill(255);
+            compare(&mut cache, &[(&zero1, &bad)]);
+        }
+        assert_eq!(cache.entries.len(), 1);
+        let mut off_curve = a;
+        off_curve[63] ^= 1;
+        compare(&mut cache, &[(&off_curve, &zero2)]);
         let mut bad1 = a;
         bad1[..32].fill(255);
         compare(&mut cache, &[(&bad1, &zero2)]);
