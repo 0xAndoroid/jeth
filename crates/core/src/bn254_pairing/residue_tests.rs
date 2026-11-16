@@ -2,7 +2,8 @@
 #![expect(clippy::many_single_char_names, reason = "pairing exponent notation")]
 use super::*;
 use alloc::vec::Vec;
-use ark_bn254::Fr;
+use ark_bn254::{Fr, G1Affine, G2Affine};
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::BigInteger;
 use num_bigint::BigUint;
 
@@ -68,4 +69,50 @@ fn witnesses_match_final_exponentiation_and_reject_mutations() {
         assert!(check_witness(&valid, &w));
         assert!(!check_witness(&valid, &(w + Fq12::one())));
     }
+}
+
+fn pairing_product_one() -> Fq12 {
+    let (p, q) = (G1Affine::generator(), G2Affine::generator());
+    Bn254::multi_miller_loop([p, -(p + p).into_affine()], [(q + q).into_affine(), q]).0
+}
+
+fn witness_limbs(w: &Fq12) -> Vec<[u64; 4]> {
+    w.to_base_prime_field_elements()
+        .map(|coefficient| coefficient.into_bigint().0)
+        .collect()
+}
+
+#[test]
+fn pairing_product_is_accepted_with_its_native_witness_and_without_one() {
+    let f = pairing_product_one();
+    assert!(witness(&f).is_some());
+    assert!(check(&f));
+    assert!(check_with_advice(&f, 0, |_, _| unreachable!()));
+}
+
+#[test]
+#[should_panic(expected = "invalid BN pairing residue witness")]
+fn wrong_root_aborts() {
+    let f = pairing_product_one();
+    let limbs = witness_limbs(&witness(&f).unwrap().square());
+    check_with_advice(&f, 1, |i, j| limbs[i][j]);
+}
+
+#[test]
+#[should_panic(expected = "canonical BN pairing witness coefficient")]
+fn noncanonical_coefficient_aborts() {
+    let f = pairing_product_one();
+    let mut limbs = witness_limbs(&witness(&f).unwrap());
+    let mut coefficient = BigInt(limbs[0]);
+    assert!(!coefficient.add_with_carry(&Fq::MODULUS));
+    limbs[0] = coefficient.0;
+    check_with_advice(&f, 1, |i, j| limbs[i][j]);
+}
+
+#[test]
+#[should_panic(expected = "BN pairing witness flag")]
+fn flag_above_one_aborts() {
+    let f = pairing_product_one();
+    let limbs = witness_limbs(&witness(&f).unwrap());
+    check_with_advice(&f, 2, |i, j| limbs[i][j]);
 }

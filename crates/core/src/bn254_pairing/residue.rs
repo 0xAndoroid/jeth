@@ -50,38 +50,44 @@ fn witness(f: &Fq12) -> Option<Fq12> {
     check_witness(f, &w).then_some(w)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "invalid untrusted advice must abort the guest"
-)]
 pub(super) fn check(f: &Fq12) -> bool {
     #[cfg(not(target_arch = "riscv64"))]
     let supplied = witness(f);
     #[cfg(all(target_arch = "riscv64", feature = "compute_advice"))]
     let supplied: Option<Fq12> = None;
-    let available = advice_u64!(u64::from(supplied.is_some()));
-    assert!(available <= 1, "BN pairing witness flag");
-    if available == 0 {
-        return Bn254::final_exponentiation(MillerLoopOutput(*f)).is_some_and(|v| v.0.is_one());
-    }
     #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
     let limbs: [[u64; 4]; 12] = {
         let mut limbs = [[0; 4]; 12];
         for (dst, coefficient) in limbs.iter_mut().zip(
             supplied
-                .expect("generated witness")
-                .to_base_prime_field_elements(),
+                .iter()
+                .flat_map(Field::to_base_prime_field_elements),
         ) {
             *dst = coefficient.into_bigint().0;
         }
         limbs
     };
-    let coefficients: [Fq; 12] = core::array::from_fn(|_i| {
-        let words = core::array::from_fn(|_j| advice_u64!(limbs[_i][_j]));
-        Fq::from_bigint(BigInt(words)).expect("canonical BN pairing witness coefficient")
+    let available = advice_u64!(u64::from(supplied.is_some()));
+    check_with_advice(f, available, |_i, _j| advice_u64!(limbs[_i][_j]))
+}
+
+fn check_with_advice(f: &Fq12, available: u64, mut word: impl FnMut(usize, usize) -> u64) -> bool {
+    assert!(available <= 1, "BN pairing witness flag");
+    if available == 0 {
+        return Bn254::final_exponentiation(MillerLoopOutput(*f)).is_some_and(|v| v.0.is_one());
+    }
+    let mut canonical = true;
+    let coefficients: [Fq; 12] = core::array::from_fn(|i| {
+        let coefficient = Fq::from_bigint(BigInt(core::array::from_fn(|j| word(i, j))));
+        canonical &= coefficient.is_some();
+        coefficient.unwrap_or_default()
     });
-    let w = Fq12::from_base_prime_field_elems(coefficients).expect("twelve Fp12 coefficients");
-    assert!(check_witness(f, &w), "invalid BN pairing residue witness");
+    assert!(canonical, "canonical BN pairing witness coefficient");
+    let w = Fq12::from_base_prime_field_elems(coefficients);
+    assert!(
+        w.is_some_and(|w| check_witness(f, &w)),
+        "invalid BN pairing residue witness"
+    );
     true
 }
 
