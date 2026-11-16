@@ -62,40 +62,49 @@ fn witness(f: &Fq12) -> Option<Fq12> {
     check_witness(f, &w).then_some(w)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "invalid untrusted advice must abort the guest"
-)]
-pub(super) fn check(f: &Fq12) -> bool {
-    #[cfg(not(target_arch = "riscv64"))]
-    let supplied = witness(f);
-    #[cfg(all(target_arch = "riscv64", feature = "compute_advice"))]
-    let supplied: Option<Fq12> = None;
-    let available = advice_u64!(u64::from(supplied.is_some()));
+#[cfg(not(target_arch = "riscv64"))]
+fn limbs(w: &Fq12) -> [[u64; 6]; 12] {
+    let mut limbs = [[0; 6]; 12];
+    for (dst, coefficient) in limbs.iter_mut().zip(w.to_base_prime_field_elements()) {
+        *dst = coefficient.into_bigint().0;
+    }
+    limbs
+}
+
+/// Advice that fails a check aborts the guest: returning `false` instead would let the
+/// prover turn a valid proof into a failed precompile call.
+fn check_supplied(f: &Fq12, available: u64, read_limbs: impl FnOnce() -> [[u64; 6]; 12]) -> bool {
     assert!(available <= 1, "pairing witness flag");
     if available == 0 {
         return Bls12_381::final_exponentiation(MillerLoopOutput(*f))
             .is_some_and(|value| value.0.is_one());
     }
-    #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
-    let limbs: [[u64; 6]; 12] = {
-        let mut limbs = [[0; 6]; 12];
-        for (dst, coefficient) in limbs.iter_mut().zip(
-            supplied
-                .expect("generated witness")
-                .to_base_prime_field_elements(),
-        ) {
-            *dst = coefficient.into_bigint().0;
-        }
-        limbs
-    };
-    let coefficients: [Fq; 12] = core::array::from_fn(|_i| {
-        let words = core::array::from_fn(|_j| advice_u64!(limbs[_i][_j]));
-        Fq::from_bigint(BigInt(words)).expect("canonical pairing witness coefficient")
+    let mut canonical = true;
+    let coefficients = read_limbs().map(|words| {
+        let coefficient = Fq::from_bigint(BigInt(words));
+        canonical &= coefficient.is_some();
+        coefficient.unwrap_or_default()
     });
-    let w = Fq12::from_base_prime_field_elems(coefficients).expect("twelve Fp12 coefficients");
-    assert!(check_witness(f, &w), "invalid pairing residue witness");
+    assert!(canonical, "canonical pairing witness coefficient");
+    let w = Fq12::from_base_prime_field_elems(coefficients);
+    assert!(
+        w.is_some_and(|w| check_witness(f, &w)),
+        "invalid pairing residue witness"
+    );
     true
+}
+
+pub(super) fn check(f: &Fq12) -> bool {
+    #[cfg(not(target_arch = "riscv64"))]
+    let supplied = witness(f).as_ref().map(limbs);
+    #[cfg(all(target_arch = "riscv64", feature = "compute_advice"))]
+    let supplied: Option<[[u64; 6]; 12]> = None;
+    let available = advice_u64!(u64::from(supplied.is_some()));
+    check_supplied(f, available, || {
+        #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
+        let supplied = supplied.unwrap_or_default();
+        core::array::from_fn(|_i| core::array::from_fn(|_j| advice_u64!(supplied[_i][_j])))
+    })
 }
 
 #[cfg(test)]
