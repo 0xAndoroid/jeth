@@ -122,8 +122,6 @@ fn validate_branch_child(item: &[u8], list: bool, plen: usize) -> Result<usize> 
     }
 }
 
-/// Recognize a branch containing only empty children and hashes. The
-/// general validator handles every other shape, including malformed input.
 #[inline]
 fn is_plain_branch(mut p: &[u8]) -> bool {
     if p.len() < 17 + 2 * 32 || p.len() % 32 != 17 {

@@ -158,9 +158,7 @@ fn decode_node_zc_into<M: Memoization>(
     }
 }
 
-/// Decode the common branch shape in one pass: sixteen empty/digest
-/// children followed by an empty value. All other encodings use the general
-/// decoder. A failed attempt leaves `out` untouched or holding `Node::Null`;
+/// A failed attempt leaves `out` untouched or holding `Node::Null`;
 /// this path never allocates children or owns resources other than the node.
 #[inline]
 fn decode_plain_branch<M: Memoization>(mut p: &[u8], out: &mut MaybeUninit<Node<M>>) -> bool {
@@ -569,6 +567,7 @@ mod tests {
         let mut slot = MaybeUninit::<Node<Cache>>::uninit();
         let got = decode_node_zc_exact_into(&source, &mut slot);
         match (expected, got) {
+            // SAFETY: `Ok(())` ⇒ the decoder wrote a fully initialized `Node` into `slot`.
             (Ok(node), Ok(())) => assert_eq!(unsafe { slot.assume_init() }, node, "{source}"),
             (Err(expected), Err(got)) => assert_eq!(expected, got, "{source}"),
             (expected, got) => panic!("{source}: expected {expected:?}, got {got:?}"),
@@ -611,11 +610,9 @@ mod tests {
     fn single_pass_branch_rejects_or_falls_back_like_reference() {
         for mask in [0x0003, 0x8001, 0x5555, 0xffff] {
             let payload = plain_branch_payload(mask);
-            // Every truncation, including ones with a valid new outer length.
             for length in 0..payload.len() {
                 check_decoder_parity(encode_list_payload(&payload[..length]));
             }
-            // Every possible tag at every item boundary, including the value.
             let mut offset = 0;
             for index in 0..17 {
                 for tag in 0..=u8::MAX {
