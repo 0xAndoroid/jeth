@@ -22,10 +22,7 @@ extern crate jolt_inlines_sha2 as _;
 // crates/guest/src/lib.rs, which cannot name these constants: the attribute takes
 // integer literals only. `guest_attributes_declare_the_host_memory_config` compares them.
 
-/// Committed-input region of the default guest, `validate_block` (sizing rationale
-/// in the guest's module doc).
 const DEFAULT_INPUT_SIZE: u64 = 16 << 20;
-/// Region that carries the payload in every other variant.
 const LARGE_INPUT_SIZE: u64 = 128 << 20;
 const MAX_OUTPUT_SIZE: u64 = 4096;
 const HEAP_SIZE: u64 = 1_610_612_736; // 1.5 GiB
@@ -58,7 +55,6 @@ pub enum Variant {
 }
 
 impl Variant {
-    /// Size of the region the payload (an input.bin behind its length prefix) is mapped into.
     fn payload_capacity(self) -> u64 {
         match self {
             Variant::Input => DEFAULT_INPUT_SIZE,

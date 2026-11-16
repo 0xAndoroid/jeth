@@ -4,12 +4,10 @@
 //! sized for one mainnet block; the largest single-block input observed is
 //! 13,627,820 bytes (block 25512816, Jul–Sep 2026 top-50 set, 60M gas limit).
 //! `validate_block_128m` reserves 128 MiB for `jeth merge` multi-block synthetic
-//! inputs (90 MB at 19 blocks). Decoded witness + sparse trie + revm state for a
-//! ~29M-gas block needs high-hundreds-MB heap. The I/O region lives below
-//! RAM_START and is padded to a power of two (128 MiB input → 256 MiB region),
-//! so the input size moves only the I/O addresses; program/stack/heap are
-//! unchanged and all guest addresses stay < 4 GiB (cycle-marker pointers
-//! truncate to u32).
+//! inputs (90 MB at 19 blocks). The I/O region lives below RAM_START and is
+//! padded to a power of two (128 MiB input → 256 MiB region), so the input size
+//! moves only the I/O addresses; program/stack/heap are unchanged and all guest
+//! addresses stay < 4 GiB (cycle-marker pointers truncate to u32).
 //! KEEP IN SYNC with the size constants in `crates/host/src/trace.rs`; its test
 //! `guest_attributes_declare_the_host_memory_config` compares the two files.
 
