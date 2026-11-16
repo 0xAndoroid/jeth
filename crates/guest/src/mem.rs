@@ -449,25 +449,27 @@ unsafe fn memcmp_generic(a: *const u8, b: *const u8, n: usize) -> i32 {
     0
 }
 
+/// The guest's `memcpy` entry point (`aligned_copy.S`, riscv64 only) and the
+/// fallback it tail-calls: guest builds and the riscv64 lib tests.
+#[cfg(any(feature = "guest", all(test, target_arch = "riscv64")))]
+mod entry {
+    core::arch::global_asm!(include_str!("aligned_copy.S"));
+    unsafe extern "C" {
+        pub(super) fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
+    }
+    #[no_mangle]
+    unsafe extern "C" fn __jeth_copy_fallback(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+        super::memcpy_impl(dst, src, n)
+    }
+}
+
 /// The actual C-ABI symbols, guest builds only (native test builds must not
 /// shadow libc).
 #[cfg(feature = "guest")]
 mod exports {
-    core::arch::global_asm!(include_str!("aligned_copy.S"));
-    unsafe extern "C" {
-        fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
-    }
     #[no_mangle]
     pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
-        __jeth_aligned_copy(dst, src, n)
-    }
-    #[no_mangle]
-    pub unsafe extern "C" fn __jeth_copy_fallback(
-        dst: *mut u8,
-        src: *const u8,
-        n: usize,
-    ) -> *mut u8 {
-        super::memcpy_impl(dst, src, n)
+        super::entry::__jeth_aligned_copy(dst, src, n)
     }
     #[no_mangle]
     pub unsafe extern "C" fn memset(dst: *mut u8, val: i32, n: usize) -> *mut u8 {
@@ -610,24 +612,6 @@ mod tests {
         }
     }
 
-    /// `exports` is compiled out here (no `guest` feature), so this links
-    /// `aligned_copy.S` to `memcpy_impl` the same way; keep the two in sync.
-    #[cfg(target_arch = "riscv64")]
-    mod entry {
-        core::arch::global_asm!(include_str!("aligned_copy.S"));
-        unsafe extern "C" {
-            pub fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
-        }
-        #[no_mangle]
-        unsafe extern "C" fn __jeth_copy_fallback(
-            dst: *mut u8,
-            src: *const u8,
-            n: usize,
-        ) -> *mut u8 {
-            super::jmemcpy(dst, src, n)
-        }
-    }
-
     #[cfg(target_arch = "riscv64")]
     #[test]
     fn aligned_copy_entry_matches_copy_from_slice() {
@@ -648,7 +632,7 @@ mod tests {
                         .copy_from_slice(&src.0[16 + soff..16 + soff + n]);
                     let ptr = unsafe { dst.0.as_mut_ptr().add(16 + doff) };
                     let ret = unsafe {
-                        entry::__jeth_aligned_copy(ptr, src.0.as_ptr().add(16 + soff), n)
+                        super::entry::__jeth_aligned_copy(ptr, src.0.as_ptr().add(16 + soff), n)
                     };
                     assert_eq!(ret, ptr);
                     assert_eq!(dst.0, expect, "n={n} soff={soff} doff={doff}");
