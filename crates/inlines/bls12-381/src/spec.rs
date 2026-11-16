@@ -1,4 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use jolt_inlines_sdk::host::NBigUint;
 use jolt_inlines_sdk::{InlineReference, InlineSpec};
 use rand::RngCore;
