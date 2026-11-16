@@ -1,9 +1,6 @@
-//! Extract final values without constructing a block rollback bundle.
 use reth_evm::revm::database::{BundleAccount, TransitionAccount};
 
 pub(crate) fn final_account(transition: TransitionAccount) -> Option<BundleAccount> {
-    // Preserve the removal of unchanged accounts. Sending them through the
-    // trie would rebuild paths that the ordinary bundle leaves untouched.
     let unchanged = if transition.status.was_destroyed() {
         transition.info.is_none() && transition.previous_info.is_none()
     } else {
@@ -68,7 +65,7 @@ mod tests {
                 let mut account = Account::from(cached.account_info().unwrap_or_default());
                 let action = next() % 7;
                 match action {
-                    0 => { /* touched but unchanged */ }
+                    0 => {}
                     1 => {
                         account.info.balance = U256::from(100 * (next() % 2));
                     }
