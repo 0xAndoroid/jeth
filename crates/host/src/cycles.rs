@@ -106,33 +106,28 @@ struct Tree {
 }
 
 impl Tree {
+    /// `cargo <subcommand>` on the tree's `jeth` binary, under the tree's own toolchain.
+    fn cargo(&self, subcommand: &str) -> Command {
+        let mut cmd = Command::new("cargo");
+        cmd.args([subcommand, "--locked", "--release"])
+            .args(["-p", "jeth-host", "--bin", "jeth"])
+            .current_dir(&self.root)
+            // A harness started through `cargo run` carries its own toolchain in
+            // RUSTUP_TOOLCHAIN, which overrides the measured tree's rust-toolchain.toml.
+            .env_remove("RUSTUP_TOOLCHAIN");
+        cmd
+    }
+
     /// The tree's own `jeth` CLI.
     fn jeth(&self) -> Command {
-        let mut cmd = Command::new("cargo");
-        cmd.args([
-            "run",
-            "-q",
-            "--locked",
-            "--release",
-            "-p",
-            "jeth-host",
-            "--",
-        ])
-        .current_dir(&self.root)
-        // A harness started through `cargo run` carries its own toolchain in
-        // RUSTUP_TOOLCHAIN, which overrides the measured tree's rust-toolchain.toml.
-        .env_remove("RUSTUP_TOOLCHAIN")
-        .env("JETH_GUEST_TARGET_DIR", self.root.join("target/guest"));
+        let mut cmd = self.cargo("run");
+        cmd.args(["-q", "--"])
+            .env("JETH_GUEST_TARGET_DIR", self.root.join("target/guest"));
         cmd
     }
 
     fn build_host(&self) -> Result<()> {
-        let status = Command::new("cargo")
-            .args(["build", "--locked", "--release", "-p", "jeth-host"])
-            .current_dir(&self.root)
-            .env_remove("RUSTUP_TOOLCHAIN")
-            .status()
-            .context("running cargo")?;
+        let status = self.cargo("build").status().context("running cargo")?;
         ensure!(
             status.success(),
             "building jeth-host in {} failed",
@@ -305,24 +300,14 @@ pub fn run(
     std::fs::create_dir_all(&out)?;
     // The tree's CLI runs from the tree root, not from this process's directory.
     let out = std::fs::canonicalize(out)?;
+    let jolt_rev = tree.jolt_rev()?;
     let jolt_cli = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
     let jolt_cli = Command::new(&jolt_cli)
         .arg("--version")
         .output()
         .with_context(|| format!("failed to run jolt CLI at {jolt_cli}"))?;
-    let mut report = Report {
-        commit: tree.commit()?,
-        jolt_rev: tree.jolt_rev()?,
-        jolt_cli: String::from_utf8(jolt_cli.stdout)?.trim().to_string(),
-        guest_elf_sha256: String::new(),
-        guest_elf_bytes: 0,
-        block_set: manifest.release.clone(),
-        blocks: Vec::new(),
-        total_rows: None,
-        total_gas: manifest.blocks.iter().map(|pin| pin.gas_used).sum(),
-    };
 
-    println!("measuring {} at {}", tree.root.display(), report.commit);
+    println!("measuring {}", tree.root.display());
     let start = Instant::now();
     tree.build_host()?;
     println!("jeth-host built in {:.1?}", start.elapsed());
@@ -354,11 +339,9 @@ pub fn run(
         .blocks
         .split_first()
         .context("the manifest pins no blocks")?;
-    report.blocks.push(measure(first, true));
+    let mut blocks = vec![measure(first, true)];
     let elf = std::fs::read(tree.root.join(format!("target/guest{GUEST_ELF}")))
         .context("the first trace built no guest ELF")?;
-    report.guest_elf_sha256 = sha256_hex(&elf);
-    report.guest_elf_bytes = elf.len();
     for chunk in rest.chunks(jobs.get()) {
         std::thread::scope(|scope| {
             let workers: Vec<_> = chunk
@@ -366,7 +349,7 @@ pub fn run(
                 .map(|pin| scope.spawn(|| measure(pin, false)))
                 .collect();
             for worker in workers {
-                report.blocks.push(
+                blocks.push(
                     worker
                         .join()
                         .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
@@ -375,8 +358,18 @@ pub fn run(
         });
     }
 
-    report.total_rows = report.blocks.iter().map(BlockResult::rows).sum();
-
+    let report = Report {
+        // Read after the builds: one that rewrites a tracked lockfile leaves the tree dirty.
+        commit: tree.commit()?,
+        jolt_rev,
+        jolt_cli: String::from_utf8(jolt_cli.stdout)?.trim().to_string(),
+        guest_elf_sha256: sha256_hex(&elf),
+        guest_elf_bytes: elf.len(),
+        block_set: manifest.release.clone(),
+        total_rows: blocks.iter().map(BlockResult::rows).sum(),
+        total_gas: blocks.iter().map(|block| block.gas_used).sum(),
+        blocks,
+    };
     let table = report.table();
     std::fs::write(
         out.join("cycles.json"),
