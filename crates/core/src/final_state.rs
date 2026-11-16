@@ -4,10 +4,13 @@ use reth_evm::revm::database::{BundleAccount, TransitionAccount};
 pub(crate) fn final_account(transition: TransitionAccount) -> Option<BundleAccount> {
     // Preserve the removal of unchanged accounts. Sending them through the
     // trie would rebuild paths that the ordinary bundle leaves untouched.
-    if !transition.status.was_destroyed()
-        && transition.info == transition.previous_info
-        && !transition.storage.values().any(|slot| slot.is_changed())
-    {
+    let unchanged = if transition.status.was_destroyed() {
+        transition.info.is_none() && transition.previous_info.is_none()
+    } else {
+        transition.info == transition.previous_info
+            && !transition.storage.values().any(|slot| slot.is_changed())
+    };
+    if unchanged {
         return None;
     }
     Some(BundleAccount {
@@ -19,10 +22,6 @@ pub(crate) fn final_account(transition: TransitionAccount) -> Option<BundleAccou
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "differential test reports a missing final account"
-)]
 mod tests {
     use super::final_account;
     use reth_evm::revm::database::primitives::{Address, U256};
@@ -71,7 +70,7 @@ mod tests {
                 match action {
                     0 => { /* touched but unchanged */ }
                     1 => {
-                        account.info.balance = U256::from(next() % 200);
+                        account.info.balance = U256::from(100 * (next() % 2));
                     }
                     2 => {
                         account.mark_selfdestruct();
@@ -99,23 +98,11 @@ mod tests {
                 BundleRetention::Reverts,
             );
             for (address, transition) in transitions.transitions {
-                let original = transition.previous_info.clone();
-                match (reference.state.get(&address), final_account(transition)) {
-                    (Some(expected), Some(actual)) => {
-                        assert_eq!(expected, &actual, "seed {seed}, address {address}");
-                    }
-                    (None, None) => {}
-                    // Removing a never-existing account is a harmless redundant no-op.
-                    (None, Some(actual)) => {
-                        assert!(
-                            original.is_none()
-                                && actual.info.is_none()
-                                && actual.status.was_destroyed(),
-                            "unexpected extra account seed {seed}: {actual:?}"
-                        );
-                    }
-                    (Some(expected), None) => panic!("missing account seed {seed}: {expected:?}"),
-                }
+                assert_eq!(
+                    reference.state.get(&address),
+                    final_account(transition).as_ref(),
+                    "seed {seed}, address {address}"
+                );
             }
         }
     }
