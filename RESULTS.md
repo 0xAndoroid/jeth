@@ -318,7 +318,8 @@ not measurements.
   `crates/vendor/revm-interpreter` (typed `Stack::exchange`). The ZeroOS allocator patch
   (`crates/alloc-o1`, O(1) size-class) was upstreamed as
   [jolt#1746](https://github.com/a16z/jolt/pull/1746) and dropped; the crate stays as reference.
-- **Guest:** no_std RV64IMAC, 32 MiB input / 1.5 GiB heap / 32 MiB stack; JEF v1
+- **Guest:** no_std RV64IMAC, 1.5 GiB heap / 32 MiB stack, committed-input region
+  per README → Committed-input limit; JEF v1
   input views over block RLP, pubkeys, and witness; word-wise memcpy/memset/memcmp overrides;
   no-op critical-section provider.
 - **Witnesses:** free hosted geth `debug_executionWitness` (QuickNode docs-demo; BlockPI
@@ -336,6 +337,9 @@ cargo run --release -p jeth-host -- bench                       # fetch head−8
 cargo run --release -p jeth-host -- trace --input data/<N>/input.bin [--trusted-digests]
 cargo run --release -p jeth-host -- profile --input data/<N>/input.bin --rows [--callers-of SYM]
 ```
+
+An input above the default committed-input limit (a `jeth merge` output) needs `--large-input`
+on `trace`, `profile`, `txprofile` and `opcodes` (README → Committed-input limit).
 
 One-time: install the Jolt CLI at the `a16z/jolt` rev pinned in the root `Cargo.toml`
 (`cargo install --locked --git https://github.com/a16z/jolt --rev <rev> jolt`),
@@ -2107,8 +2111,11 @@ cd ~/dev/jeth.feat-merge-blocks-measure && export CARGO_TARGET_DIR=/Volumes/Dev/
   JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam-guest     # isolated guest ELF dirs (other lanes rebuild the shared ones)
 cargo build -q --release -p jeth-host --features secp-inline; J=$CARGO_TARGET_DIR/release/jeth; IN=/Volumes/Dev/jeth-inputs
 $J trace --input $IN/25905781/input.bin        # 601,659,690 rows; builds the ELF pair (trace-summary.json lands next to the input)
-for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done   # merged: $IN/merged/25905781-N$n
-$J profile --input $IN/merged/25905781-N6/input.bin --rows --split-markers --json N6.json           # + 25905781..86 likewise
+for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done
+# Merged inputs take the 128 MiB guest (--large-input): its own ELF pair, summary in trace-summary-large-input.json.
+$J trace --input $IN/merged/25905781-N2/input.bin --large-input
+for n in $(seq 3 19); do $J trace --input $IN/merged/25905781-N$n/input.bin --large-input --skip-build; done
+$J profile --input $IN/merged/25905781-N6/input.bin --large-input --rows --split-markers --json N6.json   # + 25905781..86 likewise, without --large-input
 uv run python scripts/aggregate_markers.py agg N6.json --trace-log <its trace log> --out N6.agg.json   # then: compare N6.agg.json 25905781.agg.json ...
 uv run python scripts/merged_summary.py --results DIR --native DIR --merged-dir $IN/merged --baseline-json <unchanged-tree summary> --trace-logs DIR --profiles DIR --out summary.json
 ```
