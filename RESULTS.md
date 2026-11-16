@@ -318,7 +318,8 @@ not measurements.
   `crates/vendor/revm-interpreter` (typed `Stack::exchange`). The ZeroOS allocator patch
   (`crates/alloc-o1`, O(1) size-class) was upstreamed as
   [jolt#1746](https://github.com/a16z/jolt/pull/1746) and dropped; the crate stays as reference.
-- **Guest:** no_std RV64IMAC, 32 MiB input / 1.5 GiB heap / 32 MiB stack; JEF v1
+- **Guest:** no_std RV64IMAC, 1.5 GiB heap / 32 MiB stack, committed-input region
+  per README → Committed-input limit; JEF v1
   input views over block RLP, pubkeys, and witness; word-wise memcpy/memset/memcmp overrides;
   no-op critical-section provider.
 - **Witnesses:** free hosted geth `debug_executionWitness` (QuickNode docs-demo; BlockPI
@@ -337,9 +338,55 @@ cargo run --release -p jeth-host -- trace --input data/<N>/input.bin [--trusted-
 cargo run --release -p jeth-host -- profile --input data/<N>/input.bin --rows [--callers-of SYM]
 ```
 
+An input above the default committed-input limit (a `jeth merge` output) needs `--large-input`
+on `trace`, `profile`, `txprofile` and `opcodes` (README → Committed-input limit).
+
 One-time: install the Jolt CLI at the `a16z/jolt` rev pinned in the root `Cargo.toml`
 (`cargo install --locked --git https://github.com/a16z/jolt --rev <rev> jolt`),
 or point `JOLT_PATH` at a `jolt` binary built from that rev.
+
+### Cycle-count harness
+
+`just cycles` (`jeth cycles run`) counts expanded cycles for a tree over a frozen block set: the
+ten consecutive mainnet blocks 26227668–26227677 (277,426,425 gas). The count per block is the
+`trace_rows_total` of `jeth trace`: the rows `tracer::execute` returns for the proven pass of the
+committed-input `validate_block` guest with its default features (`keccak-census` on), after
+virtual-sequence and inline expansion, unpadded. The advice pass is not counted.
+
+```bash
+just cycles                               # this tree → target/cycles/cycles.{json,md}
+just cycles --tree <dir> --out <dir>      # any tree whose CLI has `repack` and `trace`
+just jeth cycles compare <base>/cycles.json <head>/cycles.json
+```
+
+- **Inputs.** The run downloads each block's `block.rlp` and `witness.json` from the
+  `cycles-blocks-v1` release of `--repo` into `data/cycles/cycles-blocks-v1/`, checks every
+  file's sha256 and every header (number, hash, state root, receipts root, gas used) against
+  `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
+  `input.bin`, so a change to the input encoding is measured with its own encoder.
+- **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
+  pinned ones. The run still reports the other blocks, then exits nonzero.
+- **One checkout path per comparison.** Absolute totals are specific to the build paths
+  (checkout, cargo home, toolchain); only counts taken at the same paths are comparable.
+  Observed, mechanism not established (the guest ELF embeds absolute source paths): on one
+  Linux host (CherryPika), dac77ea counts 14 more rows in every block at one of three checkout
+  paths than at the other two, and at those two it counts 38 rows per block more than the
+  October 19 census of the same blocks on another Linux host (4,240,923,967 rows at 61f87a4,
+  which counts the same as dac77ea when both are built at one path). Measure both
+  revisions in one checkout, one after the other, with the harness binary copied out of
+  `target/`, as `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
+
+`.github/workflows/cycles.yml` runs the harness on every pull request (the merge commit, then
+its base) and on every push to main, and writes the table to the job summary and the `cycles`
+artifact. It only reports; nothing gates on it.
+
+- To gate on a threshold, give `jeth cycles compare` a flag that exits nonzero above a chosen
+  total Δ %, and add the `cycles` job to the `needs` of the `ci` job in `ci.yml`.
+- To post the table as a sticky pull-request comment, add a second workflow triggered by
+  `workflow_run` on `Cycles` that downloads the `cycles` artifact and posts its markdown with
+  `pull-requests: write`. That workflow must not check out or run pull-request code, and must
+  treat the artifact as untrusted text. `cycles.yml` keeps its read-only token because it runs
+  the pull request's code.
 
 ## Notes & caveats
 
@@ -2064,8 +2111,11 @@ cd ~/dev/jeth.feat-merge-blocks-measure && export CARGO_TARGET_DIR=/Volumes/Dev/
   JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam-guest     # isolated guest ELF dirs (other lanes rebuild the shared ones)
 cargo build -q --release -p jeth-host --features secp-inline; J=$CARGO_TARGET_DIR/release/jeth; IN=/Volumes/Dev/jeth-inputs
 $J trace --input $IN/25905781/input.bin        # 601,659,690 rows; builds the ELF pair (trace-summary.json lands next to the input)
-for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done   # merged: $IN/merged/25905781-N$n
-$J profile --input $IN/merged/25905781-N6/input.bin --rows --split-markers --json N6.json           # + 25905781..86 likewise
+for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done
+# Merged inputs take the 128 MiB guest (--large-input): its own ELF pair, summary in trace-summary-large-input.json.
+$J trace --input $IN/merged/25905781-N2/input.bin --large-input
+for n in $(seq 3 19); do $J trace --input $IN/merged/25905781-N$n/input.bin --large-input --skip-build; done
+$J profile --input $IN/merged/25905781-N6/input.bin --large-input --rows --split-markers --json N6.json   # + 25905781..86 likewise, without --large-input
 uv run python scripts/aggregate_markers.py agg N6.json --trace-log <its trace log> --out N6.agg.json   # then: compare N6.agg.json 25905781.agg.json ...
 uv run python scripts/merged_summary.py --results DIR --native DIR --merged-dir $IN/merged --baseline-json <unchanged-tree summary> --trace-logs DIR --profiles DIR --out summary.json
 ```

@@ -1,0 +1,95 @@
+{
+  "release": "cycles-blocks-v1",
+  "blocks": [
+    {
+      "number": 26227668,
+      "hash": "0xa9a147ed234ae59fcde2d74de5857bd4ebf2baaf73adfd85179b3d6d8a64b492",
+      "state_root": "0x462328bc1001c15b3a6a851ba727580c87217db7e2ab78b84f8993c128502853",
+      "receipts_root": "0x5fc08644c0e76198a9026ae79f614421442940d57057aaa2aff36876bd0c7631",
+      "gas_used": 26454671,
+      "block_rlp_sha256": "15d0ac2623a255178f47c47a34ffff38d179e1b13f3918784680641532030a90",
+      "witness_json_sha256": "c86013c727ad454c63de0076aa2bce3d7a6fb31255b7496e0d060df2d503c7b0"
+    },
+    {
+      "number": 26227669,
+      "hash": "0x39d3aa597849885a3550233b8c889dce3476e8f2e714e156690a7c546464b72f",
+      "state_root": "0x13c00d7c6cb49bed89be3ca1e1836894779ac7834485c2ae6bbfd49b5e386d0a",
+      "receipts_root": "0x037287ba1d53969ccf6fa965d31d1da819fb74b8dd386a46847ba93242dbd5dd",
+      "gas_used": 30603108,
+      "block_rlp_sha256": "6951eb7044615d56c07f989479883d30b25ce5571801a7412bdacc84ce41a454",
+      "witness_json_sha256": "7a06d96d9b495369bb1a33fc3b20b4a38bdcccf2f296b97934130a8b1df41a92"
+    },
+    {
+      "number": 26227670,
+      "hash": "0x045476d1433877377702696d3f6b52d152a90051435f1643d319225f8abb43bc",
+      "state_root": "0xeffb6ffdd0a277c479682fa367f34e708d1e0f11c024ff6f0d08aeb9ac6dacc8",
+      "receipts_root": "0x397643ef219c5277a4e3d04fbb422bd5eb4413c40262173983fcade99bb743d8",
+      "gas_used": 23864149,
+      "block_rlp_sha256": "1c7d56d10bd1639332a8e7092afeb3cc64ef4a16c650712fd81aac7279081055",
+      "witness_json_sha256": "9fdc6c024db1246641905353dc96c2b01141545893e2103799110f2429eba846"
+    },
+    {
+      "number": 26227671,
+      "hash": "0x5aa426dcd4a2dc17257356788ff103f222949efce119ec2fa737ab5f0ac20b72",
+      "state_root": "0x766441f584b003ad79a57621e3f1e4f5d3f503e6bac2016bd3f426090f6971bd",
+      "receipts_root": "0x3f7f4b52a9e3f47c41a622681761844851b50b5e78fa0e743437a8c7feb0a119",
+      "gas_used": 27869877,
+      "block_rlp_sha256": "ffb0e2db3f2cc641a8140262f05cb3cbe2007f5a12a24ee787d7af49c08d5b67",
+      "witness_json_sha256": "6b584e2b81f8ab869b27a5cbd3de22bd23f24e66df6de148610b013b1d00cb5e"
+    },
+    {
+      "number": 26227672,
+      "hash": "0x0ab056639984571723c7bf21d4e58a5bb4a32e78d015cf2dae3e50fb6026f5aa",
+      "state_root": "0x4b9ff00b449b513d7190a27ed598cf60bf5bf1af4427e397394a3a642b2f280a",
+      "receipts_root": "0x01bee41890968c89199b585aadf2da766e25a5e504f23c098b9d6aae9032be2c",
+      "gas_used": 33754190,
+      "block_rlp_sha256": "373e7fdf936310eb72bacdd4a04a7742bbafaa5303e6a70cf653ee94a9fe2873",
+      "witness_json_sha256": "3c22ed912390637ad38d9f7e0db2cb87027c9114442ab9bacd34b23d0a89707d"
+    },
+    {
+      "number": 26227673,
+      "hash": "0x4986ed4390cb3902fac0ee40e60b2409efbae03c4e306015a73729de65cc382e",
+      "state_root": "0xc740a653ef95612893e0fc453a5fd29b0d050ca432d0c2d1a504cb8a8e026680",
+      "receipts_root": "0xc1c890b6b20e7e9121218b730829e8d13fddab888ebfc260f9386420f598de4a",
+      "gas_used": 10026232,
+      "block_rlp_sha256": "ce00f79ec21a277514ad47469dd4b40d7ea85c1715840e144e87e9c40ca9bd95",
+      "witness_json_sha256": "8ad5801de9708d2e0252f638d3c7d6fde8c74bf701a0eda3afc3539f08f58f53"
+    },
+    {
+      "number": 26227674,
+      "hash": "0x46e1b724bc6f6d624d5d37be155acea7b6c823395fff6b05b662e361605e6421",
+      "state_root": "0x4c44c030c439bbbaa4350b2b8b317945599407a93b2f5830c0ad4b9312676da4",
+      "receipts_root": "0x0116cbf308e61540bb0cca18f205d99eed618ed78812bd5bd3fffde02d7383d7",
+      "gas_used": 33398348,
+      "block_rlp_sha256": "67ea89b722a964582f3de10d11c9d109422eddfe8d58e89eb8c9fe7ae0c6a026",
+      "witness_json_sha256": "36410504617548411ff74f528ff7c2b8059e27f02ab9ccb8a73f463f6f72dabb"
+    },
+    {
+      "number": 26227675,
+      "hash": "0x64bcca229c7771d75a58d7652a1dd67fad9ddea04d2d949d0addf3c58fb4578f",
+      "state_root": "0x4bb1bffdc4e3859634f4bd7eba7a9fa4a278dd2198c76de631fa5a5f307b3995",
+      "receipts_root": "0xe67afb0b90a2afb4cc03e5dc4e514f1ea3de2a51eb7e654453426029a6a9b304",
+      "gas_used": 31393919,
+      "block_rlp_sha256": "03fdaf1812f2ba37f9bd067ece1171910d8b86d54c567c82e88e23aa8eba08c8",
+      "witness_json_sha256": "1ebc2576fb29b51d1c86898c54d546e5472672ad9b69f72fb1ac54703097f6f5"
+    },
+    {
+      "number": 26227676,
+      "hash": "0xf47f9821301e67fb75ffee7aa4bfffaec0f1c49acce03d8d1ac7abaf7a1d8bb8",
+      "state_root": "0x855a44b3d81011a39f46192ca44422a884e261876ec7a59a9885bad084575efd",
+      "receipts_root": "0x45bb97c23fd7b44a4722a5daae4f6e9664a2d970568bfed768ba4ead0948d1b3",
+      "gas_used": 26610524,
+      "block_rlp_sha256": "a251678db6e18986f641bc6678cbcfb251d839ecefc4d86e4b45c2249b7df533",
+      "witness_json_sha256": "19643e77cb733267687f010681604780485a6d69745df13176e53afc66b7788f"
+    },
+    {
+      "number": 26227677,
+      "hash": "0xcd262a5131b714f656c8fb34f8c61a1c7819db16374129cc5e054bfb9a2cbe11",
+      "state_root": "0x917b8cb043d48481a11af64e3980c064b75b10c3cf0d27fec4bf29cb71254184",
+      "receipts_root": "0x158e2f1c487b460fdabf546c07ce8b3f4057f1c846ce142392ac2d6ac005f2c9",
+      "gas_used": 33451407,
+      "block_rlp_sha256": "77716078155f63c2fcf018b6ede07de0c3f281bf9216632d89b257a871e94811",
+      "witness_json_sha256": "83f47708a1e8b534a5097793b31839c151e1d9504c0194a0d92d5c005855c56f"
+    }
+  ]
+}
