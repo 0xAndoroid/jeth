@@ -44,17 +44,16 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], Precompile
     Ok(out)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "literal width four is accepted by find_wnaf"
-)]
 fn windowed_glv(point: G1Affine, scalar: Fr) -> G1Affine {
     if point.is_zero() || scalar.is_zero() {
         return G1Affine::identity();
     }
     let ((positive_1, k1), (positive_2, k2)) = Config::scalar_decomposition(scalar);
-    let digits_1 = k1.into_bigint().find_wnaf(4).expect("valid window width");
-    let digits_2 = k2.into_bigint().find_wnaf(4).expect("valid window width");
+    let (Some(digits_1), Some(digits_2)) =
+        (k1.into_bigint().find_wnaf(4), k2.into_bigint().find_wnaf(4))
+    else {
+        unreachable!("find_wnaf accepts width four")
+    };
     // Width four uses at most P, 3P, 5P, 7P. Small scalars need only a
     // prefix. Affine additions check an advised slope locally.
     let table_len = digits_1
@@ -117,16 +116,10 @@ fn affine_add(p: G1Affine, q: G1Affine) -> G1Affine {
     G1Affine::new_unchecked(x, y)
 }
 
-#[cfg_attr(
-    any(feature = "compute_advice", not(target_arch = "riscv64")),
-    expect(clippy::expect_used, reason = "affine_add excludes zero denominators")
-)]
 fn advised_slope(numerator: Fq, denominator: Fq) -> Fq {
     use crate::advice::advice_u64;
     #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
-    let slope = (numerator * denominator.inverse().expect("nonzero slope denominator"))
-        .0
-         .0;
+    let slope = (numerator / denominator).0 .0;
     let raw = BigInt(core::array::from_fn(|i| {
         let _ = i;
         advice_u64!(slope[i])
