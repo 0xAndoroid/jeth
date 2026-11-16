@@ -1,5 +1,3 @@
-//! KZG verification with scalar multiplication in G1 rather than G2.
-
 use ark_bls12_381::{Bls12_381, Fr, G1Affine};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 #[cfg(not(feature = "kzg-residue"))]
@@ -28,7 +26,6 @@ pub(crate) fn verify(commitment: &[u8; 48], z: &[u8; 32], y: &[u8; 32], proof: &
 
     // e(C - yG1, -G2) e(proof, tauG2 - zG2) = 1 iff
     // e(C - yG1 + z*proof, -G2) e(proof, tauG2) = 1.
-    // Both pairings now have fixed G2 inputs; no G2 scalar multiplication.
     let left = (commitment.into_group() - G1Affine::generator().mul_bigint(y.into_bigint())
         + proof.mul_bigint(z.into_bigint()))
     .into_affine();

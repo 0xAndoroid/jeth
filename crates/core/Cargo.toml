@@ -4,8 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# Enable in BOTH the guest and native advice generator. The ordinary
-# interpreted compute-advice pass selects the original pairing check.
+# KZG pairing check from a root witness that the guest reads from the advice tape and verifies,
+# in place of the final exponentiation (src/kzg/residue.rs). No code in this tree writes that
+# witness: the compute-advice pass writes flag 0, so a guest built with the feature reads one
+# more advice word per check and still runs the final exponentiation.
 kzg-residue = ["secp-inline"]
 std = []
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode

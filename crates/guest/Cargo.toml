@@ -10,7 +10,7 @@ edition = "2021"
 [workspace]
 
 [features]
-# Checked pairing witnesses supplied by a matching native advice generator.
+# KZG pairing check from an advice-tape witness (see jeth-core/kzg-residue).
 kzg-residue = ["jeth-core/kzg-residue"]
 default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
