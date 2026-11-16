@@ -54,7 +54,6 @@ pub(crate) fn verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec::Vec;
     use alloy_primitives::hex;

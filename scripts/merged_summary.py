@@ -10,7 +10,8 @@ Usage:
       [--banked banked-hashes.txt] [--profiles DIR] --out summary.json [--md out.md]
 
 `--results` holds `<name>.trace-summary.json` captured from `jeth trace` (names:
-`widened-<first block>`, `<block>`, `N<n>`); `--native` holds `native-<name>.log`
+`widened-<first block>`, `<block>`, `N<n>`; the merged `N<n>` runs need `--large-input`,
+which writes `trace-summary-large-input.json`); `--native` holds `native-<name>.log`
 from `jeth run-native`; `--profiles` may hold `<name>.agg.json` from
 `aggregate_markers.py agg` plus `compare-*.json` from `aggregate_markers.py compare`.
 """
@@ -61,6 +62,7 @@ def run_record(name: str, results: str, native: str, banked: dict | None) -> dic
     nat = native_info(Path(native) / f"native-{name.replace('widened-', '')}.log")
     rec = {
         "name": name,
+        "variant": summ["variant"],
         "trace_rows_total": summ["trace_rows_total"],
         "gas_used": summ["gas_used"],
         "cycles_per_gas": summ["trace_rows_total"] / summ["gas_used"],
@@ -272,8 +274,6 @@ def main() -> None:
         "generated": "jeth measurement lane — multi-block synthetic inputs (2026-09-18)",
         "toolchain": {
             "jolt_cli": "/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt (jolt-amber-nolane @ a0d7b74baa)",
-            "variant": "validate_block (self-verifying, committed input, no trusted digests)",
-            "guest_input_region": "128 MiB (was 32 MiB)",
         },
         "step0": {
             "unchanged_tree_rows": baseline["trace_rows_total"],

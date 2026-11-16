@@ -52,7 +52,10 @@ pub(crate) fn scalar(bytes: [u8; 32]) -> Secp256k1Fr {
     if value >= N {
         value -= N;
     }
-    Secp256k1Fr::from_u64_arr(value.as_limbs()).unwrap()
+    let Ok(scalar) = Secp256k1Fr::from_u64_arr(value.as_limbs()) else {
+        unreachable!("n > 2^255, so one subtraction reduces any 256-bit value below n")
+    };
+    scalar
 }
 
 fn address(key: &Secp256k1Point) -> Option<[u8; 32]> {
@@ -77,7 +80,10 @@ pub(crate) fn recover(sig: &[u8; 64], recid: u8, message: &[u8; 32]) -> Option<[
         let _ = i;
     }
     // (0,0) is the unique failure sentinel; its equation is checked too.
-    equation.key = Secp256k1Point::from_u64_arr(&advised).expect("recovery advice on curve");
+    let key = Secp256k1Point::from_u64_arr(&advised);
+    assert!(key.is_ok(), "recovery advice on curve");
+    let Ok(key) = key else { unreachable!() };
+    equation.key = key;
     let result = address(&equation.key);
     with_batch(|batch| batch.equations.push(equation));
     result
@@ -299,7 +305,7 @@ fn pippenger_width<const WIDTH: usize>(terms: &[(Secp256k1Fr, Secp256k1Point)]) 
         let (biased, overflow) = scalar.overflowing_add(bias);
         split.push(Term {
             biased,
-            top: (biased >> top_shift) as usize | (overflow as usize) << (128 - top_shift),
+            top: (biased >> top_shift) as usize | usize::from(overflow) << (128 - top_shift),
             negated: point.neg(),
             point,
         });
