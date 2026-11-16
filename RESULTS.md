@@ -362,10 +362,11 @@ just jeth cycles compare <base>/cycles.json <head>/cycles.json
   `input.bin`, so a change to the input encoding is measured with its own encoder.
 - **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
   pinned ones. The run still reports the other blocks, then exits nonzero.
-- **One checkout path per comparison.** The guest ELF embeds absolute source paths and the row
-  count depends on them: dac77ea counts 14 more rows per block from a second checkout at another
-  path. Measure both revisions in one checkout, one after the other, with the harness binary
-  copied out of `target/`, as `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
+- **One checkout path per comparison.** The row count can change with the checkout path alone:
+  of three checkouts of dac77ea on one machine, one counts 14 more rows in every block (the guest
+  ELF embeds absolute source paths; the mechanism is not established). Measure both revisions in
+  one checkout, one after the other, with the harness binary copied out of `target/`, as
+  `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
 
 `.github/workflows/cycles.yml` runs the harness on every pull request (the merge commit, then
 its base) and on every push to main, and writes the table to the job summary and the `cycles`

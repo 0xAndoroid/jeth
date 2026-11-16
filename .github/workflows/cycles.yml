@@ -82,8 +82,9 @@ jobs:
           cp target/release/jeth "$RUNNER_TEMP/jeth-cycles"
           JOLT_PATH="$HOME/jolt-cli/$JOLT_REV/bin/jolt" "$RUNNER_TEMP/jeth-cycles" cycles run \
             --tree . --repo "$GITHUB_REPOSITORY" --jobs "$(nproc)" --out "$OUT/head"
-      # Both sides build at the same path, one after the other: the guest ELF
-      # embeds absolute source paths, so only then are the two ELFs comparable.
+      # Both sides build at the same path, one after the other: the checkout path
+      # alone changes the guest ELF, which embeds absolute source paths, and can
+      # change the row count.
       - name: Measure the base commit
         if: github.event_name == 'pull_request'
         env:
