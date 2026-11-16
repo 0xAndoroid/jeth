@@ -1,3 +1,4 @@
+#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use super::*;
 use crate::crypto::inline_ecrecover;
 use alloy_primitives::Signature;
