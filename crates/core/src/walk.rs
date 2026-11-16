@@ -508,6 +508,11 @@ mod tests {
                     1
                 };
             }
+            // 32 bytes, not one: a payload length other than 17 mod 32 returns at
+            // `is_plain_branch`'s length precheck, before its value check.
+            let mut extended = payload.to_vec();
+            extended.extend_from_slice(&[EMPTY_STRING_CODE; 32]);
+            check(&extended);
         }
     }
 

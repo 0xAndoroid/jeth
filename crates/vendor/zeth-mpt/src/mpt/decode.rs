@@ -629,11 +629,11 @@ mod tests {
                     1
                 };
             }
-            for extra in [0, 0x80, 0xa0, 0xc0] {
-                let mut extended = payload.clone();
-                extended.push(extra);
-                check_decoder_parity(encode_list_payload(&extended));
-            }
+            // 32 bytes, not one: a payload length other than 17 mod 32 returns at
+            // `decode_plain_branch`'s length precheck, before its value check.
+            let mut extended = payload.clone();
+            extended.extend_from_slice(&[EMPTY_STRING_CODE; 32]);
+            check_decoder_parity(encode_list_payload(&extended));
         }
     }
 
