@@ -355,7 +355,6 @@ fn mul_4x128(scalars: [u128; 4], points: [Secp256k1Point; 2]) -> Secp256k1Point 
 // implementations they replace in the guest.
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use alloc::vec::Vec;
     use reth_evm::revm::precompile::blake2::algo::compress;
 

@@ -1,4 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference,
     assert_reference_matches_harness, host::InlineOp, InlineReference, InlineSpec,

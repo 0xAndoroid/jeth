@@ -58,10 +58,19 @@ jobs:
       - run: cargo clippy --all --all-targets --all-features -q --message-format=short -- -D warnings
       # A workspace-wide run gives each member the features its dependents enable
       # (jeth-host turns on jeth-core's `std`); alone, a member compiles without them.
+      # `--all-targets` still gives a crate the features its dev-dependencies enable on
+      # it (each inline crate depends on itself with `host`), so a crate that depends
+      # on itself gets a second run of its library alone.
       - name: clippy per crate
         run: |
-          for crate in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
+          meta=$(cargo metadata --no-deps --format-version 1)
+          crates=$(jq -er '.packages[].name' <<<"$meta")
+          self_dev=$(jq -r '.packages[] | select(.name as $n | any(.dependencies[]; .kind == "dev" and .name == $n)) | .name' <<<"$meta")
+          for crate in $crates; do
             cargo clippy -p "$crate" --all-targets -q --message-format=short -- -D warnings
+          done
+          for crate in $self_dev; do
+            cargo clippy -p "$crate" -q --message-format=short -- -D warnings
           done
       - if: always()
         run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"

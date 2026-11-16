@@ -1,8 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests fail by panicking"
-)]
 use ark_bn254::{Fq, Fq2, FqConfig};
 use ark_ff::{AdditiveGroup, Field, Fp2Config, MontConfig, PrimeField};
 use jolt_inlines_sdk::host::InlineOp;

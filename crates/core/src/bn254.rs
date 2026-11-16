@@ -54,7 +54,6 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], Precompile
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec;
     use ark_ec::CurveGroup;

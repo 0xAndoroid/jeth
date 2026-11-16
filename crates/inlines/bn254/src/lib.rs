@@ -40,7 +40,9 @@ pub const BN254_MINUS_ONE: [u64; 4] = [
     0x2259_d6b1_4729_c0fa,
 ];
 
+#[cfg(any(feature = "host", target_arch = "riscv64"))]
 pub mod sdk;
+#[cfg(any(feature = "host", target_arch = "riscv64"))]
 pub use sdk::*;
 
 #[cfg(feature = "host")]
@@ -53,7 +55,11 @@ mod host;
 #[cfg(feature = "host")]
 pub use host::*;
 
-#[cfg(all(test, feature = "host"))]
+// Kept as a bare `cfg(test)`: Clippy does not apply `allow-unwrap-in-tests` under
+// `cfg(all(test, ..))`.
+#[cfg(test)]
+#[cfg(feature = "host")]
 mod spec;
-#[cfg(all(test, feature = "host"))]
+#[cfg(test)]
+#[cfg(feature = "host")]
 mod tests;

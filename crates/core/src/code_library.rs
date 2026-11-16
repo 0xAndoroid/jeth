@@ -262,7 +262,6 @@ pub fn append_raw_codes(codes: &mut alloc::vec::Vec<Bytes>) -> Result<(), Librar
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec;
 
@@ -292,7 +291,9 @@ mod tests {
             let raw = Bytes::copy_from_slice(&entry.code[..entry.original_len]);
             assert_eq!(alloy_primitives::keccak256(&raw), B256::from(*entry.hash));
             let expected = Bytecode::new_raw(raw);
-            let actual = library.lookup_bytecode(&B256::from(*entry.hash)).unwrap();
+            let actual = library
+                .lookup_bytecode(&B256::from(*entry.hash))
+                .expect("entry lookup");
             assert_eq!(actual.kind(), expected.kind());
             assert_eq!(actual.original_byte_slice(), expected.original_byte_slice());
             assert_eq!(actual.bytes_slice(), expected.bytes_slice());
