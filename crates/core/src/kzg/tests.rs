@@ -29,13 +29,19 @@ fn check(c: &[u8; 48], z: &[u8; 32], y: &[u8; 32], p: &[u8; 48]) -> bool {
     reference
 }
 
+// c-kzg's verify_kzg_proof_case_correct_proof_4_4, also used by revm: commitment, z, y, proof.
+pub(super) fn correct_proof() -> ([u8; 48], [u8; 32], [u8; 32], [u8; 48]) {
+    (
+        hex("8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7"),
+        hex("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"),
+        hex("1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9"),
+        hex("a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"),
+    )
+}
+
 #[test]
 fn nontrivial_valid_proofs_and_mutations_match_revm() {
-    // c-kzg's verify_kzg_proof_case_correct_proof_4_4, also used by revm.
-    let c = hex("8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7");
-    let z = hex("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000");
-    let y = hex("1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9");
-    let p = hex("a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c");
+    let (c, z, y, p) = correct_proof();
     assert!(check(&c, &z, &y, &p));
     let c = G1Affine::deserialize_compressed(&c[..]).unwrap();
     let p = G1Affine::deserialize_compressed(&p[..]).unwrap();

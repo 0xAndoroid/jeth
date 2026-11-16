@@ -2,8 +2,10 @@
 #![expect(clippy::many_single_char_names, reason = "pairing exponent notation")]
 use super::*;
 use alloc::vec::Vec;
-use ark_bls12_381::Fr;
+use ark_bls12_381::{Fr, G1Affine};
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::BigInteger;
+use ark_serialize::CanonicalDeserialize;
 use num_bigint::BigUint;
 
 #[test]
@@ -67,4 +69,51 @@ fn witnesses_match_final_exponentiation_and_reject_mutations() {
         assert!(check_witness(&valid, &w));
         assert!(!check_witness(&valid, &(w + Fq12::one())));
     }
+}
+
+// The Miller-loop output `verify` computes for c-kzg's correct-proof opening, and the limbs of
+// the witness a native build supplies for it.
+fn opening() -> (Fq12, [[u64; 6]; 12]) {
+    let (c, z, y, p) = crate::kzg::tests::correct_proof();
+    let c = G1Affine::deserialize_compressed(&c[..]).unwrap();
+    let p = G1Affine::deserialize_compressed(&p[..]).unwrap();
+    let left = c.into_group() - G1Affine::generator() * Fr::from_be_bytes_mod_order(&y)
+        + p * Fr::from_be_bytes_mod_order(&z);
+    let f = Bls12_381::multi_miller_loop(
+        [left.into_affine(), p],
+        crate::kzg::prepared::fixed_points(),
+    )
+    .0;
+    (f, limbs(&witness(&f).unwrap()))
+}
+
+#[test]
+fn native_witness_of_a_kzg_opening_is_accepted() {
+    let (f, limbs) = opening();
+    assert!(check_supplied(&f, 1, || limbs));
+}
+
+#[test]
+#[should_panic(expected = "invalid pairing residue witness")]
+fn altered_witness_limb_aborts() {
+    let (f, mut limbs) = opening();
+    limbs[0][0] ^= 1;
+    check_supplied(&f, 1, || limbs);
+}
+
+#[test]
+#[should_panic(expected = "canonical pairing witness coefficient")]
+fn non_canonical_witness_coefficient_aborts() {
+    let (f, mut limbs) = opening();
+    let mut coefficient = BigInt(limbs[0]);
+    coefficient.add_with_carry(&Fq::MODULUS);
+    limbs[0] = coefficient.0;
+    check_supplied(&f, 1, || limbs);
+}
+
+#[test]
+#[should_panic(expected = "pairing witness flag")]
+fn witness_flag_above_one_aborts() {
+    let (f, limbs) = opening();
+    check_supplied(&f, 2, || limbs);
 }
