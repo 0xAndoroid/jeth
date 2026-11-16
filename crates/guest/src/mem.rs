@@ -44,8 +44,9 @@
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests
-//! (`crates/guest/native-tests`) run the `*_impl` functions inside buffers
-//! with a word of slack on both sides so they stay in bounds there.
+//! (`crates/guest/native-tests`) run the `*_impl` functions inside 8-aligned
+//! buffers whose lengths are multiples of 8, so the containing words stay in
+//! bounds there.
 //!
 //! Volatile word ops keep LLVM's loop-idiom recognizer from lowering the loops
 //! back into memcpy/memset calls (infinite recursion); they cost the same one
