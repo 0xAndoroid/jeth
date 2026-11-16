@@ -44,8 +44,8 @@
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests
-//! (`crates/guest/native-tests`) run the same code inside buffers with a word
-//! of slack on both sides so it stays in bounds there.
+//! (`crates/guest/native-tests`) run the `*_impl` functions inside buffers
+//! with a word of slack on both sides so they stay in bounds there.
 //!
 //! Volatile word ops keep LLVM's loop-idiom recognizer from lowering the loops
 //! back into memcpy/memset calls (infinite recursion); they cost the same one
@@ -451,8 +451,10 @@ mod exports {
 }
 
 /// Native tests (`cargo test --manifest-path crates/guest/native-tests/Cargo.toml`,
-/// no `guest` feature): the implementations are pure LE 64-bit word logic,
+/// no `guest` feature): the `*_impl` functions are pure LE 64-bit word logic,
 /// identical on aarch64, so we fuzz them against the std implementations.
+/// The guest's `memcpy` enters through `aligned_copy.S`, which these tests
+/// assemble and run only on riscv64 (CI's `riscv64` job, under qemu).
 #[cfg(all(test, not(feature = "guest")))]
 mod tests {
     use super::{memcmp_impl as jmemcmp, memcpy_impl as jmemcpy, memset_impl as jmemset};
@@ -541,6 +543,53 @@ mod tests {
                 let want = expect[doff..doff + n].cmp(&other[doff..doff + n]) as i32;
                 let got = unsafe { jmemcmp(dst.as_ptr().add(doff), other.as_ptr().add(doff), n) };
                 assert_eq!(got.signum(), want.signum(), "memcmp n={n} flip={flip}");
+            }
+        }
+    }
+
+    /// `exports` is compiled out here (no `guest` feature), so this links
+    /// `aligned_copy.S` to `memcpy_impl` the same way; keep the two in sync.
+    #[cfg(target_arch = "riscv64")]
+    mod entry {
+        core::arch::global_asm!(include_str!("aligned_copy.S"));
+        unsafe extern "C" {
+            pub fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
+        }
+        #[no_mangle]
+        unsafe extern "C" fn __jeth_copy_fallback(
+            dst: *mut u8,
+            src: *const u8,
+            n: usize,
+        ) -> *mut u8 {
+            super::jmemcpy(dst, src, n)
+        }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    #[test]
+    fn aligned_copy_entry_matches_copy_from_slice() {
+        #[repr(align(8))]
+        struct Buf([u8; 336]);
+
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        for n in 0..=300usize {
+            for soff in 0..8 {
+                for doff in 0..8 {
+                    let mut src = Buf([0u8; 336]);
+                    let mut dst = Buf([0u8; 336]);
+                    for b in src.0.iter_mut().chain(dst.0.iter_mut()) {
+                        *b = xorshift(&mut rng) as u8;
+                    }
+                    let mut expect = dst.0;
+                    expect[16 + doff..16 + doff + n]
+                        .copy_from_slice(&src.0[16 + soff..16 + soff + n]);
+                    let ptr = unsafe { dst.0.as_mut_ptr().add(16 + doff) };
+                    let ret = unsafe {
+                        entry::__jeth_aligned_copy(ptr, src.0.as_ptr().add(16 + soff), n)
+                    };
+                    assert_eq!(ret, ptr);
+                    assert_eq!(dst.0, expect, "n={n} soff={soff} doff={doff}");
+                }
             }
         }
     }
