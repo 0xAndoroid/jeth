@@ -52,7 +52,8 @@ enum Command {
         input: String,
     },
     /// Merge N consecutive block inputs into one synthetic block input
-    /// (block 1's header context, all txs + withdrawals concatenated).
+    /// (block 1's header context, all txs + withdrawals concatenated). An output
+    /// above the default committed-input limit traces with `--large-input`.
     Merge {
         /// Comma-separated input.bin paths of consecutive blocks, ascending.
         #[arg(long, required = true, value_delimiter = ',', num_args = 1..)]
@@ -88,16 +89,14 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
-        /// Use a 16 MiB committed-input guest instead of the 128 MiB default.
-        /// The serialized input, including its length prefix, must fit.
-        #[arg(long, conflicts_with_all = ["advice", "trusted_digests"])]
-        small_input: bool,
+        #[command(flatten)]
+        layout: InputLayout,
         /// Deliver the payload as TRUSTED ADVICE instead of committed input.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "large_input")]
         advice: bool,
         /// Supply pre-computed witness digests as trusted advice (reveal skips
         /// keccak; digest map is verifier-trusted — see RESULTS.md caveat).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "large_input")]
         trusted_digests: bool,
         /// Extra guest cargo features (comma-separated), e.g. `lazy` for
         /// deferred bytecode analysis. Each set builds into its own target dir.
@@ -115,6 +114,8 @@ enum Command {
         /// symbols (uses the symbols guest build).
         #[arg(long)]
         symbols_for: Option<String>,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -154,6 +155,8 @@ enum Command {
         /// Extra guest cargo features (comma-separated), e.g. `lazy`.
         #[arg(long, value_delimiter = ',', default_value = "")]
         guest_features: Vec<String>,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// Per-transaction cycle attribution (guest built with per-tx markers).
     Txprofile {
@@ -165,6 +168,8 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// Native state-touch census: opcode counts, distinct/repeated accounts and
     /// slots, DB misses, code reuse (see jeth_core::census).
@@ -190,12 +195,33 @@ enum Command {
         /// Comma-separated JSON-RPC endpoint list (ordered failover).
         #[arg(long, value_delimiter = ',')]
         rpc_list: Option<Vec<String>>,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// Expanded-cycle counts over the frozen block set (RESULTS.md → Cycle-count harness).
     Cycles {
         #[command(subcommand)]
         command: CyclesCommand,
     },
+}
+
+#[derive(clap::Args)]
+struct InputLayout {
+    /// Use the guest with the 128 MiB committed-input region (`validate_block_128m`)
+    /// instead of the default one, for inputs above the default limit such as
+    /// `jeth merge` outputs. Never selected by input size.
+    #[arg(long)]
+    large_input: bool,
+}
+
+impl InputLayout {
+    fn variant(&self) -> trace::Variant {
+        if self.large_input {
+            trace::Variant::LargeInput
+        } else {
+            trace::Variant::Input
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -267,7 +293,7 @@ fn main() -> Result<()> {
         Command::Trace {
             input,
             skip_build,
-            small_input,
+            layout,
             advice,
             trusted_digests,
             guest_features,
@@ -275,8 +301,7 @@ fn main() -> Result<()> {
             let variant = match (advice, trusted_digests) {
                 (_, true) => trace::Variant::Trusted,
                 (true, _) => trace::Variant::Advice,
-                _ if small_input => trace::Variant::Input16,
-                _ => trace::Variant::Input,
+                _ => layout.variant(),
             };
             let features: Vec<&str> = guest_features
                 .iter()
@@ -289,7 +314,8 @@ fn main() -> Result<()> {
             input,
             skip_build,
             symbols_for,
-        } => opcodes::run(&input, skip_build, symbols_for),
+            layout,
+        } => opcodes::run(&input, skip_build, symbols_for, layout.variant()),
         Command::Profile {
             input,
             every,
@@ -302,6 +328,7 @@ fn main() -> Result<()> {
             split_markers,
             json,
             guest_features,
+            layout,
         } => {
             let features: Vec<&str> = guest_features
                 .iter()
@@ -321,13 +348,15 @@ fn main() -> Result<()> {
                 split_markers,
                 json,
                 &features,
+                layout.variant(),
             )
         }
         Command::Txprofile {
             input,
             top,
             skip_build,
-        } => txprofile::run(&input, top, skip_build),
+            layout,
+        } => txprofile::run(&input, top, skip_build, layout.variant()),
         Command::Touches {
             input,
             json,
@@ -337,6 +366,7 @@ fn main() -> Result<()> {
         Command::Bench {
             latest_minus,
             rpc_list,
+            layout,
         } => {
             let input = fetch::run(
                 None,
@@ -347,7 +377,7 @@ fn main() -> Result<()> {
             )?;
             let input = input.to_string_lossy();
             run_native(&input)?;
-            trace::run(&input, false, trace::Variant::Input, &[])
+            trace::run(&input, false, layout.variant(), &[])
         }
         Command::Cycles { command } => match command {
             CyclesCommand::Run {
@@ -437,11 +467,20 @@ mod cli_tests {
     use super::*;
 
     #[test]
-    fn small_input_is_only_available_with_committed_input() {
-        let base = ["jeth", "trace", "--input", "input.bin", "--small-input"];
-        assert!(Cli::try_parse_from(base).is_ok());
+    fn large_input_is_accepted_wherever_a_guest_runs_except_with_trusted_advice() {
+        let input = ["--input", "input.bin"];
+        for command in ["trace", "profile", "txprofile", "opcodes"] {
+            let args = ["jeth", command].into_iter().chain(input);
+            assert!(
+                Cli::try_parse_from(args.chain(["--large-input"])).is_ok(),
+                "{command}"
+            );
+        }
+        assert!(Cli::try_parse_from(["jeth", "bench", "--large-input"]).is_ok());
+
+        let trace = ["jeth", "trace", "--large-input"].into_iter().chain(input);
         for incompatible in ["--advice", "--trusted-digests"] {
-            assert!(Cli::try_parse_from(base.into_iter().chain([incompatible])).is_err());
+            assert!(Cli::try_parse_from(trace.clone().chain([incompatible])).is_err());
         }
     }
 }
