@@ -11,6 +11,7 @@
 .globl __jeth_aligned_copy
 .hidden __jeth_aligned_copy
 .type __jeth_aligned_copy,@function
+.p2align 1
 __jeth_aligned_copy:
 .option push
 .option norelax
