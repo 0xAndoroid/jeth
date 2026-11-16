@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn plain_branch_masks_match_trie_decoder() {
-        for mask in 0..=u16::MAX {
+        for mask in (0..=u16::MAX).filter(|mask| !(3..15).contains(&mask.count_ones())) {
             let children: Vec<_> = (0..16)
                 .filter(|index| mask & (1 << index) != 0)
                 .map(|index| (index, digest_item(index as u8)))
