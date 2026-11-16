@@ -35,14 +35,17 @@ advice budgets 4096 bytes, stack 33554432 bytes, heap 1610612736 bytes. Build
 both the compute-advice and the proven ELF for that entry point.
 `validate_block_128m` differs only in `max_input_size = 134217728`.
 
-### Optional short-input Keccak cache
+### Short-input Keccak cache
 
 The standalone guest feature `keccak-cache` memoizes 32- and 64-byte Keccak
-inputs in a fixed 64-entry cache (8 KiB of bucket storage). Enable it alongside
-`guest` in both the advice and proven guest builds. It is disabled by default:
-repeated inputs save Keccak permutations, while misses add lookup/copy work.
-Every hit compares the complete input and length; index-hash collisions only
-cause eviction. The feature changes guest execution, not the Jolt protocol.
+inputs in a fixed 64-entry cache (8 KiB of bucket storage). It is one of the
+guest's default features: the advice and the proven guest that `jeth` builds
+both have it, and no `--guest-features` flag is needed. `jeth` has no switch
+for it; a guest built by hand with `--no-default-features` leaves it out
+(`keccak-census` too, unless `--features` names it). Repeated inputs save
+Keccak permutations, while misses add lookup/copy work. Every hit compares the
+complete input and length; index-hash collisions only cause eviction. The
+feature changes guest execution, not the Jolt protocol.
 
 On mainnet blocks 26235156, 26235168, and 26235159, matched full guest traces
 used 0.79%, 1.00%, and 1.43% fewer expanded rows, respectively. These are trace

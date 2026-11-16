@@ -165,7 +165,8 @@ fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> 
 
 /// Keccak accounting (census builds only): calls, input bytes, Keccak-f
 /// permutations (rate 136), and calls whose input pointer is not 8-aligned
-/// (they take the shift/or gather path in `keccak.rs`).
+/// (they take the shift/or gather path in `keccak.rs`). Only hashed calls
+/// count: a `keccak-cache` hit returns before these counters.
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_CALLS: u64 = 0;
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
@@ -177,7 +178,9 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 
 /// alloy-primitives (feature "native-keccak") declares this extern and calls it
 /// for every keccak256. Routes to the Jolt Keccak-f[1600] inlines (opcode 0x0B);
-/// the word-wise sponge driver lives in `keccak.rs`.
+/// the word-wise sponge driver lives in `keccak.rs`. With `keccak-cache`, a 32-
+/// or 64-byte input is looked up in `keccak_cache.rs` first and hashed only on
+/// a miss.
 ///
 /// `#[inline(never)]`: keeps the shim one out-of-line body. Its misaligned
 /// digest store is a five-word read-modify-write of the caller's `[u8; 32]`
@@ -203,7 +206,6 @@ pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: 
     keccak_uncached(bytes, len, output);
 }
 
-// Counters describe actual hashing work, so cached hits do not count as permutations.
 #[cfg(feature = "guest")]
 #[inline(always)]
 unsafe fn keccak_uncached(bytes: *const u8, len: usize, output: *mut u8) {
