@@ -41,7 +41,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-HASH_RE = re.compile(r"\[[0-9a-f]{16}\]")
+HASH_RE = re.compile(r"\[[0-9a-f]{1,16}\]")
 GROUPS = ("reveal", "tx", "post_root", "outside")
 BUCKET_NAMES = {
     "a": "(a) witness verification",
