@@ -1,5 +1,6 @@
 //! jeth — Jolt-trace stateless Ethereum block validation.
 
+mod cycles;
 mod fetch;
 mod library;
 mod merge;
@@ -13,6 +14,7 @@ mod txprofile;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::num::NonZeroUsize;
 
 #[derive(Parser)]
 #[command(
@@ -185,6 +187,36 @@ enum Command {
         #[arg(long, value_delimiter = ',')]
         rpc_list: Option<Vec<String>>,
     },
+    /// Expanded-cycle counts over the frozen block set (RESULTS.md → Cycle-count harness).
+    Cycles {
+        #[command(subcommand)]
+        command: CyclesCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum CyclesCommand {
+    /// Build a jeth tree, trace every block of the set with that tree's own
+    /// guest, and write cycles.json and cycles.md. Fails if any block fails.
+    Run {
+        /// Root of the jeth tree to measure.
+        #[arg(long, default_value = cycles::DEFAULT_TREE)]
+        tree: String,
+        /// GitHub repository whose release holds the block set.
+        #[arg(long, default_value = "0xAndoroid/jeth")]
+        repo: String,
+        /// Directory the block set is downloaded into.
+        #[arg(long, default_value = "data/cycles")]
+        blocks: String,
+        /// Output directory (default: <tree>/target/cycles).
+        #[arg(long)]
+        out: Option<String>,
+        /// Blocks traced concurrently.
+        #[arg(long, default_value = "4")]
+        jobs: NonZeroUsize,
+    },
+    /// Print the markdown comparison of two cycles.json files.
+    Compare { base: String, head: String },
 }
 
 #[derive(Subcommand)]
@@ -311,6 +343,16 @@ fn main() -> Result<()> {
             run_native(&input)?;
             trace::run(&input, false, trace::Variant::Input, &[])
         }
+        Command::Cycles { command } => match command {
+            CyclesCommand::Run {
+                tree,
+                repo,
+                blocks,
+                out,
+                jobs,
+            } => cycles::run(&tree, &repo, &blocks, out.as_deref(), jobs),
+            CyclesCommand::Compare { base, head } => cycles::compare(&base, &head),
+        },
     }
 }
 
