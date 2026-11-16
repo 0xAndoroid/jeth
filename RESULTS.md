@@ -367,8 +367,8 @@ just jeth cycles compare <base>/cycles.json <head>/cycles.json
   Observed, mechanism not established (the guest ELF embeds absolute source paths): on one
   Linux host (CherryPika), dac77ea counts 14 more rows in every block at one of three checkout
   paths than at the other two, and at those two it counts 38 rows per block more than the
-  October 19 census of the same blocks on another machine (the Studio; 4,240,923,967 rows at
-  61f87a4, which counts the same as dac77ea when both are built at one path). Measure both
+  October 19 census of the same blocks on another Linux host (4,240,923,967 rows at 61f87a4,
+  which counts the same as dac77ea when both are built at one path). Measure both
   revisions in one checkout, one after the other, with the harness binary copied out of
   `target/`, as `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
 
