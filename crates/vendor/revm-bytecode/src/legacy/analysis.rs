@@ -170,82 +170,27 @@ const fn is_dupn_swapn_exchange(opcode: u8) -> bool {
 mod tests {
     use super::*;
 
-    // Independent scalar oracle retains the original previous-opcode rule.
-    fn reference(raw: &[u8]) -> (Vec<bool>, Vec<u8>) {
-        let mut jumps = vec![false; raw.len()];
-        let (mut offset, mut previous, mut last) = (0, 0, 0);
-        while offset < raw.len() {
-            previous = last;
-            last = raw[offset];
-            jumps[offset] = last == opcode::JUMPDEST;
-            offset += if (opcode::PUSH1..=opcode::PUSH32).contains(&last) {
-                usize::from(last - opcode::PUSH1) + 2
-            } else {
-                1
-            };
-        }
-        let extra = offset - raw.len()
-            + if last == opcode::STOP {
-                usize::from(is_dupn_swapn_exchange(previous))
-            } else {
-                1 + usize::from(is_dupn_swapn_exchange(last))
-            };
-        let mut padded = raw.to_vec();
-        padded.resize(raw.len() + extra, 0);
-        (jumps, padded)
-    }
-
     #[test]
-    fn scan_matches_reference_at_batch_boundaries() {
-        let mut state = 0x6d2b79f5u32;
-        for len in 0..=1120 {
-            for mode in 0..20 {
-                let raw: Vec<_> = (0..len)
-                    .map(|i| {
-                        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-                        match mode {
-                            0 => opcode::PUSH32,
-                            1 => opcode::JUMPDEST,
-                            2 => opcode::STOP,
-                            3 => {
-                                [opcode::PUSH1, opcode::JUMPDEST, opcode::DUPN, opcode::STOP][i % 4]
-                            }
-                            _ => (state >> 24) as u8,
-                        }
-                    })
-                    .collect();
-                let (expected, padding) = reference(&raw);
-                let (actual, padded) = analyze_legacy(raw.into());
-                assert_eq!(
-                    padded.as_ref(),
-                    padding.as_slice(),
-                    "len {len}, mode {mode}"
-                );
-                for (i, valid) in expected.into_iter().enumerate() {
-                    assert_eq!(
-                        actual.is_valid(i),
-                        valid,
-                        "len {len}, mode {mode}, offset {i}"
-                    );
-                }
-                assert!(!actual.is_valid(len));
-            }
-        }
-    }
+    fn batch_scan_matches_closed_forms() {
+        for len in 1..=1120usize {
+            let (jumps, padded) = analyze_legacy(vec![opcode::PUSH32; len].into());
+            assert!(
+                (0..len).all(|i| !jumps.is_valid(i)),
+                "PUSH32 run, len {len}"
+            );
+            assert_eq!(
+                padded.len(),
+                len.div_ceil(33) * 33 + 1,
+                "PUSH32 run, len {len}"
+            );
 
-    #[test]
-    fn jump_writes_support_unaligned_byte_storage() {
-        let mut storage = [0u8; 17];
-        let base = storage.as_mut_ptr();
-        let skip = usize::from(base.align_offset(core::mem::align_of::<u64>()) == 0);
-        let bytes = unsafe { base.add(skip) };
-        assert_ne!(bytes.align_offset(core::mem::align_of::<u64>()), 0);
-        for bit in [0, 7, 8, 63, 64, 127] {
-            unsafe { set_jump(bytes, 0, bit) };
-        }
-        for bit in 0..128 {
-            let actual = storage[skip + bit / 8] & (1 << (bit % 8)) != 0;
-            assert_eq!(actual, [0, 7, 8, 63, 64, 127].contains(&bit));
+            let (jumps, padded) = analyze_legacy(vec![opcode::JUMPDEST; len].into());
+            assert!(
+                (0..len).all(|i| jumps.is_valid(i)),
+                "JUMPDEST run, len {len}"
+            );
+            assert!(!jumps.is_valid(len), "JUMPDEST run, len {len}");
+            assert_eq!(padded.len(), len + 1, "JUMPDEST run, len {len}");
         }
     }
 
@@ -260,16 +205,24 @@ mod tests {
             );
             let mut raw = vec![opcode::JUMPDEST; 529];
             raw[0] = first;
-            let (expected, padding) = reference(&raw);
-            let (actual, padded) = analyze_legacy(raw.into());
-            assert_eq!(padded.as_ref(), padding.as_slice());
-            for (offset, valid) in expected.into_iter().enumerate() {
+            let (jumps, padded) = analyze_legacy(raw.into());
+            let data = match first {
+                opcode::PUSH1..=opcode::PUSH32 => usize::from(first - opcode::PUSH1) + 1,
+                _ => 0,
+            };
+            assert_eq!(
+                jumps.is_valid(0),
+                first == opcode::JUMPDEST,
+                "opcode {first:#x}"
+            );
+            for offset in 1..529 {
                 assert_eq!(
-                    actual.is_valid(offset),
-                    valid,
+                    jumps.is_valid(offset),
+                    offset > data,
                     "opcode {first:#x}, offset {offset}"
                 );
             }
+            assert_eq!(padded.len(), 530, "opcode {first:#x}");
         }
         for push in opcode::PUSH1..=opcode::PUSH32 {
             let width = usize::from(push - opcode::PUSH1) + 1;

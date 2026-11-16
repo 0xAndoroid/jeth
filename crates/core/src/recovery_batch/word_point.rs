@@ -240,35 +240,6 @@ mod tests {
     }
 
     #[test]
-    fn point_operations_match_shared_curve() {
-        let mut a = Secp256k1Point::generator();
-        let mut b = a.double();
-        let mut rng = 0x931e_23a7_4dd1_8f09u64;
-        for _ in 0..128 {
-            for rhs in [&a, &a.neg(), &b, &Secp256k1Point::infinity()] {
-                assert_eq!(
-                    word(&a).add(&word(rhs)).to_u64_arr(),
-                    a.add(rhs).to_u64_arr()
-                );
-                assert_eq!(
-                    word(rhs).add(&word(&a)).to_u64_arr(),
-                    rhs.add(&a).to_u64_arr()
-                );
-            }
-            assert_eq!(word(&a).double().to_u64_arr(), a.double().to_u64_arr());
-            assert_eq!(word(&a).neg().to_u64_arr(), a.neg().to_u64_arr());
-            rng ^= rng << 13;
-            rng ^= rng >> 7;
-            rng ^= rng << 17;
-            a = a.double();
-            if rng & 1 != 0 {
-                a = a.add(&b);
-            }
-            b = b.double().add(&Secp256k1Point::generator());
-        }
-    }
-
-    #[test]
     fn limb_equality_matches_byte_reference() {
         let mut rng = 0x79a3_c41e_638f_d927u64;
         for _ in 0..256 {

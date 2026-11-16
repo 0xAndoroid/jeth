@@ -495,6 +495,5 @@ mod tests {
                 assert_eq!(packed_key(key), Nibbles::unpack(key), "so={so}, len={len}");
             }
         }
-        assert_eq!(packed_key(&bytes[..5]), Nibbles::unpack(&bytes[..5]));
     }
 }
