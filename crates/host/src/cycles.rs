@@ -423,17 +423,11 @@ fn per_gas(rows: Option<u64>, gas: u64) -> String {
     )
 }
 
-fn short(commit: &str) -> &str {
-    commit.get(..12).unwrap_or(commit)
-}
-
 impl Report {
     fn table(&self) -> String {
-        let mut out = format!(
-            "### Expanded cycles at `{}`\n\n\
-             | Block | Expanded cycles | Gas | Cycles/gas |\n|---|---:|---:|---:|\n",
-            short(&self.commit)
-        );
+        let mut out = "### Expanded cycles\n\n\
+                       | Block | Expanded cycles | Gas | Cycles/gas |\n|---|---:|---:|---:|\n"
+            .to_string();
         for block in &self.blocks {
             let _ = writeln!(
                 out,
@@ -453,11 +447,8 @@ impl Report {
         );
         let _ = writeln!(
             out,
-            "\nBlock set `{}`, Jolt `{}`, guest ELF sha256 `{}` ({} bytes).",
-            self.block_set,
-            short(&self.jolt_rev),
-            self.guest_elf_sha256,
-            self.guest_elf_bytes
+            "\nCommit `{}`, block set `{}`, Jolt `{}`, guest ELF sha256 `{}` ({} bytes).",
+            self.commit, self.block_set, self.jolt_rev, self.guest_elf_sha256, self.guest_elf_bytes
         );
         for block in &self.blocks {
             if let Outcome::Error(error) = &block.outcome {
@@ -487,12 +478,9 @@ fn comparison(base: &Report, head: &Report) -> Result<String> {
         }
         _ => "– | –".to_string(),
     };
-    let mut out = format!(
-        "### Expanded cycles: `{}` against base `{}`\n\n\
-         | Block | Base | Head | Δ | Δ % |\n|---|---:|---:|---:|---:|\n",
-        short(&head.commit),
-        short(&base.commit)
-    );
+    let mut out = "### Expanded cycles against base\n\n\
+                   | Block | Base | Head | Δ | Δ % |\n|---|---:|---:|---:|---:|\n"
+        .to_string();
     for (base, head) in base.blocks.iter().zip(&head.blocks) {
         let _ = writeln!(
             out,
@@ -517,6 +505,7 @@ fn comparison(base: &Report, head: &Report) -> Result<String> {
         per_gas(base.total_rows, base.total_gas),
         per_gas(head.total_rows, head.total_gas)
     );
+    let _ = writeln!(out, "\nBase `{}`, head `{}`.", base.commit, head.commit);
     if base.guest_elf_sha256 == head.guest_elf_sha256 {
         let _ = writeln!(out, "\nBoth sides built the same guest ELF.");
     }
@@ -573,12 +562,13 @@ mod tests {
         let head = report("bbbb", [Some(1_100), Some(2_400)]);
         assert_eq!(
             comparison(&base, &head)?,
-            "### Expanded cycles: `bbbb-commit` against base `aaaa-commit`\n\n\
+            "### Expanded cycles against base\n\n\
              | Block | Base | Head | Δ | Δ % |\n|---|---:|---:|---:|---:|\n\
              | 1 | 1,000 | 1,100 | +100 | +10.000% |\n\
              | 2 | 3,000 | 2,400 | -600 | -20.000% |\n\
              | **Total** | 4,000 | 3,500 | -500 | -12.500% |\n\n\
              Gas-weighted cycles/gas over 400 gas: base 10.0000, head 8.7500.\n\n\
+             Base `aaaa-commit`, head `bbbb-commit`.\n\n\
              **Jolt differs between the sides:** base pins `aaaa` (CLI `jolt 0.1.0`), \
              head pins `bbbb` (CLI `jolt 0.1.0`).\n"
         );
