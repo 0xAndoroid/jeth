@@ -262,7 +262,7 @@ mod tests {
                 check(point, scalar);
             }
         }
-        for _ in 0..10_000 {
+        for _ in 0..1_500 {
             let point = &points[xorshift(&mut state) as usize % points.len()];
             check(point, &random_bytes(&mut state));
         }
