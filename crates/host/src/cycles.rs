@@ -118,7 +118,6 @@ impl Tree {
         cmd
     }
 
-    /// The tree's own `jeth` CLI.
     fn jeth(&self) -> Command {
         let mut cmd = self.cargo("run");
         cmd.args(["-q", "--"])

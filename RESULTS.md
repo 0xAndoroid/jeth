@@ -356,17 +356,21 @@ just jeth cycles compare <base>/cycles.json <head>/cycles.json
 ```
 
 - **Inputs.** The run downloads each block's `block.rlp` and `witness.json` from the
-  `cycles-blocks-v1` release of `--repo` into `data/cycles/`, checks every file's sha256 and
-  every header (number, hash, state root, receipts root, gas used) against
+  `cycles-blocks-v1` release of `--repo` into `data/cycles/cycles-blocks-v1/`, checks every
+  file's sha256 and every header (number, hash, state root, receipts root, gas used) against
   `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
   `input.bin`, so a change to the input encoding is measured with its own encoder.
 - **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
   pinned ones. The run still reports the other blocks, then exits nonzero.
-- **One checkout path per comparison.** The row count can change with the checkout path alone:
-  of three checkouts of dac77ea on one machine, one counts 14 more rows in every block (the guest
-  ELF embeds absolute source paths; the mechanism is not established). Measure both revisions in
-  one checkout, one after the other, with the harness binary copied out of `target/`, as
-  `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
+- **One checkout path per comparison.** Absolute totals are specific to the build paths
+  (checkout, cargo home, toolchain); only counts taken at the same paths are comparable.
+  Observed, mechanism not established (the guest ELF embeds absolute source paths): on one
+  Linux host (CherryPika), dac77ea counts 14 more rows in every block at one of three checkout
+  paths than at the other two, and at those two it counts 38 rows per block more than the
+  October 19 census of the same blocks on another machine (the Studio; 4,240,923,967 rows at
+  61f87a4, which counts the same as dac77ea when both are built at one path). Measure both
+  revisions in one checkout, one after the other, with the harness binary copied out of
+  `target/`, as `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
 
 `.github/workflows/cycles.yml` runs the harness on every pull request (the merge commit, then
 its base) and on every push to main, and writes the table to the job summary and the `cycles`
