@@ -51,14 +51,8 @@ fn with_cache<T>(f: impl FnOnce(&mut Cache) -> T) -> T {
     }
 }
 
-#[expect(
-    clippy::unwrap_used,
-    reason = "each field limb slice contains exactly eight bytes"
-)]
 fn read_fq(bytes: &[u8]) -> Result<Fq, PrecompileHalt> {
-    let limbs = core::array::from_fn(|i| {
-        u64::from_be_bytes(bytes[24 - 8 * i..32 - 8 * i].try_into().unwrap())
-    });
+    let limbs = core::array::from_fn(|i| u64::from_be_bytes(bytes.as_chunks::<8>().0[3 - i]));
     Fq::from_bigint(BigInt::new(limbs)).ok_or(PrecompileHalt::Bn254FieldPointNotAMember)
 }
 
@@ -93,9 +87,8 @@ fn read_g2(bytes: &[u8]) -> Result<G2Affine, PrecompileHalt> {
 }
 
 impl Cache {
-    #[expect(clippy::expect_used, reason = "the G2 prefix is exactly 128 bytes")]
     fn prepare(&mut self, bytes: &[u8], needed: bool) -> Result<Option<Prepared>, PrecompileHalt> {
-        let bytes: &[u8; 128] = bytes[..128].try_into().expect("EIP-197 G2 encoding");
+        let bytes: &[u8; 128] = &bytes.as_chunks::<128>().0[0];
         if bytes == &generator::ENCODING {
             return Ok(needed.then(generator::prepared));
         }
