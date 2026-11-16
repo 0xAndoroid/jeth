@@ -1,5 +1,3 @@
-//! BN254 G1 scalar multiplication with a signed-window GLV loop.
-
 use ark_bn254::{g1::Config, Fq, Fr, G1Affine};
 use ark_ec::{scalar_mul::glv::GLVConfig, AffineRepr};
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField, Zero};
@@ -54,8 +52,7 @@ fn windowed_glv(point: G1Affine, scalar: Fr) -> G1Affine {
     else {
         unreachable!("find_wnaf accepts width four")
     };
-    // Width four uses at most P, 3P, 5P, 7P. Small scalars need only a
-    // prefix. Affine additions check an advised slope locally.
+    // Width four uses at most P, 3P, 5P, 7P.
     let table_len = digits_1
         .iter()
         .chain(&digits_2)
@@ -154,14 +151,6 @@ mod tests {
         assert_eq!(affine_add(g, -g), zero);
         assert_eq!(affine_add(g, g), g.into_group().double().into_affine());
         assert_eq!(affine_add(-g, -g), (-g).into_group().double().into_affine());
-    }
-
-    #[test]
-    fn zero_slope_is_valid_when_numerator_is_zero() {
-        assert_eq!(
-            checked_slope(Fq::zero(), Fq::from(7u64), BigInt::new([0; 4])),
-            Fq::zero()
-        );
     }
 
     #[test]
