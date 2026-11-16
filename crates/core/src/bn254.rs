@@ -240,6 +240,11 @@ mod tests {
         one[31] = 1;
         let mut two = [0u8; 32];
         two[31] = 2;
+        // 6λ decomposes with a negative second coefficient, and its last digit
+        // addition has equal operands.
+        let six_lambda_fr = Config::LAMBDA * Fr::from(6u64);
+        let mut six_lambda = [0u8; 32];
+        six_lambda.copy_from_slice(&six_lambda_fr.into_bigint().to_bytes_be());
         let edge_scalars = [
             [0u8; 32],
             one,
@@ -250,6 +255,7 @@ mod tests {
             two_pow_128,
             two_pow_128_minus_1,
             [0xff; 32],
+            six_lambda,
         ];
         for point in &points {
             for scalar in &edge_scalars {
