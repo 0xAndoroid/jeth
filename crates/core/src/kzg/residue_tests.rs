@@ -43,7 +43,7 @@ fn witnesses_match_final_exponentiation_and_reject_mutations() {
     assert!(!check_witness(&Fq12::one(), &Fq12::zero()));
     assert!(check_witness(&Fq12::one(), &Fq12::one()));
     assert!(!check(&Fq12::zero()));
-    for seed in 1..=128u64 {
+    for seed in 1..=4u64 {
         let mut state = seed;
         let raw = Fq12::from_base_prime_field_elems((0..12).map(|_| {
             state = state

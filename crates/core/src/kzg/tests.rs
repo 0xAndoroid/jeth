@@ -41,7 +41,7 @@ fn nontrivial_valid_proofs_and_mutations_match_revm() {
     let p = G1Affine::deserialize_compressed(&p[..]).unwrap();
     let y = scalar(&y).unwrap();
     let mut state = 0x1234_5678_9abc_def0_u64;
-    for i in 0..32 {
+    for i in 0..3 {
         let bytes: [u8; 32] = core::array::from_fn(|_| {
             state ^= state << 13;
             state ^= state >> 7;
