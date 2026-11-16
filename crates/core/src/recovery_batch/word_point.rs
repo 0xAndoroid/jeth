@@ -1,7 +1,3 @@
-//! Word equality for the field coordinates used by the recovery MSM.
-//! Canonical limb addition uses the base-field modulus; point formulas and
-//! multiplication, squaring and division remain in the shared SDK.
-
 use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
 use jolt_inlines_secp256k1::{Secp256k1Curve, Secp256k1Error, Secp256k1Fq};
 

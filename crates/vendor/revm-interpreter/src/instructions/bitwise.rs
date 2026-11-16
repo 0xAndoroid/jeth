@@ -7,7 +7,6 @@ use crate::{
 use core::cmp::Ordering;
 use primitives::U256;
 
-// Equality may reject a differing low limb before reading/reducing the rest.
 #[inline(always)]
 pub(crate) fn equal_word(left: &U256, right: &U256) -> bool {
     let a = left.as_limbs();
@@ -18,8 +17,6 @@ pub(crate) fn equal_word(left: &U256, right: &U256) -> bool {
     ((a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3])) == 0
 }
 
-// Unsigned ordering is determined by the first unequal limb from the high end.
-// Avoid computing a full subtraction and equality reduction just for its ordering.
 #[inline(always)]
 pub(crate) fn less_word(left: &U256, right: &U256) -> bool {
     let a = left.as_limbs();

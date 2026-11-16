@@ -50,7 +50,6 @@ pub(crate) fn analyze_legacy(bytecode: Bytes) -> (JumpTable, Bytes) {
         }
     }
 
-    // Drain shorter batches before the scalar padding tail.
     if bytecode.len() > 4 * 33 {
         let batch_end = unsafe { end.sub(4 * 33) };
         while iterator < batch_end {
@@ -118,7 +117,6 @@ unsafe fn scan_step(
 ) -> *const u8 {
     let byte = unsafe { *iterator };
     let range = (byte as usize).wrapping_sub(opcode::JUMPDEST as usize);
-    // Opcodes outside this interval neither mark a destination nor skip data.
     if range > usize::from(opcode::PUSH32 - opcode::JUMPDEST) {
         return iterator.wrapping_add(1);
     }

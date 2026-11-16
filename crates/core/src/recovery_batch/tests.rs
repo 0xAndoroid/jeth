@@ -225,7 +225,6 @@ fn forged_equation_behind_a_shared_key_must_panic() {
 #[test]
 fn pippenger_batch_matches_independent_recovery() {
     let mut equations = Vec::new();
-    // Exercise both the intermediate batch of 99 equations and the full 598.
     for i in 2..600u64 {
         equations.push(recovered_equation(i));
         if i == 100 {
@@ -241,7 +240,6 @@ fn pippenger_batch_matches_independent_recovery() {
 #[test]
 #[should_panic(expected = "invalid recovery batch")]
 fn forged_key_in_wide_batch_must_panic() {
-    // Reject one forged key among 598 independently recovered equations.
     let mut equations: Vec<_> = (2..600u64).map(recovered_equation).collect();
     equations[300].key = Secp256k1Point::generator();
     Batch { equations }.verify();

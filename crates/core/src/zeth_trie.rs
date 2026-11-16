@@ -122,9 +122,6 @@ fn encode_trie_value<const MAX: usize>(
     value: &impl alloy_rlp::Encodable,
     slab: &mut alloy_primitives::bytes::BytesMut,
 ) -> alloy_primitives::Bytes {
-    // The two private instantiations use the protocol maxima for U256 and
-    // TrieAccount. The existing BufMut implementation for MaybeUninit slices
-    // writes each byte before advancing; no initialized byte slice is forged.
     let old_len = slab.len();
     slab.reserve(MAX);
     let mut remaining = &mut slab.spare_capacity_mut()[..MAX];
@@ -395,9 +392,6 @@ impl StatelessTrie for SparseState {
         // `state.accounts` is a foldhash HashMap — advice calls
         // (on-demand dirty-path resolution) must never be sequenced under
         // unsorted map iteration. Sorting also pins the perm order.
-        // Sorting references keeps large account records in the post-state
-        // map. Its immutable borrow lasts through the loop; trie mutations
-        // affect self only. The key ordering and advice sequence are unchanged.
         let mut accounts: Vec<_> = state.accounts.iter().collect();
         accounts.sort_unstable_by_key(|(hashed_address, _)| **hashed_address);
         for (hashed_address, account) in accounts {
@@ -502,7 +496,6 @@ mod encoding_slab_tests {
             seed ^= seed << 17;
             seed
         };
-        // Deliberately force growth while older immutable slices remain live.
         let mut slab = BytesMut::with_capacity(1);
         let mut retained = Vec::new();
         let mut actual = CachedTrie::default();

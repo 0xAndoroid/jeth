@@ -200,8 +200,6 @@ impl<M: Memoization> Children<M> {
     /// neither a call.
     #[inline(always)]
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
-        // The branch width and visit order are fixed by the trie grammar.
-        // Keep each cache test and recursive call in its original position.
         macro_rules! visit {
             ($i:literal) => {
                 if let Slot::Node(child) = &mut self.0[$i] {

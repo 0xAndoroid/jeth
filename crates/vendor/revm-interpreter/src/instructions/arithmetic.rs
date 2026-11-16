@@ -7,8 +7,6 @@ use crate::{
 use context_interface::Host;
 use primitives::U256;
 
-// Offset arithmetic commonly fits in one limb. Keep the full-width path for
-// every other value, including carry and borrow propagation across all limbs.
 #[inline(always)]
 pub(super) fn add_word(a: U256, b: U256) -> U256 {
     let x = a.as_limbs();
@@ -21,7 +19,6 @@ pub(super) fn add_word(a: U256, b: U256) -> U256 {
     }
 }
 
-// Two one-limb operands have an exact two-limb product.
 #[inline(always)]
 pub(super) fn mul_word(a: U256, b: U256) -> U256 {
     let x = a.as_limbs();

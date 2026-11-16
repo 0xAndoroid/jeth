@@ -462,8 +462,8 @@ impl<M: Memoization> Slot<M> {
                 let child = Node::decode_child(digest, bytes)
                     .expect("MPT: invalid witness node")
                     .expect("MPT: Unresolved node access"); // digest-for-digest refusal
-                                                            // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
-                                                            // which a slot never holds: the child is absent.
+                // `[0x80]` (digest == EMPTY_ROOT_HASH) decodes to `Node::Null`,
+                // which a slot never holds: the child is absent.
                 if matches!(*child, Node::Null) {
                     *self = Slot::Empty;
                     return None;

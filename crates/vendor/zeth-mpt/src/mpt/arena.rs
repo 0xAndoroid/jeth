@@ -275,7 +275,6 @@ unsafe fn put_window33_at<const D: usize>(dst: *mut u64, v: [u64; 5], so: usize)
     let keep = !(u64::MAX << (8 * d));
     let merge = |x: u64| {
         if D == 0 {
-            // The whole destination word is overwritten at zero offset.
             x
         } else {
             (read_volatile(dst) & keep) | (x & !keep)
@@ -699,7 +698,6 @@ fn write_dense_children<M: Memoization>(buf: &mut Scratch, children: &Children<M
     true
 }
 
-/// Write one checked digest reference at a constant destination offset.
 #[inline(always)]
 fn write_dense_ref<M: Memoization, const OFFSET: usize, const ALIGN: usize>(
     buf: &mut Scratch,
@@ -898,8 +896,6 @@ mod tests {
             assert_eq!(actual.as_slice(), reference.as_ref());
             assert_eq!(node.hash(), expected_hash);
             assert_eq!(&scratch.0[..actual.len()], actual.as_slice());
-            // Check the specialized writer directly on the same random tree.
-            // Sparse and inline references must remain eligible for fallback.
             if let Node::Branch(children, _) = &node {
                 let mut trial = Scratch::new();
                 let success = write_dense_children(&mut trial, children);

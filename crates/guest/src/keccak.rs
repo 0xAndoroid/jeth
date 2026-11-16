@@ -554,7 +554,6 @@ mod tests {
     #[test]
     fn overlapping_input_output_matches_reference() {
         let mut rng = 0xa4b3_c2d1_e0f9_8765u64;
-        // Includes the address, storage-key, pair and bloom input sizes.
         for len in (0..=300).chain([308, 340, 372, 404, 436, 468, 500, 512, 532, 1024, 2048]) {
             let msg = random_bytes(&mut rng, len);
             let want = reference(&msg);

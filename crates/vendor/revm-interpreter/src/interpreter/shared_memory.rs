@@ -630,8 +630,6 @@ pub const fn num_words(len: usize) -> usize {
     len.div_ceil(32)
 }
 
-// Round the inclusive last byte for nonempty ranges. Constant opcode lengths
-// then need only one saturating add, one shift and one increment.
 #[inline(always)]
 const fn range_words(offset: usize, len: usize) -> usize {
     if len == 0 {
