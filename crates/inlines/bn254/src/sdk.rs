@@ -68,27 +68,6 @@ pub unsafe fn fp2mulq(out: *mut u64, a: *const u64, b: *const u64) {
     }
 }
 
-/// # Safety
-/// Never returns: the inline exists only on riscv64 guests or with the `host` model.
-#[cfg(all(not(feature = "host"), not(target_arch = "riscv64")))]
-pub unsafe fn mulq(_out: *mut u64, _a: *const u64, _b: *const u64) {
-    panic!("bn254 mulq requires a riscv64 target or the host feature");
-}
-
-/// # Safety
-/// Never returns: the inline exists only on riscv64 guests or with the `host` model.
-#[cfg(all(not(feature = "host"), not(target_arch = "riscv64")))]
-pub unsafe fn sopq2(_out: *mut u64, _a: *const u64, _b: *const u64) {
-    panic!("bn254 sopq2 requires a riscv64 target or the host feature");
-}
-
-/// # Safety
-/// Never returns: the inline exists only on riscv64 guests or with the `host` model.
-#[cfg(all(not(feature = "host"), not(target_arch = "riscv64")))]
-pub unsafe fn fp2mulq(_out: *mut u64, _a: *const u64, _b: *const u64) {
-    panic!("bn254 fp2mulq requires a riscv64 target or the host feature");
-}
-
 /// Software model of `BN254_MULQ`.
 ///
 /// # Safety

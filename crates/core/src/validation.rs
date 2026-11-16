@@ -69,9 +69,12 @@ pub struct ValidatedBlock {
 }
 
 /// Stateless validation with the tx loop expanded in-line (see module docs).
-#[expect(
-    clippy::unused_enumerate_index,
-    reason = "The transaction index is consumed only by guest instrumentation."
+#[cfg_attr(
+    not(feature = "pertx-markers"),
+    expect(
+        clippy::unused_enumerate_index,
+        reason = "The transaction index is consumed only by guest instrumentation."
+    )
 )]
 pub fn validate_recovered_pertx(
     current_block: RecoveredBlock<Block>,
