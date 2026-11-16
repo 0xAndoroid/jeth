@@ -27,13 +27,8 @@ clippy *args:
     case " $* " in *" -p"* | *" --package"*) exit 0 ;; esac
     meta=$(cargo metadata --no-deps --format-version 1)
     crates=$(jq -er '.packages[].name' <<<"$meta")
-    # Crates that depend on themselves in dev-dependencies: see the clippy job in ci.yml.
-    self_dev=$(jq -r '.packages[] | select(.name as $n | any(.dependencies[]; .kind == "dev" and .name == $n)) | .name' <<<"$meta")
     for crate in $crates; do
         cargo clippy -p "$crate" --all-targets -q --message-format=short "$@" -- -D warnings
-    done
-    for crate in $self_dev; do
-        cargo clippy -p "$crate" -q --message-format=short "$@" -- -D warnings
     done
 
 # Apply Clippy's suggested fixes, also in a dirty worktree.
