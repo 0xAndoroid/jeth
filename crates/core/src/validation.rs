@@ -152,14 +152,10 @@ pub fn validate_recovered_pertx(
 
     // Validation needs the final values, not a rollback bundle. Move the
     // accumulated transitions directly into their final-account view.
-    #[expect(
-        clippy::expect_used,
-        reason = "the State builder enables bundle updates above"
-    )]
-    let final_accounts: Vec<_> = state
-        .transition_state
-        .take()
-        .expect("bundle updates enabled")
+    let Some(transition_state) = state.transition_state.take() else {
+        return Err(StatelessValidationError::StatelessStateRootCalculationFailed);
+    };
+    let final_accounts: Vec<_> = transition_state
         .transitions
         .into_iter()
         .filter_map(|(address, transition)| {
