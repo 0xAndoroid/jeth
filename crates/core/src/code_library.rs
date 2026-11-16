@@ -262,11 +262,6 @@ pub fn append_raw_codes(codes: &mut alloc::vec::Vec<Bytes>) -> Result<(), Librar
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        reason = "tests fail by panicking"
-    )]
     use super::*;
     use alloc::vec;
 
