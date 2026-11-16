@@ -106,7 +106,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cycles
+          # trace.log holds the guest's cycle-marker and keccak-census lines per block.
           path: |
             ${{ runner.temp }}/cycles/*/cycles.json
             ${{ runner.temp }}/cycles/*/cycles.md
+            ${{ runner.temp }}/cycles/*/*/trace.log
           if-no-files-found: ignore
