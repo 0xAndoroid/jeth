@@ -166,7 +166,7 @@ RULES: list[tuple[str, str, str, str]] = [
         "alloc",
     ),
     ("text", r"^memcpy  ::", "f", "memcpy (no caller data)"),
-    ("text", r"^memcmp  ::", "f", "memcmp (no caller data)"),
+    ("text", r"^memcmp  ::|^jeth_guest::mem::memcmp_generic", "f", "memcmp (no caller data)"),
     ("text", r"^native_keccak256  ::", "f", "keccak (no caller data)"),
     ("text", r"^memset  ::", "f", "memset"),
     ("text", r"^memmove  ::|compiler_builtins", "f", "memmove/builtins"),
