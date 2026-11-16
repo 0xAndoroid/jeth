@@ -41,3 +41,7 @@ build *args:
 # Run the jeth CLI in release mode, e.g. `just jeth bench`.
 jeth *args:
     cargo run -q --message-format=short --release -p jeth-host -- "$@"
+
+# Expanded-cycle counts over the frozen block set, e.g. `just cycles --tree ../other-checkout`.
+cycles *args:
+    cargo run -q --message-format=short --release -p jeth-host -- cycles run "$@"
