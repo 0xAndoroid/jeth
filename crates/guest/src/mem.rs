@@ -162,8 +162,6 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
     if n == 0 {
         return dst;
     }
-    // Addresses have a four-byte tail after two full words. Avoid the
-    // generic head/body/tail loops when serializing one from aligned storage.
     // The final source load and destination edge accesses are containing-word
     // operations under the guest memory contract described above.
     if n == 20 && (src as usize) & 7 == 0 {
@@ -201,8 +199,6 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
         }
         return dst;
     }
-    // A common serialization copy: a complete aligned word array into a
-    // byte buffer after an RLP prefix. Preserve only the two boundary words.
     // The source loads are in bounds. Destination containing-word accesses
     // rely on the same single-hart guest memory contract as the fallback.
     if n == 32 && (src as usize) & 7 == 0 {

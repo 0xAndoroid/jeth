@@ -24,7 +24,6 @@ __jeth_aligned_copy:
     lla t0, .Lcopy_return
     sub t0, t0, a2
     jr t0
-// Each eight-byte copy occupies exactly eight instruction bytes.
 .option push
 .option norvc
 .set .Lcopy_offset, 248
