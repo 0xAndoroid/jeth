@@ -334,19 +334,25 @@ pub fn run(
             outcome,
         }
     };
-    // The first trace builds the guest ELF pair; the others reuse it.
     let (first, rest) = manifest
         .blocks
         .split_first()
         .context("the manifest pins no blocks")?;
     let mut blocks = vec![measure(first, true)];
-    let elf = std::fs::read(tree.root.join(format!("target/guest{GUEST_ELF}")))
-        .context("the first trace built no guest ELF")?;
-    for chunk in rest.chunks(jobs.get()) {
+    // Only a trace that succeeded after building proves the ELF pair in the
+    // tree's target directory belongs to this revision. Until one has, a
+    // checkout switched from another revision may still hold that revision's
+    // ELFs, so every trace builds for itself, one at a time.
+    let (jobs, build_guest) = if blocks[0].rows().is_some() {
+        (jobs.get(), false)
+    } else {
+        (1, true)
+    };
+    for chunk in rest.chunks(jobs) {
         std::thread::scope(|scope| {
             let workers: Vec<_> = chunk
                 .iter()
-                .map(|pin| scope.spawn(|| measure(pin, false)))
+                .map(|pin| scope.spawn(|| measure(pin, build_guest)))
                 .collect();
             for worker in workers {
                 blocks.push(
@@ -357,6 +363,12 @@ pub fn run(
             }
         });
     }
+    ensure!(
+        blocks.iter().any(|block| block.rows().is_some()),
+        "no block could be measured"
+    );
+    let elf = std::fs::read(tree.root.join(format!("target/guest{GUEST_ELF}")))
+        .context("reading the guest ELF")?;
 
     let report = Report {
         // Read after the builds: one that rewrites a tracked lockfile leaves the tree dirty.
