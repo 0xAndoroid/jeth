@@ -341,6 +341,49 @@ One-time: install the Jolt CLI at the `a16z/jolt` rev pinned in the root `Cargo.
 (`cargo install --locked --git https://github.com/a16z/jolt --rev <rev> jolt`),
 or point `JOLT_PATH` at a `jolt` binary built from that rev.
 
+### Cycle-count harness
+
+`just cycles` (`jeth cycles run`) counts expanded cycles for a tree over a frozen block set: the
+ten consecutive mainnet blocks 26227668–26227677 (277,426,425 gas). The count per block is the
+`trace_rows_total` of `jeth trace`: the rows `tracer::execute` returns for the proven pass of the
+committed-input `validate_block` guest with its default features (`keccak-census` on), after
+virtual-sequence and inline expansion, unpadded. The advice pass is not counted.
+
+```bash
+just cycles                               # this tree → target/cycles/cycles.{json,md}
+just cycles --tree <dir> --out <dir>      # any tree whose CLI has `repack` and `trace`
+just jeth cycles compare <base>/cycles.json <head>/cycles.json
+```
+
+- **Inputs.** The run downloads each block's `block.rlp` and `witness.json` from the
+  `cycles-blocks-v1` release of `--repo` into `data/cycles/cycles-blocks-v1/`, checks every
+  file's sha256 and every header (number, hash, state root, receipts root, gas used) against
+  `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
+  `input.bin`, so a change to the input encoding is measured with its own encoder.
+- **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
+  pinned ones. The run still reports the other blocks, then exits nonzero.
+- **One checkout path per comparison.** Absolute totals are specific to the build paths
+  (checkout, cargo home, toolchain); only counts taken at the same paths are comparable.
+  Observed, mechanism not established (the guest ELF embeds absolute source paths): on one
+  Linux host (CherryPika), dac77ea counts 14 more rows in every block at one of three checkout
+  paths than at the other two, and at those two it counts 38 rows per block more than the
+  October 19 census of the same blocks on another Linux host (4,240,923,967 rows at 61f87a4,
+  which counts the same as dac77ea when both are built at one path). Measure both
+  revisions in one checkout, one after the other, with the harness binary copied out of
+  `target/`, as `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
+
+`.github/workflows/cycles.yml` runs the harness on every pull request (the merge commit, then
+its base) and on every push to main, and writes the table to the job summary and the `cycles`
+artifact. It only reports; nothing gates on it.
+
+- To gate on a threshold, give `jeth cycles compare` a flag that exits nonzero above a chosen
+  total Δ %, and add the `cycles` job to the `needs` of the `ci` job in `ci.yml`.
+- To post the table as a sticky pull-request comment, add a second workflow triggered by
+  `workflow_run` on `Cycles` that downloads the `cycles` artifact and posts its markdown with
+  `pull-requests: write`. That workflow must not check out or run pull-request code, and must
+  treat the artifact as untrusted text. `cycles.yml` keeps its read-only token because it runs
+  the pull request's code.
+
 ## Notes & caveats
 
 - Tracing only; `max_trace_length` is enforced at prove time and irrelevant here.

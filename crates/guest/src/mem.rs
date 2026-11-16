@@ -374,9 +374,41 @@ fn first_diff_sign(x: u64, y: u64) -> i32 {
 }
 
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
+    if (n == 20 || n == 32) && ((a as usize | b as usize) & 7 == 0) {
+        // All reads stay within the compared ranges.
+        let a64 = a.cast::<u64>();
+        let b64 = b.cast::<u64>();
+        for i in 0..2 {
+            let x = a64.add(i).read();
+            let y = b64.add(i).read();
+            if x != y {
+                return first_diff_sign(x, y);
+            }
+        }
+        if n == 20 {
+            let x = a.add(16).cast::<u32>().read() as u64;
+            let y = b.add(16).cast::<u32>().read() as u64;
+            if x != y {
+                return first_diff_sign(x, y);
+            }
+        } else {
+            for i in 2..4 {
+                let x = a64.add(i).read();
+                let y = b64.add(i).read();
+                if x != y {
+                    return first_diff_sign(x, y);
+                }
+            }
+        }
+        return 0;
+    }
+    memcmp_generic(a, b, n)
+}
+
+#[inline(never)]
+unsafe fn memcmp_generic(a: *const u8, b: *const u8, n: usize) -> i32 {
     let mut i = 0usize;
-    // Co-aligned fast path (the common case: 32-byte hash equality between
-    // 8-aligned heap objects): one aligned load per side per word after a
+    // Co-aligned fast path: one aligned load per side per word after a
     // single partial head compare.
     if n >= 8 && ((a as usize) & 7) == ((b as usize) & 7) {
         let head = (8 - ((a as usize) & 7)) & 7;
@@ -487,6 +519,40 @@ mod tests {
                         let result = unsafe { jmemcpy(ptr, source.0.as_ptr().add(16 + soff), n) };
                         assert_eq!(result, ptr);
                         assert_eq!(dest.0, expected.0, "n={n}, src={soff}, dst={doff}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_key_memcmp_preserves_order_and_boundaries() {
+        // Outside bytes deliberately differ.
+        for n in [0, 1, 19, 20, 21, 31, 32, 33] {
+            for a_offset in 0..8 {
+                for b_offset in 0..8 {
+                    let mut a = Words([0x41; 144]);
+                    let mut b = Words([0x92; 144]);
+                    for i in 0..n {
+                        let value = (i as u8).wrapping_mul(37).wrapping_add(11);
+                        a.0[a_offset + i] = value;
+                        b.0[b_offset + i] = value;
+                    }
+                    let ap = unsafe { a.0.as_ptr().add(a_offset) };
+                    let bp = unsafe { b.0.as_ptr().add(b_offset) };
+                    assert_eq!(unsafe { jmemcmp(ap, bp, n) }, 0);
+                    for i in 0..n {
+                        for bit in 0..8 {
+                            let saved = b.0[b_offset + i];
+                            b.0[b_offset + i] ^= 1 << bit;
+                            let want = a.0[a_offset..a_offset + n].cmp(&b.0[b_offset..b_offset + n])
+                                as i32;
+                            let ap = unsafe { a.0.as_ptr().add(a_offset) };
+                            let bp = unsafe { b.0.as_ptr().add(b_offset) };
+                            assert_eq!(unsafe { jmemcmp(ap, bp, n) }.signum(), want.signum());
+                            assert_eq!(unsafe { jmemcmp(bp, ap, n) }.signum(), -want.signum());
+                            b.0[b_offset + i] = saved;
+                        }
                     }
                 }
             }
