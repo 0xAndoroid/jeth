@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# Enable in the guest and matching native advice producer.
 bn254-pairing-residue = ["secp-inline"]
 std = []
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode

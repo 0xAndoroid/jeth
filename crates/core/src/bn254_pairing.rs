@@ -1,5 +1,3 @@
-//! Exact reuse of validated BN254 G2 points and their Miller-loop preparation.
-
 use alloc::vec::Vec;
 use ark_bn254::{Bn254, Fq, Fq2, G1Affine, G2Affine};
 use ark_ec::{pairing::Pairing, AffineRepr};
@@ -10,7 +8,6 @@ use ark_ff::{BigInt, PrimeField, Zero};
 mod residue;
 use reth_evm::revm::precompile::PrecompileHalt;
 
-#[path = "bn254_pairing/generator.rs"]
 mod generator;
 
 type Prepared = <Bn254 as Pairing>::G2Prepared;
