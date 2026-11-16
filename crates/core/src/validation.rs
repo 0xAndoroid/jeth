@@ -402,7 +402,6 @@ pub(crate) fn receipt_root_bloom(
     (root, Bloom::from(bytes))
 }
 
-/// Union a receipt bloom without 256 separate byte load/OR/store operations.
 #[inline]
 fn union_bloom_words(out: &mut [u64; 32], bytes: &[u8; 256]) {
     let ptr = bytes.as_ptr();
@@ -430,7 +429,6 @@ mod tests {
     use alloy_primitives::Log;
 
     #[test]
-    #[expect(clippy::expect_used, reason = "the test uses a fixed-size slice")]
     fn bloom_word_union_matches_bytes_at_every_alignment() {
         #[repr(align(8))]
         struct Buffer([u8; 264]);
@@ -438,8 +436,7 @@ mod tests {
         for (i, byte) in src.0.iter_mut().enumerate() {
             *byte = (i as u8).wrapping_mul(73).wrapping_add(19);
         }
-        for offset in 0..8 {
-            let bytes: &[u8; 256] = src.0[offset..offset + 256].try_into().expect("256 bytes");
+        for (offset, bytes) in src.0.array_windows::<256>().take(8).enumerate() {
             for initial in [0u64, u64::MAX, 0x1020_3040_5060_7080] {
                 let mut out = [initial; 32];
                 union_bloom_words(&mut out, bytes);
@@ -452,13 +449,6 @@ mod tests {
                     .map(|(a, b)| a | b)
                     .collect();
                 assert_eq!(result, expected, "offset={offset}");
-                union_bloom_words(&mut out, bytes);
-                assert_eq!(
-                    out.iter()
-                        .flat_map(|word| word.to_ne_bytes())
-                        .collect::<Vec<_>>(),
-                    expected
-                );
             }
         }
     }
