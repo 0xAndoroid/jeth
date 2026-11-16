@@ -314,8 +314,7 @@ fn first_diff_sign(x: u64, y: u64) -> i32 {
 
 pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
     if (n == 20 || n == 32) && ((a as usize | b as usize) & 7 == 0) {
-        // Address/hash keys: keep the common aligned comparisons out of the
-        // generic gather loop. All reads stay within the compared ranges.
+        // All reads stay within the compared ranges.
         let a64 = a.cast::<u64>();
         let b64 = b.cast::<u64>();
         for i in 0..2 {
@@ -348,8 +347,7 @@ pub(crate) unsafe fn memcmp_impl(a: *const u8, b: *const u8, n: usize) -> i32 {
 #[inline(never)]
 unsafe fn memcmp_generic(a: *const u8, b: *const u8, n: usize) -> i32 {
     let mut i = 0usize;
-    // Co-aligned fast path (the common case: 32-byte hash equality between
-    // 8-aligned heap objects): one aligned load per side per word after a
+    // Co-aligned fast path: one aligned load per side per word after a
     // single partial head compare.
     if n >= 8 && ((a as usize) & 7) == ((b as usize) & 7) {
         let head = (8 - ((a as usize) & 7)) & 7;
@@ -430,8 +428,7 @@ mod tests {
 
     #[test]
     fn fixed_key_memcmp_preserves_order_and_boundaries() {
-        // Include both specialized widths, adjacent lengths, every alignment,
-        // and mismatches at every byte. Outside bytes deliberately differ.
+        // Outside bytes deliberately differ.
         for n in [0, 1, 19, 20, 21, 31, 32, 33] {
             for a_offset in 0..8 {
                 for b_offset in 0..8 {
