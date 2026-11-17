@@ -366,7 +366,10 @@ just jeth cycles compare <base>/cycles.json <head>/cycles.json
   `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
   `input.bin`, so a change to the input encoding is measured with its own encoder.
 - **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
-  pinned ones. The run still reports the other blocks, then exits nonzero.
+  pinned ones. In a tree that has the `native-advice` example (README → Native advice
+  generation), a block also fails when the tape the example records for its `input.bin` differs
+  from `advice-tape.bin`, the `compute_advice` pass's tape, which `jeth trace` writes beside
+  `trace-summary.json`. The run still reports the other blocks, then exits nonzero.
 - **One checkout path per comparison.** Absolute totals are specific to the build paths
   (checkout, cargo home, toolchain); only counts taken at the same paths are comparable.
   Observed, mechanism not established (the guest ELF embeds absolute source paths): on one

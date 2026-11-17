@@ -355,6 +355,20 @@ pub fn run(
         input_stream,
         trusted_stream,
     )?;
+    let (summary_name, tape_name) = match variant {
+        Variant::Input => ("trace-summary.json", "advice-tape.bin"),
+        Variant::LargeInput => (
+            "trace-summary-large-input.json",
+            "advice-tape-large-input.bin",
+        ),
+        Variant::Advice => ("trace-summary-advice.json", "advice-tape-advice.bin"),
+        Variant::Trusted => ("trace-summary-trusted.json", "advice-tape-trusted.bin"),
+    };
+    let tape_path = PathBuf::from(input_path).with_file_name(tape_name);
+    let tape = tape.into_bytes();
+    std::fs::write(&tape_path, &tape).context("writing the advice tape")?;
+    println!("advice tape → {}", tape_path.display());
+    let tape = tracer::AdviceTape::from_bytes(tape);
 
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
     let memory_config = memory_config(&elf, variant);
@@ -411,12 +425,6 @@ pub fn run(
         "effective_mhz": mhz,
         "guest_panicked": device.panic,
     });
-    let summary_name = match variant {
-        Variant::Input => "trace-summary.json",
-        Variant::LargeInput => "trace-summary-large-input.json",
-        Variant::Advice => "trace-summary-advice.json",
-        Variant::Trusted => "trace-summary-trusted.json",
-    };
     let summary_path = std::path::Path::new(input_path).with_file_name(summary_name);
     std::fs::write(&summary_path, serde_json::to_string_pretty(&summary)?)?;
     println!("summary → {}", summary_path.display());

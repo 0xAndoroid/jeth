@@ -46,3 +46,30 @@ for it; a guest built by hand with `--no-default-features` leaves it out
 Keccak permutations, while misses add lookup/copy work. Every hit compares the
 complete input and length; index-hash collisions only cause eviction. The
 feature changes guest execution, not the Jolt protocol.
+
+## Native advice generation
+
+The optional `jeth-core/native-advice` feature records the untrusted advice words
+emitted during native validation. It can replace the interpreted `compute_advice`
+pass; the proven guest still checks every hint and executes the same instructions.
+
+For the ordinary guest with the code library enabled:
+
+```sh
+cargo run --release -p jeth-core --example native-advice \
+  --features native-advice,secp-inline,code-library,bigint-inline -- input.bin advice.bin
+```
+
+Pass the resulting bytes as Jolt's runtime advice tape, not its trusted-advice
+input. Match the native and guest source revisions, dependencies, and features.
+The example runs one block per process and does not support the trusted-digest
+guest or optional guest features such as lazy analysis. Existing tracing commands
+continue to use the interpreted pass. `jeth trace` writes that pass's tape beside
+its summary (`advice-tape.bin` for the default guest), and `jeth cycles run` fails
+a block for which the example records a different tape (RESULTS.md → Cycle-count
+harness).
+
+The library entry point is `jeth_core::advice::native::record`. It captures words
+from both jeth-core and the vendored MPT encoder, on the calling thread only.
+Recording scopes cannot nest; unwinding discards the tape. The recorder does not
+reset other validation state after a failed run.
