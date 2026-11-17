@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use alloy_primitives::U256;
 use jolt_inlines_bigint::bigint256_mul_inline;
 
-/// Shared hook for revm's MULMOD in the guest and native advice generator.
+/// Hook for the vendored revm-interpreter's MULMOD, which declares it under `bigint-inline`.
 ///
 /// # Safety
 /// `a` and `b` point to four initialized, aligned limbs each. `m` points to
