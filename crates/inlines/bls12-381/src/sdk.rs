@@ -44,14 +44,6 @@ macro_rules! inline_insn {
     }};
 }
 
-#[cfg(all(not(feature = "host"), not(target_arch = "riscv64")))]
-macro_rules! inline_insn {
-    ($funct3:expr, $out:expr, $a:expr, $b:expr) => {{
-        let _ = ($funct3, $out, $a, $b);
-        panic!("BLS12-381 inlines require a riscv64 guest or the host feature")
-    }};
-}
-
 /// `out[0..6] = a[0..6] · b[0..6] · R⁻¹ mod p`.
 ///
 /// # Safety

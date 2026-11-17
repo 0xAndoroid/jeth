@@ -53,6 +53,18 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all --all-targets -q --message-format=short -- -D warnings
+      # The run above compiles only the default features and the `cfg(not(feature))`
+      # branches; this one compiles the code every other feature gates.
+      - run: cargo clippy --all --all-targets --all-features -q --message-format=short -- -D warnings
+      # A workspace-wide run gives each member the features its dependents enable
+      # (jeth-host turns on jeth-core's `std`); alone, a member compiles without them.
+      - name: clippy per crate
+        run: |
+          meta=$(cargo metadata --no-deps --format-version 1)
+          crates=$(jq -er '.packages[].name' <<<"$meta")
+          for crate in $crates; do
+            cargo clippy -p "$crate" --all-targets -q --message-format=short -- -D warnings
+          done
       - if: always()
         run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
@@ -80,6 +92,9 @@ jobs:
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
   features:
+    # `test` builds the default features, so a test that compiles only with a
+    # cargo feature never runs there. Each entry runs one such feature set in
+    # its own job: a second build in `test` does not fit its pull-request cap.
     name: feature tests (${{ matrix.name }})
     runs-on: ubicloud-standard-2-arm
     timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 60 }}
@@ -87,6 +102,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: secp-inline
+            args: -p jeth-core --features secp-inline
           - name: kzg-residue
             args: -p jeth-core --lib --features kzg-residue
     env:

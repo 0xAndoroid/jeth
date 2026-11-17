@@ -17,18 +17,25 @@ extern "C" {
 }
 
 fn phase_start(label: &'static str) {
+    // SAFETY: the hook reads `len` UTF-8 bytes at `ptr`; `label` supplies both and outlives
+    // the call.
     unsafe { jeth_phase_start(label.as_ptr(), label.len()) }
 }
 fn phase_end(label: &'static str) {
+    // SAFETY: as in `phase_start`.
     unsafe { jeth_phase_end(label.as_ptr(), label.len()) }
 }
 
 /// Marker with a non-`'static` label (per-tx markers reuse a stack buffer; the
 /// tracer copies the label at start and keys the active marker by pointer).
+#[cfg(feature = "pertx-markers")]
 pub(crate) fn phase_start_dyn(label: &str) {
+    // SAFETY: as in `phase_start`.
     unsafe { jeth_phase_start(label.as_ptr(), label.len()) }
 }
+#[cfg(feature = "pertx-markers")]
 pub(crate) fn phase_end_dyn(label: &str) {
+    // SAFETY: as in `phase_start`.
     unsafe { jeth_phase_end(label.as_ptr(), label.len()) }
 }
 

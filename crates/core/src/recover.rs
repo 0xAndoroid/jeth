@@ -86,11 +86,9 @@ pub(crate) fn inline_verify_pubkey(
     }
 
     // Point limbs: [x0..x3, y0..y3], little-endian u64 limbs.
-    let x = U256::from_be_slice(&vk[1..33]);
-    let y = U256::from_be_slice(&vk[33..65]);
     let mut q_limbs = [0u64; 8];
-    q_limbs[..4].copy_from_slice(x.as_limbs());
-    q_limbs[4..].copy_from_slice(y.as_limbs());
+    q_limbs[..4].copy_from_slice(U256::from_be_slice(&vk[1..33]).as_limbs());
+    q_limbs[4..].copy_from_slice(U256::from_be_slice(&vk[33..65]).as_limbs());
     let q = Secp256k1Point::from_u64_arr(&q_limbs)
         .map_err(|_| StatelessValidationError::SignerRecovery)?;
 

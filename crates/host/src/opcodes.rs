@@ -124,8 +124,15 @@ fn classify(insn: u32, compressed: bool) -> &'static str {
     }
 }
 
-pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> Result<()> {
-    let variant = crate::trace::Variant::Input;
+pub fn run(
+    input_path: &str,
+    skip_build: bool,
+    symbols_for: Option<String>,
+    variant: crate::trace::Variant,
+) -> Result<()> {
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let input_bytes = crate::trace::guest_stream(&raw, variant)?;
+
     // Symbol attribution needs the symbols guest build (JOLT_BACKTRACE=1).
     let elf_file = if symbols_for.is_some() {
         crate::trace::build_guest_symbols_features(variant, &[])?;
@@ -163,8 +170,6 @@ pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> R
         .map(|s| s.split(',').collect())
         .unwrap_or_default();
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
     let tape = crate::trace::advice_pass1(variant, &[], skip_build, &input_bytes, &[])?;
 
