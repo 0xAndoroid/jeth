@@ -234,6 +234,13 @@ mod tests {
         let six_lambda_fr = Config::LAMBDA * Fr::from(6u64);
         let mut six_lambda = [0u8; 32];
         six_lambda.copy_from_slice(&six_lambda_fr.into_bigint().to_bytes_be());
+        // 7 and 1 + 7λ have their only digit 7 in the first and in the second
+        // coefficient: either one alone has to size the table.
+        let mut seven = [0u8; 32];
+        seven[31] = 7;
+        let seven_lambda_plus_1_fr = Config::LAMBDA * Fr::from(7u64) + Fr::from(1u64);
+        let mut seven_lambda_plus_1 = [0u8; 32];
+        seven_lambda_plus_1.copy_from_slice(&seven_lambda_plus_1_fr.into_bigint().to_bytes_be());
         let edge_scalars = [
             [0u8; 32],
             one,
@@ -245,6 +252,8 @@ mod tests {
             two_pow_128_minus_1,
             [0xff; 32],
             six_lambda,
+            seven,
+            seven_lambda_plus_1,
         ];
         for point in &points {
             for scalar in &edge_scalars {
