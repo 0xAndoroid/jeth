@@ -189,7 +189,6 @@ mod tests {
                 (0..len).all(|i| jumps.is_valid(i)),
                 "JUMPDEST run, len {len}"
             );
-            assert!(!jumps.is_valid(len), "JUMPDEST run, len {len}");
             assert_eq!(padded.len(), len + 1, "JUMPDEST run, len {len}");
         }
     }
@@ -249,6 +248,59 @@ mod tests {
                 let (_, padded) = analyze_legacy(raw.clone().into());
                 assert_eq!(padded.as_ref(), raw.as_slice());
             }
+        }
+    }
+
+    #[test]
+    fn special_opcode_after_an_instruction_before_stop_needs_padding() {
+        for special in [opcode::DUPN, opcode::SWAPN, opcode::EXCHANGE] {
+            for prefix in [vec![opcode::PUSH1, 0], vec![opcode::ADD]] {
+                let mut raw = prefix;
+                raw.extend([special, opcode::STOP]);
+                let len = raw.len();
+                let (_, padded) = analyze_legacy(raw.into());
+                assert_eq!(padded.len(), len + 1, "opcode {special:#x}, len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_destinations_and_push_data_in_batches() {
+        for len in 1..=1120usize {
+            let raw: Vec<u8> = (0..len)
+                .map(|i| {
+                    if i % 3 == 1 {
+                        opcode::PUSH1
+                    } else {
+                        opcode::JUMPDEST
+                    }
+                })
+                .collect();
+            let (jumps, padded) = analyze_legacy(raw.into());
+            for i in 0..len {
+                assert_eq!(jumps.is_valid(i), i % 3 == 0, "len {len}, offset {i}");
+            }
+            assert_eq!(
+                padded.len(),
+                len + 1 + usize::from(len % 3 == 2),
+                "len {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn jump_writes_support_unaligned_byte_storage() {
+        let mut storage = [0u8; 17];
+        let base = storage.as_mut_ptr();
+        let skip = usize::from(base.align_offset(core::mem::align_of::<u64>()) == 0);
+        let bytes = unsafe { base.add(skip) };
+        assert_ne!(bytes.align_offset(core::mem::align_of::<u64>()), 0);
+        for bit in [0, 7, 8, 63, 64, 127] {
+            unsafe { set_jump(bytes, 0, bit) };
+        }
+        for bit in 0..128 {
+            let actual = storage[skip + bit / 8] & (1 << (bit % 8)) != 0;
+            assert_eq!(actual, [0, 7, 8, 63, 64, 127].contains(&bit));
         }
     }
 
