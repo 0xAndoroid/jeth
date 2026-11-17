@@ -294,8 +294,6 @@ impl CachedTrie {
     #[inline]
     pub fn hash(&mut self) -> B256 {
         *self.hash.get_or_insert_with(|| {
-            // dirty nodes encode into one reused scratch buffer (single-pass,
-            // sealed length advice) instead of per-node Vecs
             let mut scratch = arena::Scratch::new();
             self.inner.memoize_arena(&mut scratch);
             self.inner.hash()

@@ -61,7 +61,6 @@ impl<M> PartialEq for Slot<M> {
 impl<M> Eq for Slot<M> {}
 
 impl<M> Slot<M> {
-    /// The slot holding `child`, which must not be `Node::Null`.
     #[inline]
     pub(super) fn from_child(child: Child<M>) -> Self {
         assert!(!matches!(*child, Node::Null));
@@ -85,7 +84,6 @@ impl<M> Slot<M> {
         mem::forget(mem::replace(self, Slot::Digest(digest)));
     }
 
-    /// Empty the slot when its node has become `Node::Null` (after a removal).
     #[inline]
     pub(super) fn clear_null(&mut self) {
         if matches!(self, Slot::Node(child) if matches!(**child, Node::Null)) {
@@ -195,9 +193,6 @@ impl<M> Children<M> {
 }
 
 impl<M: Memoization> Children<M> {
-    /// Encode every dirty child through the reused arena scratch buffer.
-    /// Empty and digest slots cost a tag test; clean children a cache test;
-    /// neither a call.
     #[inline(always)]
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
         macro_rules! visit {
