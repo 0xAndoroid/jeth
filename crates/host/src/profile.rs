@@ -26,8 +26,11 @@ pub fn run(
     split_markers: bool,
     json_out: Option<String>,
     guest_features: &[&str],
+    variant: crate::trace::Variant,
 ) -> Result<()> {
-    let variant = crate::trace::Variant::Input;
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let input_bytes = crate::trace::guest_stream(&raw, variant)?;
+
     // --split-markers needs the per-tx marker build (plus symbols either way).
     let mut features: Vec<&str> = guest_features.to_vec();
     if split_markers && !features.contains(&"pertx") {
@@ -58,8 +61,6 @@ pub fn run(
     );
     println!("{} text symbols", symbols.len());
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     let tape = crate::trace::advice_pass1(variant, &features, skip_build, &input_bytes, &[])?;

@@ -141,11 +141,6 @@ pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, Precompile
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::panic,
-    reason = "tests assert successful decoding and fail explicitly when a fixture cannot be constructed"
-)]
 mod tests {
     use super::*;
     use ark_ec::CurveGroup;
