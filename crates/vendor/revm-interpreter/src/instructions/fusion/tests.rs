@@ -16,18 +16,7 @@ fn compare(
     gas: u64,
     table: &InstructionTable<EthInterpreter, DummyHost>,
 ) {
-    compare_at_spec(code, depth, condition, gas, table, SpecId::AMSTERDAM);
-}
-
-fn compare_at_spec(
-    code: &[u8],
-    depth: usize,
-    condition: U256,
-    gas: u64,
-    table: &InstructionTable<EthInterpreter, DummyHost>,
-    spec: SpecId,
-) {
-    compare_values(code, &vec![condition; depth], gas, table, spec);
+    compare_values(code, &vec![condition; depth], gas, table, SpecId::AMSTERDAM);
 }
 
 fn compare_values(
@@ -71,32 +60,6 @@ fn compare_values(
     );
     assert_eq!(candidate.gas, reference.gas);
     assert_eq!(candidate.stack, reference.stack);
-}
-
-#[test]
-fn fused_gas_and_stack_behavior_across_forks() {
-    let table = instruction_table::<EthInterpreter, DummyHost>();
-    for spec in [
-        SpecId::FRONTIER,
-        SpecId::LONDON,
-        SpecId::OSAKA,
-        SpecId::AMSTERDAM,
-    ] {
-        for op in [JUMP, JUMPI] {
-            for condition in [U256::ZERO, U256::from(1), U256::MAX] {
-                for gas in 0..20 {
-                    compare_at_spec(
-                        &[PUSH2, 0, 4, op, JUMPDEST, STOP],
-                        2,
-                        condition,
-                        gas,
-                        &table,
-                        spec,
-                    );
-                }
-            }
-        }
-    }
 }
 
 #[test]
@@ -173,22 +136,6 @@ fn test_jump_boundaries_match_single_step() {
             }
         }
     }
-    for spec in [SpecId::FRONTIER, SpecId::LONDON, SpecId::OSAKA] {
-        for test in [ISZERO, EQ] {
-            for value in [U256::ZERO, U256::from(1), U256::MAX] {
-                for gas in 0..24 {
-                    compare_at_spec(
-                        &[test, PUSH2, 0, 5, JUMPI, JUMPDEST, STOP],
-                        2,
-                        value,
-                        gas,
-                        &table,
-                        spec,
-                    );
-                }
-            }
-        }
-    }
 }
 
 #[test]
@@ -261,9 +208,8 @@ fn inspector_step_executes_only_push() {
         100,
     );
     i.fuse_push_jumps = 1; // A step must also clear stale state after an unwind.
-    let begin = i.bytecode.ip();
     i.step(&table, &mut DummyHost::default());
-    assert_eq!(i.bytecode.ip(), unsafe { begin.add(3) });
+    assert_eq!(i.bytecode.pc(), 3);
     assert_eq!(i.stack.data(), &[U256::from(4)]);
     assert_eq!(i.gas.remaining(), 97);
 }

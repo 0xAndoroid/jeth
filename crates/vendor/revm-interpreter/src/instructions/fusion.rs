@@ -1,4 +1,10 @@
-//! Fuse successful PUSH2 jumps and preceding ISZERO/EQ tests in the plain interpreter.
+//! Bounds behind the `SAFETY` comments below. A handler runs for an opcode at an instruction
+//! start of the bytecode analysis: the frame entry, a fall-through, or a destination the jump
+//! table accepts (DUPN, SWAPN and EXCHANGE halt on an immediate in 0x5b..=0x7f, so the byte they
+//! skip is never one the analysis reads as a JUMPDEST or a PUSH). The analysed buffer holds every
+//! instruction's immediates and one more byte after every instruction other than a final STOP:
+//! `analyze_legacy` in revm-bytecode pads it so, and jeth-core's code library embeds that output
+//! (`embedded_entries_match_revm_analysis`).
 use super::{bitwise, control, stack, InstructionTable};
 use crate::{
     interpreter_types::{InterpreterTypes, Jumps, StackTr},
@@ -58,7 +64,8 @@ pub(crate) fn test_jump<const EQUAL: bool, W: InterpreterTypes, H: Host + ?Sized
     }
     if context.interpreter.fuse_push_jumps == 0
         || !context.interpreter.stack.can_elide_test_result()
-        // Analyzed bytecode has enough STOP padding for this lookahead.
+        // SAFETY: ISZERO and EQ are not STOP, so the byte at `ip` is in the buffer. `ip.add(3)` is
+        // read only when that byte is PUSH2, whose two immediates and following byte are too.
         || unsafe { *ip != PUSH2 || *ip.add(3) != JUMPI }
         || !context.interpreter.stack.can_elide_push_pop()
     {
@@ -76,6 +83,7 @@ pub(crate) fn test_jump<const EQUAL: bool, W: InterpreterTypes, H: Host + ?Sized
         top.is_zero()
     };
     let target = if taken {
+        // SAFETY: the two immediates of the PUSH2 at `ip`.
         let offset = unsafe { ((*ip.add(1) as usize) << 8) | (*ip.add(2) as usize) };
         if !context.interpreter.bytecode.is_valid_legacy_jump(offset) {
             return fallback::<EQUAL, _, _>(ip, context);
@@ -98,8 +106,6 @@ pub(crate) fn test_jump<const EQUAL: bool, W: InterpreterTypes, H: Host + ?Sized
     if failed {
         return fallback::<EQUAL, _, _>(ip, context);
     }
-    // Only after all success checks: remove original operands without ever
-    // writing a temporary boolean or jump target to the stack.
     if EQUAL {
         let popped = context.interpreter.stack.popn::<2>();
         debug_assert!(popped.is_some());
@@ -108,8 +114,10 @@ pub(crate) fn test_jump<const EQUAL: bool, W: InterpreterTypes, H: Host + ?Sized
         debug_assert!(popped.is_some());
     }
     if let Some(target) = target {
+        // SAFETY: `target` is a JUMPDEST the jump table accepted, so one more byte follows it.
         unsafe { target.add(1) }
     } else {
+        // SAFETY: `ip.add(3)` is the JUMPI found above, so one more byte follows it.
         unsafe { ip.add(4) }
     }
 }
@@ -121,7 +129,7 @@ pub(crate) fn push2<W: InterpreterTypes, H: Host + ?Sized>(
     if context.interpreter.fuse_push_jumps == 0 {
         return stack::push::<2, _, _>(ip, context);
     }
-    // Analyzed bytecode includes PUSH-immediate and STOP padding.
+    // SAFETY: `ip` points at the two immediates of PUSH2, and one more byte follows them.
     let opcode = unsafe { *ip.add(2) };
     if (opcode != JUMP && opcode != JUMPI) || !context.interpreter.stack.can_elide_push_pop() {
         return stack::push::<2, _, _>(ip, context);
@@ -135,7 +143,7 @@ pub(crate) fn push2<W: InterpreterTypes, H: Host + ?Sized>(
         true
     };
     let target = if taken {
-        // Read only the two-byte immediate; do not create a U256 stack value.
+        // SAFETY: the two immediates of this PUSH2.
         let offset = unsafe { ((*ip as usize) << 8) | (*ip.add(1) as usize) };
         if !context.interpreter.bytecode.is_valid_legacy_jump(offset) {
             return stack::push::<2, _, _>(ip, context);
@@ -170,9 +178,10 @@ pub(crate) fn push2<W: InterpreterTypes, H: Host + ?Sized>(
         debug_assert!(popped.is_some());
     }
     if let Some(target) = target {
-        // A valid JUMPDEST is followed by another opcode or analyzed STOP padding.
+        // SAFETY: `target` is a JUMPDEST the jump table accepted, so one more byte follows it.
         unsafe { target.add(1) }
     } else {
+        // SAFETY: `ip.add(2)` is the JUMPI found above, so one more byte follows it.
         unsafe { ip.add(3) }
     }
 }
