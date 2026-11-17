@@ -68,7 +68,6 @@ pub struct ValidatedBlock {
     pub receipts: Vec<EthereumReceipt>,
 }
 
-/// Stateless validation with the tx loop expanded in-line (see module docs).
 #[cfg_attr(
     not(feature = "pertx-markers"),
     expect(
@@ -383,7 +382,6 @@ pub(crate) fn receipt_root_bloom(
     receipts: &[EthereumReceipt],
     mut hash_address: impl FnMut(Address) -> B256,
 ) -> (B256, Bloom) {
-    // Distinct topics <= sum of topics over all logs: presize the memo.
     let topic_count: usize = receipts
         .iter()
         .flat_map(|receipt| receipt.logs())

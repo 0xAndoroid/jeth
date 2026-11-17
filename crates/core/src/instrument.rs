@@ -39,12 +39,10 @@ pub(crate) fn phase_end_dyn(label: &str) {
     unsafe { jeth_phase_end(label.as_ptr(), label.len()) }
 }
 
-/// [`crate::zeth_trie::SparseState`] with phase hooks around reveal and root calc.
 #[derive(Debug)]
 pub struct InstrumentedTrie(crate::zeth_trie::SparseState);
 
 impl InstrumentedTrie {
-    /// [`crate::zeth_trie::SparseState::new_with_codes`] with reveal markers.
     pub fn new_with_codes(
         witness: &ExecutionWitness,
         pre_state_root: B256,

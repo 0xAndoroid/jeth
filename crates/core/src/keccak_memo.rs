@@ -1,7 +1,3 @@
-//! Keccak memos for the sparse state: flat open-addressing tables from address
-//! / slot words to digest words, the aligned `B256` they hand out, and the
-//! one-entry last-read chain `SparseState` keeps in front of them.
-
 #![expect(
     clippy::inline_always,
     reason = "Guest memo access keeps aligned words in registers across callers."
@@ -25,7 +21,6 @@ pub(crate) type SlotMemo = KeccakMemo<4>;
 pub(crate) struct KeccakMemo<const K: usize> {
     entries: Vec<MemoEntry<K>>,
     len: usize,
-    /// `64 - log2(entries.len())`: the slot is the top bits of the hash.
     shift: u32,
 }
 
@@ -46,7 +41,6 @@ impl<const K: usize> MemoEntry<K> {
 }
 
 impl<const K: usize> KeccakMemo<K> {
-    /// Sized for about `expected` keys; the table doubles past a 0.7 load.
     pub(crate) fn with_capacity(expected: usize) -> Self {
         Self::with_slots(expected.next_power_of_two().max(64))
     }
@@ -252,33 +246,6 @@ mod tests {
     use alloy_primitives::KECCAK256_EMPTY;
 
     #[test]
-    fn address_memo_matches_direct_hashes() {
-        let memo = RefCell::new(AddressMemo::with_capacity(0));
-        let mut rng = 0x9432_1735_abc0_ef89u64;
-        let addresses: Vec<_> = (0..1024)
-            .map(|_| {
-                let mut bytes = [0u8; 20];
-                for byte in &mut bytes {
-                    rng ^= rng << 13;
-                    rng ^= rng >> 7;
-                    rng ^= rng << 17;
-                    *byte = rng as u8;
-                }
-                Address::from(bytes)
-            })
-            .collect();
-        for _ in 0..2 {
-            for &address in &addresses {
-                let expected = keccak256(address);
-                assert_eq!(hash_address(&address, &memo).0, expected);
-            }
-        }
-        assert_eq!(memo.borrow().len(), addresses.len());
-    }
-
-    /// Ten thousand random keys through both memos, from the minimum table
-    /// size (several doublings): every digest is the keccak, repeats hit.
-    #[test]
     fn memos_match_keccak_across_growth() {
         let mut rng = 0x2545_f491_4f6c_dd1du64;
         let mut next = || {
@@ -329,25 +296,6 @@ mod tests {
             assert_eq!(words[1].to_le_bytes(), expected[8..16]);
             assert_eq!(words[2].to_le_bytes(), expected[16..]);
         }
-    }
-
-    #[test]
-    fn slot_memo_matches_direct_hashes() {
-        let memo = RefCell::new(SlotMemo::with_capacity(0));
-        let slots: Vec<_> = (0u64..64)
-            .flat_map(|i| {
-                [
-                    U256::from(i),
-                    U256::from_be_bytes(keccak256(i.to_be_bytes()).0),
-                ]
-            })
-            .collect();
-        for _ in 0..2 {
-            for &slot in &slots {
-                assert_eq!(hash_slot(slot, &memo).0, keccak256(B256::from(slot)));
-            }
-        }
-        assert_eq!(memo.borrow().len(), slots.len());
     }
 
     #[test]
@@ -440,8 +388,6 @@ mod tests {
             ),
         ];
 
-        // execution-time reads: every account but the created one was loaded,
-        // slots 0/7 of address(1) and the mapping slot of address(4) were read
         let address_hashes = RefCell::new(AddressMemo::with_capacity(0));
         let slot_hashes = RefCell::new(SlotMemo::with_capacity(0));
         for i in [1, 3, 4, 5, 6] {
@@ -468,8 +414,6 @@ mod tests {
         assert_eq!(got.storages.len(), 4);
         assert!(got.storages[&keccak256(address(3))].wiped);
         assert!(got.storages[&keccak256(address(4))].wiped);
-        // misses were filled in: address(2) and slot 9; repeats (slot 0, the
-        // mapping slot) hit the existing entries
         assert_eq!(
             (address_hashes.borrow().len(), slot_hashes.borrow().len()),
             (6, 4)
