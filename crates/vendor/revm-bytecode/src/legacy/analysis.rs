@@ -289,6 +289,22 @@ mod tests {
     }
 
     #[test]
+    fn jump_writes_support_unaligned_byte_storage() {
+        let mut storage = [0u8; 17];
+        let base = storage.as_mut_ptr();
+        let skip = usize::from(base.align_offset(core::mem::align_of::<u64>()) == 0);
+        let bytes = unsafe { base.add(skip) };
+        assert_ne!(bytes.align_offset(core::mem::align_of::<u64>()), 0);
+        for bit in [0, 7, 8, 63, 64, 127] {
+            unsafe { set_jump(bytes, 0, bit) };
+        }
+        for bit in 0..128 {
+            let actual = storage[skip + bit / 8] & (1 << (bit % 8)) != 0;
+            assert_eq!(actual, [0, 7, 8, 63, 64, 127].contains(&bit));
+        }
+    }
+
+    #[test]
     fn test_bytecode_ends_with_stop_no_padding_needed() {
         let bytecode = vec![
             opcode::PUSH1,

@@ -187,8 +187,6 @@ fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
     debug_assert!(bytes.is_empty());
 }
 
-// Not `const`: the riscv64 branch is an inline-asm load (crate lint `missing_const_for_fn`).
-#[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
 fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
     #[cfg(target_arch = "riscv64")]
@@ -202,8 +200,6 @@ fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
     }
 }
 
-// Not `const`: the riscv64 branch is an inline-asm load (crate lint `missing_const_for_fn`).
-#[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
 fn read_ne_u32(chunk: &[u8; 4]) -> u32 {
     #[cfg(target_arch = "riscv64")]

@@ -472,7 +472,6 @@ impl<M: Memoization> Node<M> {
     /// Exact RLP payload length of this node (children must be memoized —
     /// guaranteed by the post-order arena walk). Pass-1 / native only: the
     /// proven pass reads this value from the advice tape.
-    #[allow(dead_code)] // proven riscv64 ELF reads the tape instead
     fn encoded_payload_length(&self) -> usize {
         match self {
             Node::Leaf(prefix, value, _) => {

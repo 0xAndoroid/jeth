@@ -16,7 +16,6 @@
 
 use alloc::vec::Vec;
 use alloy_primitives::{map::B256IndexMap, Bytes, B256};
-#[allow(unused_imports)]
 use alloc::vec;
 use alloy_trie::Nibbles;
 use core::{cmp::PartialEq, fmt::Debug};

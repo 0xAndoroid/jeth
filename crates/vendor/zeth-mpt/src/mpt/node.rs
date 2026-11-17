@@ -134,7 +134,6 @@ impl DigestResolver for Unresolvable {
 /// [`Self::replace_with_branch`]). Boxing the children array (and the arena
 /// layout) measured worse — hence the variant size spread.
 #[derive(Debug, Clone, Default)]
-#[allow(clippy::large_enum_variant)]
 pub(super) enum Node<M> {
     #[default]
     Null,
