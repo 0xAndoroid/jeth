@@ -1,3 +1,7 @@
+#![expect(
+    clippy::inline_always,
+    reason = "Guest field operations of the recovery MSM stay inside the point formulas that call them."
+)]
 use jolt_inlines_sdk::ec::{AffinePoint, CurveParams, ECField};
 use jolt_inlines_secp256k1::{Secp256k1Curve, Secp256k1Error, Secp256k1Fq};
 
@@ -102,7 +106,7 @@ impl ECField for WordField {
         Self(self.0.mul(&other.0))
     }
 
-    #[inline(always)]
+    #[inline]
     fn div(&self, other: &Self) -> Self {
         Self(self.0.div(&other.0))
     }
@@ -112,12 +116,12 @@ impl ECField for WordField {
         Self(self.0.div_assume_nonzero(&other.0))
     }
 
-    #[inline(always)]
+    #[inline]
     fn to_u64_arr(&self) -> [u64; 4] {
         self.0.e()
     }
 
-    #[inline(always)]
+    #[inline]
     fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Self::Error> {
         Secp256k1Fq::from_u64_arr(arr).map(Self)
     }
