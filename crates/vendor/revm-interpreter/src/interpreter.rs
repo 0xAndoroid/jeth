@@ -133,10 +133,6 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
         gas_limit: u64,
         reservoir_remaining_gas: u64,
     ) {
-        #[cfg(feature = "push-jump-fusion")]
-        {
-            self.fuse_push_jumps = 0;
-        }
         let Self {
             bytecode: bytecode_ref,
             gas,
@@ -146,8 +142,13 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
             input: input_ref,
             runtime_flag,
             extend,
-            ..
+            #[cfg(feature = "push-jump-fusion")]
+            fuse_push_jumps,
         } = self;
+        #[cfg(feature = "push-jump-fusion")]
+        {
+            *fuse_push_jumps = 0;
+        }
         *bytecode_ref = bytecode;
         *gas = Gas::new_with_regular_gas_and_reservoir(gas_limit, reservoir_remaining_gas);
         if stack.data().capacity() == 0 {
