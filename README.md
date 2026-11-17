@@ -52,7 +52,10 @@ Pass the resulting bytes as Jolt's runtime advice tape, not its trusted-advice
 input. Match the native and guest source revisions, dependencies, and features.
 The example runs one block per process and does not support the trusted-digest
 guest or optional guest features such as lazy analysis. Existing tracing commands
-continue to use the interpreted pass.
+continue to use the interpreted pass. `jeth trace` writes that pass's tape beside
+its summary (`advice-tape.bin` for the default guest), and `jeth cycles run` fails
+a block for which the example records a different tape (RESULTS.md → Cycle-count
+harness).
 
 The library entry point is `jeth_core::advice::native::record`. It captures words
 from both jeth-core and the vendored MPT encoder, on the calling thread only.
