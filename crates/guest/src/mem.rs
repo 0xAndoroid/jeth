@@ -44,8 +44,9 @@
 //!
 //! Re-validate this paragraph whenever the guest linker script, jolt's
 //! `MemoryLayout`, or its region alignment changes. The native tests
-//! (`crates/guest/native-tests`) run the same code inside buffers with a word
-//! of slack on both sides so it stays in bounds there.
+//! (`crates/guest/native-tests`) run the `*_impl` functions inside 8-aligned
+//! buffers whose lengths are multiples of 8, so the containing words stay in
+//! bounds there.
 //!
 //! Volatile word ops keep LLVM's loop-idiom recognizer from lowering the loops
 //! back into memcpy/memset calls (infinite recursion); they cost the same one
@@ -161,6 +162,67 @@ unsafe fn store_le_partial(d: *mut u8, v: u64, n: usize) {
 pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     if n == 0 {
         return dst;
+    }
+    // The final source load and destination edge accesses are containing-word
+    // operations under the guest memory contract described above.
+    if n == 20 && (src as usize) & 7 == 0 {
+        let source = src as *const u64;
+        let a = load_word::<0>(source);
+        let b = load_word::<1>(source);
+        let c = load_word::<2>(source) & 0xffff_ffff;
+        let offset = (dst as usize) & 7;
+        let target = ((dst as usize) & !7) as *mut u64;
+        if offset == 0 {
+            let last = load_word::<2>(target);
+            store_word::<0>(target, a);
+            store_word::<1>(target, b);
+            store_word::<2>(target, (last & !0xffff_ffff) | c);
+        } else {
+            let shift = offset * 8;
+            let back = 64 - shift;
+            let prefix_mask = (1u64 << shift) - 1;
+            let first = load_word::<0>(target);
+            store_word::<0>(target, (first & prefix_mask) | (a << shift));
+            store_word::<1>(target, (a >> back) | (b << shift));
+            let third = (b >> back) | (c << shift);
+            if offset < 4 {
+                let mask = (1u64 << (32 + shift)) - 1;
+                let last = load_word::<2>(target);
+                store_word::<2>(target, (last & !mask) | third);
+            } else {
+                store_word::<2>(target, third);
+                if offset > 4 {
+                    let mask = (1u64 << (shift - 32)) - 1;
+                    let last = load_word::<3>(target);
+                    store_word::<3>(target, (last & !mask) | (c >> back));
+                }
+            }
+        }
+        return dst;
+    }
+    // The source loads are in bounds. Destination containing-word accesses
+    // rely on the same single-hart guest memory contract as the fallback.
+    if n == 32 && (src as usize) & 7 == 0 {
+        let offset = (dst as usize) & 7;
+        if offset != 0 {
+            let source = src as *const u64;
+            let a = load_word::<0>(source);
+            let b = load_word::<1>(source);
+            let c = load_word::<2>(source);
+            let d = load_word::<3>(source);
+            let target = ((dst as usize) & !7) as *mut u64;
+            let shift = offset * 8;
+            let back = 64 - shift;
+            let prefix_mask = (1u64 << shift) - 1;
+            let first = load_word::<0>(target);
+            let last = load_word::<4>(target);
+            store_word::<0>(target, (first & prefix_mask) | (a << shift));
+            store_word::<1>(target, (a >> back) | (b << shift));
+            store_word::<2>(target, (b >> back) | (c << shift));
+            store_word::<3>(target, (c >> back) | (d << shift));
+            store_word::<4>(target, (last & !prefix_mask) | (d >> back));
+            return dst;
+        }
     }
     if n <= 8 {
         let v = load_le_partial(src, n);
@@ -387,13 +449,27 @@ unsafe fn memcmp_generic(a: *const u8, b: *const u8, n: usize) -> i32 {
     0
 }
 
+/// The guest's `memcpy` entry point (`aligned_copy.S`, riscv64 only) and the
+/// fallback it tail-calls: guest builds and the riscv64 lib tests.
+#[cfg(any(feature = "guest", all(test, target_arch = "riscv64")))]
+mod entry {
+    core::arch::global_asm!(include_str!("aligned_copy.S"));
+    unsafe extern "C" {
+        pub(super) fn __jeth_aligned_copy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8;
+    }
+    #[no_mangle]
+    unsafe extern "C" fn __jeth_copy_fallback(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+        super::memcpy_impl(dst, src, n)
+    }
+}
+
 /// The actual C-ABI symbols, guest builds only (native test builds must not
 /// shadow libc).
 #[cfg(feature = "guest")]
 mod exports {
     #[no_mangle]
     pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
-        super::memcpy_impl(dst, src, n)
+        super::entry::__jeth_aligned_copy(dst, src, n)
     }
     #[no_mangle]
     pub unsafe extern "C" fn memset(dst: *mut u8, val: i32, n: usize) -> *mut u8 {
@@ -406,8 +482,10 @@ mod exports {
 }
 
 /// Native tests (`cargo test --manifest-path crates/guest/native-tests/Cargo.toml`,
-/// no `guest` feature): the implementations are pure LE 64-bit word logic,
+/// no `guest` feature): the `*_impl` functions are pure LE 64-bit word logic,
 /// identical on aarch64, so we fuzz them against the std implementations.
+/// The guest's `memcpy` enters through `aligned_copy.S`, which these tests
+/// assemble and run only on riscv64 (CI's `riscv64` job, under qemu).
 #[cfg(all(test, not(feature = "guest")))]
 mod tests {
     use super::{memcmp_impl as jmemcmp, memcpy_impl as jmemcpy, memset_impl as jmemset};
@@ -425,6 +503,30 @@ mod tests {
     #[derive(Clone, Copy)]
     #[repr(align(8))]
     struct Words([u8; 144]);
+
+    #[test]
+    fn fixed_size_copies_preserve_boundary_bytes() {
+        for n in [19, 20, 21, 31, 32, 33] {
+            for soff in 0..8 {
+                for doff in 0..8 {
+                    for pattern in [0u8, 0x55, 0xff] {
+                        let mut source = Words([0u8; 144]);
+                        for (i, byte) in source.0.iter_mut().enumerate() {
+                            *byte = (i as u8).wrapping_mul(73) ^ pattern;
+                        }
+                        let mut dest = Words([pattern; 144]);
+                        let mut expected = dest;
+                        expected.0[16 + doff..16 + doff + n]
+                            .copy_from_slice(&source.0[16 + soff..16 + soff + n]);
+                        let ptr = unsafe { dest.0.as_mut_ptr().add(16 + doff) };
+                        let result = unsafe { jmemcpy(ptr, source.0.as_ptr().add(16 + soff), n) };
+                        assert_eq!(result, ptr);
+                        assert_eq!(dest.0, expected.0, "n={n}, src={soff}, dst={doff}");
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn fixed_key_memcmp_preserves_order_and_boundaries() {
@@ -506,6 +608,35 @@ mod tests {
                 let want = expect[doff..doff + n].cmp(&other[doff..doff + n]) as i32;
                 let got = unsafe { jmemcmp(dst.as_ptr().add(doff), other.as_ptr().add(doff), n) };
                 assert_eq!(got.signum(), want.signum(), "memcmp n={n} flip={flip}");
+            }
+        }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    #[test]
+    fn aligned_copy_entry_matches_copy_from_slice() {
+        #[repr(align(8))]
+        struct Buf([u8; 336]);
+
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        for n in 0..=300usize {
+            for soff in 0..8 {
+                for doff in 0..8 {
+                    let mut src = Buf([0u8; 336]);
+                    let mut dst = Buf([0u8; 336]);
+                    for b in src.0.iter_mut().chain(dst.0.iter_mut()) {
+                        *b = xorshift(&mut rng) as u8;
+                    }
+                    let mut expect = dst.0;
+                    expect[16 + doff..16 + doff + n]
+                        .copy_from_slice(&src.0[16 + soff..16 + soff + n]);
+                    let ptr = unsafe { dst.0.as_mut_ptr().add(16 + doff) };
+                    let ret = unsafe {
+                        super::entry::__jeth_aligned_copy(ptr, src.0.as_ptr().add(16 + soff), n)
+                    };
+                    assert_eq!(ret, ptr);
+                    assert_eq!(dst.0, expect, "n={n} soff={soff} doff={doff}");
+                }
             }
         }
     }

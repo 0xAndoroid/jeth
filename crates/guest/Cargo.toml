@@ -10,6 +10,7 @@ edition = "2021"
 [workspace]
 
 [features]
+bn254-pairing-residue = ["jeth-core/bn254-pairing-residue"]
 # KZG pairing check from an advice-tape witness (see jeth-core/kzg-residue).
 kzg-residue = ["jeth-core/kzg-residue"]
 default = ["keccak-census"]

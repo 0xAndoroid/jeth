@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+bn254-pairing-residue = ["secp-inline"]
 # KZG pairing check from a root witness that the guest reads from the advice tape and verifies,
 # in place of the final exponentiation (src/kzg/residue.rs). No code in this tree writes that
 # witness: the compute-advice pass writes flag 0, so a guest built with the feature reads one
