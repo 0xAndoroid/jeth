@@ -47,10 +47,11 @@ For the ordinary guest with the code library enabled:
 cargo run --release --manifest-path crates/native-advice/Cargo.toml -- input.bin advice.bin
 ```
 
-`crates/native-advice` is a standalone package with its own `Cargo.lock` and the
-`[patch]` tables of `crates/guest`: it runs the vendored revm-interpreter, whose
-MULMOD records its quotient advice through jeth-core's `jeth_mul_mod` hook, while
-`jeth run-native` in the root workspace keeps the registry interpreter.
+`crates/native-advice` is a member of the guest's workspace (`crates/guest`), so one
+`[patch]` table and one `Cargo.lock` serve both: it runs the vendored
+revm-interpreter, whose MULMOD records its quotient advice through jeth-core's
+`jeth_mul_mod` hook, while `jeth run-native` in the root workspace keeps the
+registry interpreter.
 
 Pass the resulting bytes as Jolt's runtime advice tape, not its trusted-advice
 input. Match the native and guest source revisions, dependencies, and features.

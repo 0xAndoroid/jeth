@@ -25,7 +25,7 @@ jobs:
         with:
           toolchain: "1.95"
           components: rustfmt
-      # rustfmt directly: covers the standalone crates/guest package too and
+      # rustfmt directly: covers the crates/guest workspace too and
       # needs no dependency fetch (vendor/ is upstream code and is excluded).
       - name: rustfmt --check
         run: |
@@ -133,9 +133,10 @@ jobs:
         run: echo "feature tests (${{ matrix.name }}) wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
   recorder:
-    # crates/native-advice is a standalone package with its own lockfile and the
-    # guest's `[patch]` tables: no other job here compiles it or links the vendored
-    # revm-interpreter's `jeth_mul_mod` hook into a native binary.
+    # crates/native-advice is a member of the guest's workspace (crates/guest), outside
+    # the root workspace: no other job here compiles it, checks that workspace's
+    # lockfile or links the vendored revm-interpreter's `jeth_mul_mod` hook into a
+    # native binary.
     name: native advice recorder
     runs-on: ubuntu-latest
     timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 30 }}
@@ -149,7 +150,7 @@ jobs:
           toolchain: "1.95"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: crates/native-advice
+          workspaces: crates/guest
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --locked -q --message-format=short --manifest-path crates/native-advice/Cargo.toml
