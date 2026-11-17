@@ -115,3 +115,26 @@ fn flag_above_one_aborts() {
     let limbs = witness_limbs(&witness(&f).unwrap());
     check_with_advice(&f, 2, |i, j| limbs[i][j]);
 }
+
+#[cfg(feature = "native-advice")]
+#[test]
+fn recorded_native_advice_is_accepted_and_an_altered_word_aborts() {
+    extern crate std;
+    let f = pairing_product_one();
+    let (_, tape) = crate::advice::native::record(|| check(&f)).unwrap();
+    let mut words: Vec<u64> = tape
+        .as_chunks()
+        .0
+        .iter()
+        .map(|word| u64::from_le_bytes(*word))
+        .collect();
+    assert_eq!(words[0], 1);
+    assert_eq!(tape.len(), 8 * (1 + 12 * 4));
+    let replay = |words: &[u64]| {
+        let mut limbs = words[1..].iter();
+        check_with_advice(&f, words[0], |_, _| *limbs.next().unwrap())
+    };
+    assert!(replay(&words));
+    words[1] ^= 1;
+    assert!(std::panic::catch_unwind(|| replay(&words)).is_err());
+}
