@@ -16,8 +16,8 @@ kzg-residue = ["jeth-core/kzg-residue"]
 # Jump fusion in the vendored interpreter's run loop: `PUSH2 JUMP`,
 # `PUSH2 JUMPI`, `ISZERO PUSH2 JUMPI` and `EQ PUSH2 JUMPI` each run as one
 # dispatch when the whole sequence succeeds. On by default;
-# `--no-default-features` drops it (add `--features keccak-census` to keep the
-# census).
+# `--no-default-features` drops it (name `keccak-census` and `keccak-cache` in
+# `--features` to keep the other two defaults).
 push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
 default = ["keccak-census", "keccak-cache", "push-jump-fusion"]
 guest = ["jeth-core/code-library"]
@@ -28,7 +28,8 @@ guest = ["jeth-core/code-library"]
 keccak-census = []
 # Bounded cache for repeated 32-/64-byte Keccak inputs. Misses add work. On by
 # default in the proven and the `compute_advice` build; `--no-default-features`
-# drops it (name `keccak-census` in `--features` to keep the census).
+# drops it (name `keccak-census` and `push-jump-fusion` in `--features` to keep
+# the other two defaults).
 keccak-cache = ["dep:fixed-cache"]
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
