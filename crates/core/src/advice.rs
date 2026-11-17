@@ -64,7 +64,6 @@ pub(crate) use {advice_assert_eq, advice_u64};
 #[cfg(all(feature = "native-advice", not(target_arch = "riscv64")))]
 pub mod native {
     //! Collect the native execution's untrusted advice in guest FIFO order.
-    //! Outside a recording scope, native execution remains tape-free.
     extern crate std;
     use alloc::vec::Vec;
     use core::cell::RefCell;
@@ -82,7 +81,7 @@ pub mod native {
     }
 
     /// Record one execution on this thread. Reject nesting and discard partial
-    /// advice if the closure unwinds. The proven guest must check every word.
+    /// advice if the closure unwinds.
     pub fn record<T>(run: impl FnOnce() -> T) -> Result<(T, Vec<u8>), &'static str> {
         TAPE.with_borrow_mut(|slot| {
             if slot.is_some() {
@@ -113,10 +112,6 @@ pub mod native {
     }
 
     #[cfg(test)]
-    #[expect(
-        clippy::expect_used,
-        reason = "test failures should identify the recording operation"
-    )]
     mod tests {
         use super::{record, std, write_word};
 
@@ -167,10 +162,6 @@ pub mod native {
         }
 
         #[test]
-        #[expect(
-            clippy::panic,
-            reason = "exercise cleanup when the recorded closure unwinds"
-        )]
         fn unwinding_discards_partial_advice() {
             let result = std::panic::catch_unwind(|| {
                 let _ = record(|| {

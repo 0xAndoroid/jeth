@@ -2,15 +2,18 @@
 //!
 //! Run one block per process. Match the guest's source revision, dependency
 //! versions, and features; a tape is not portable across arbitrary guest builds.
-//! The proven guest still checks every hint. This example does not support the
-//! trusted-digest guest or optional guest features such as lazy analysis.
+//! This example does not support the trusted-digest guest or optional guest
+//! features such as lazy analysis.
 
-use std::{env, error::Error, fmt::Write, fs, time::Instant};
+use std::{
+    env,
+    error::Error,
+    fmt::Write as _,
+    fs,
+    io::{self, Write as _},
+    time::Instant,
+};
 
-#[expect(
-    clippy::print_stdout,
-    reason = "CLI reports the generated tape and block"
-)]
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args_os().skip(1);
     let usage = "usage: native-advice INPUT_JEF OUTPUT_TAPE";
@@ -21,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // JEF alignment includes the postcard slice-length prefix, just as in the
-    // guest input region. This one-shot command retains the allocation until exit.
+    // guest input region.
     let raw = fs::read(input_path)?;
     let stream: &'static [u8] = Box::leak(postcard::to_stdvec(&raw)?.into_boxed_slice());
     let bytes: &'static [u8] = postcard::from_bytes(stream)?;
@@ -44,10 +47,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     for byte in result.block_hash {
         write!(hash, "{byte:02x}")?;
     }
-    println!(
+    writeln!(
+        io::stdout().lock(),
         "{} advice bytes in {elapsed:?}; block 0x{hash}, gas {}",
         tape.len(),
         result.gas_used
-    );
+    )?;
     Ok(())
 }
