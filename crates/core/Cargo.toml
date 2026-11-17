@@ -82,9 +82,7 @@ reth-primitives-traits.workspace = true
 revm-database-interface.workspace = true
 revm-state.workspace = true
 
-# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs) and the KZG
-# point-evaluation check (src/kzg.rs): the registry 0.5 crates revm-precompile's arkworks
-# backend already compiles.
+# The registry 0.5 arkworks crates that revm-precompile's arkworks backend already compiles.
 ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
 ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.5.0", default-features = false }

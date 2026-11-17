@@ -4,6 +4,7 @@
 *.bin.tmp
 /crates/guest/target
 /crates/guest/native-tests/target
+/crates/vendor/*/target
 scripts/__pycache__/
 
 # agent journals are obsolete (task-audit .audit/ replaces them)

@@ -221,6 +221,16 @@ fn forged_equation_behind_a_shared_key_must_panic() {
 }
 
 #[test]
+#[should_panic(expected = "invalid recovery batch")]
+fn negated_shared_key_must_panic() {
+    let mut equations = shared_key_batch();
+    equations[2].key = equations[2].key.neg();
+    assert_eq!(equations[0].key.x().e(), equations[2].key.x().e());
+    assert_ne!(equations[0].key.y().e(), equations[2].key.y().e());
+    Batch { equations }.verify();
+}
+
+#[test]
 fn pippenger_batch_matches_independent_recovery() {
     let mut equations = Vec::new();
     for i in 2..600u64 {
