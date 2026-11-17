@@ -225,7 +225,6 @@ fn forged_equation_behind_a_shared_key_must_panic() {
 #[test]
 fn pippenger_batch_matches_independent_recovery() {
     let mut equations = Vec::new();
-    // 99 equations at the mid-check (w = 7 windows), 598 at the end (w = 8).
     for i in 2..600u64 {
         equations.push(recovered_equation(i));
         if i == 100 {
@@ -241,7 +240,6 @@ fn pippenger_batch_matches_independent_recovery() {
 #[test]
 #[should_panic(expected = "invalid recovery batch")]
 fn forged_key_in_wide_batch_must_panic() {
-    // 598 equations select the w = 8 window path.
     let mut equations: Vec<_> = (2..600u64).map(recovered_equation).collect();
     equations[300].key = Secp256k1Point::generator();
     Batch { equations }.verify();
@@ -256,4 +254,55 @@ fn transaction_key_must_be_finite_and_on_curve() {
     assert!(verify_pubkey(&key, &sig, B256::ZERO).is_none());
     key[64] = 1;
     assert!(verify_pubkey(&key, &sig, B256::ZERO).is_none());
+}
+
+fn randomized_signatures() -> Vec<([u8; 64], u8, [u8; 32])> {
+    let mut state = 0xd4e1_8a73_09bc_52f6u64;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    (0..48)
+        .map(|_| {
+            let secret = U256::from(next().max(1)).to_be_bytes::<32>();
+            let key = SigningKey::from_slice(&secret).unwrap();
+            let message = U256::from_limbs(core::array::from_fn(|_| next())).to_be_bytes();
+            let (sig, id) = key.sign_prehash_recoverable(&message);
+            (sig.to_bytes().into(), id.to_byte(), message)
+        })
+        .collect()
+}
+
+#[test]
+fn randomized_deferred_batch_matches_single_recovery() {
+    for (sig, id, message) in randomized_signatures() {
+        let expected = ecrecover(&sig.into(), id, &message.into()).unwrap().0;
+        assert_eq!(inline_ecrecover(&sig, id, &message), Some(expected));
+    }
+    verify();
+}
+
+#[test]
+fn specialized_windows_match_binary_scalar_multiplication() {
+    let a = scalar([0xd3; 32]);
+    let b = scalar([0x79; 32]);
+    let total = a.add(&b.dbl());
+    let g = Secp256k1Point::generator();
+    let terms = [(a, g.clone()), (b, g.double())];
+    let limbs = total.e();
+    let mut expected = Secp256k1Point::infinity();
+    for bit in (0..256).rev() {
+        expected = expected.double();
+        if (limbs[bit / 64] >> (bit % 64)) & 1 != 0 {
+            expected = expected.add(&g);
+        }
+    }
+    macro_rules! check {
+        ($($width:literal),*) => { $(
+            assert_eq!(pippenger_width::<$width>(&terms).to_u64_arr(), expected.to_u64_arr());
+        )* };
+    }
+    check!(4, 5, 6, 7, 8, 9, 10, 11, 12);
 }

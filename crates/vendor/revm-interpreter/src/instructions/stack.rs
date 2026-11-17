@@ -37,6 +37,7 @@ pub fn push0<WIRE: InterpreterTypes, H: ?Sized>(
 /// Pushes N bytes from bytecode onto the stack as a 32-byte value.
 // `ip` is the run loop's pointer into analysed bytecode (see [`Ip`]).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[inline(always)]
 pub fn push<const N: usize, WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
