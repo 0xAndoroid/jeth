@@ -250,19 +250,18 @@ struct Term {
 /// in this estimate, leaving one weighted-result addition per live bucket.
 fn window_width(terms: usize) -> usize {
     let points = 2 * terms;
-    (4usize..=12)
-        .min_by_key(|&width| {
-            let windows = 128usize.div_ceil(width);
-            let lower = windows - 1;
-            let top_bits = 128 - lower * width;
-            let lower_points = points - (points >> width);
-            let top_points = points - (points >> top_bits);
-            lower * (lower_points + (1 << (width - 1)))
-                + top_points
-                + (1 << top_bits)
-                + lower * width
-        })
-        .unwrap()
+    let width = (4usize..=12).min_by_key(|&width| {
+        let windows = 128usize.div_ceil(width);
+        let lower = windows - 1;
+        let top_bits = 128 - lower * width;
+        let lower_points = points - (points >> width);
+        let top_points = points - (points >> top_bits);
+        lower * (lower_points + (1 << (width - 1))) + top_points + (1 << top_bits) + lower * width
+    });
+    let Some(width) = width else {
+        unreachable!("the candidate widths 4..=12 are a non-empty range")
+    };
+    width
 }
 
 /// Pippenger MSM over the GLV-split terms with signed window digits.
