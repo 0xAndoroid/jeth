@@ -11,6 +11,8 @@ edition = "2021"
 
 [features]
 bn254-pairing-residue = ["jeth-core/bn254-pairing-residue"]
+# KZG pairing check from an advice-tape witness (see jeth-core/kzg-residue).
+kzg-residue = ["jeth-core/kzg-residue"]
 default = ["keccak-census"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the

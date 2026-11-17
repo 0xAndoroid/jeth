@@ -5,6 +5,11 @@ edition.workspace = true
 
 [features]
 bn254-pairing-residue = ["secp-inline"]
+# KZG pairing check from a root witness that the guest reads from the advice tape and verifies,
+# in place of the final exponentiation (src/kzg/residue.rs). No code in this tree writes that
+# witness: the compute-advice pass writes flag 0, so a guest built with the feature reads one
+# more advice word per check and still runs the final exponentiation.
+kzg-residue = ["secp-inline"]
 std = []
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode
 # inspector around the same validation loop. Never enabled by the guest.
@@ -73,11 +78,14 @@ reth-primitives-traits.workspace = true
 revm-database-interface.workspace = true
 revm-state.workspace = true
 
-# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs):
-# the registry 0.5 crates revm-precompile's arkworks backend already compiles.
+# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs) and the KZG
+# point-evaluation check (src/kzg.rs): the registry 0.5 crates revm-precompile's arkworks
+# backend already compiles.
 ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
 
 alloy-consensus.workspace = true
 alloy-eips.workspace = true

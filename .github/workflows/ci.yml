@@ -106,6 +106,8 @@ jobs:
             args: -p jeth-core --features secp-inline
           - name: bn254-pairing-residue
             args: -p jeth-core --lib --features bn254-pairing-residue
+          - name: kzg-residue
+            args: -p jeth-core --lib --features kzg-residue
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
