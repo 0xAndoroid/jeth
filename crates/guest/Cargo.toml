@@ -72,6 +72,9 @@ critical-section = "1.2"
 # inline via the guest's jeth_ecrecover_prehash hook (software k256 measured at
 # ~1.5M rows/authorization — 16% of block 25698070; the inline is ~230k).
 [patch.crates-io]
+# Mirrored in crates/vendor/{hashbrown,alloy-primitives,revm-interpreter,zeth-mpt}/Cargo.toml,
+# each holding the entries its standalone graph contains: change them with this table.
+
 # Word-aligned journal tags/payloads reduce guest sub-word accesses.
 revm-context-interface = { path = "../vendor/revm-context-interface" }
 revm-interpreter = { path = "../vendor/revm-interpreter" }
