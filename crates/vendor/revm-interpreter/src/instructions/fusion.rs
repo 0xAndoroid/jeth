@@ -32,6 +32,12 @@ const _: () = assert!(
 /// a custom handler there that calls the default PUSH2, ISZERO or EQ entry still reaches `push2`
 /// or `test_jump` and gets the state after the jump, so it has to call `stack::push::<2>`,
 /// `bitwise::iszero` or `bitwise::eq` itself.
+///
+/// The comparisons are by address, so no compared handler may be `#[inline(always)]`: rustc
+/// gives such a function a copy in each codegen unit that refers to it, and wherever the table
+/// and this function hold different copies the gate is false and nothing fuses. Measured with
+/// the attribute on `control::jumpi`: `push_jump_boundaries_match_single_step` fails in a
+/// dev-profile build and passes in CI's release builds.
 pub(crate) fn matches<W: InterpreterTypes, H: Host + ?Sized>(
     table: &InstructionTable<W, H>,
 ) -> bool {
