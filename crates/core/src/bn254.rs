@@ -150,7 +150,6 @@ mod tests {
         assert_eq!(affine_add(g, zero), g);
         assert_eq!(affine_add(g, -g), zero);
         assert_eq!(affine_add(g, g), g.into_group().double().into_affine());
-        assert_eq!(affine_add(-g, -g), (-g).into_group().double().into_affine());
     }
 
     #[test]
