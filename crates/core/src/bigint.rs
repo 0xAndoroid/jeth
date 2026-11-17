@@ -337,17 +337,12 @@ mod tests {
         }
     }
 
-    /// Shapes the ladder must take: odd modulus of 9..=32 significant bytes,
-    /// base of at most 32.
     fn ladder_shape(base: &[u8], modulus: &[u8]) -> bool {
         let strip = |b: &[u8]| b.iter().skip_while(|&&x| x == 0).count();
         let (b, m) = (strip(base), strip(modulus));
         (9..=32).contains(&m) && b <= 32 && modulus[modulus.len() - 1] & 1 == 1
     }
 
-    /// Runs the inline ladder, checks that it accepts exactly the shapes it
-    /// is meant to, and compares accepted outputs with aurora-engine-modexp
-    /// (revm's software path) at the precompile level.
     fn check_modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> bool {
         let got = modexp(base, exp, modulus);
         assert_eq!(got.is_some(), ladder_shape(base, modulus));
@@ -439,7 +434,6 @@ mod tests {
             for b in bases {
                 for e in &exps {
                     assert_eq!(check_modexp(&be(b), e, &be(m)), want);
-                    // Minimal encodings and extra leading zeros give the same answer.
                     assert_eq!(
                         check_modexp(
                             &b.to_be_bytes_trimmed_vec(),
@@ -509,7 +503,6 @@ mod tests {
             &[5],
             &m
         ));
-        // One-limb moduli stay on the software path, two limbs take the ladder.
         assert!(!check_modexp(&[3], &[5], &[0xff; 8]));
         assert!(!check_modexp(&[3], &[5], &be(U256::from(u64::MAX))));
         assert!(check_modexp(
@@ -537,7 +530,6 @@ mod tests {
             let e = bytes(round % 41, &mut state);
             check_modexp(&b, &e, &m);
             if round % 3 == 0 {
-                // Even modulus of the same size stays on the software path.
                 m[last] &= !1;
                 assert!(!check_modexp(&b, &e, &m));
             }

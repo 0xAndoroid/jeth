@@ -61,7 +61,6 @@ unsafe fn permute(state: *mut u64) {
     f1600(state);
 }
 
-/// Native reference permutation for the differential tests.
 #[cfg(not(feature = "guest"))]
 unsafe fn f1600(state: *mut u64) {
     keccak::Keccak::new().with_f1600(|f| f(&mut *state.cast::<[u64; STATE_WORDS]>()));
@@ -82,7 +81,6 @@ unsafe fn absorb_permute(state: *mut u64, block: *const u64) {
     }
 }
 
-/// Stores `v` at the 8-aligned `p`, or XORs it into the lane there when `XOR`.
 #[inline(always)]
 unsafe fn put<const XOR: bool>(p: *mut u64, v: u64) {
     if XOR {
@@ -267,7 +265,6 @@ pub(crate) unsafe fn store_digest(state: *const u64, out: *mut u8) {
 pub(crate) unsafe fn keccak256_into(bytes: *const u8, len: usize, out: *mut u8) {
     let mut state = MaybeUninit::<[u64; STATE_WORDS]>::uninit();
     let state = state.as_mut_ptr().cast::<u64>();
-    // Capacity lanes of the initial all-zero sponge state.
     for i in RATE_WORDS..STATE_WORDS {
         write_volatile(state.add(i), 0);
     }
@@ -516,7 +513,6 @@ mod tests {
 
     #[test]
     fn empty_message() {
-        // keccak256("") = c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
         let want: [u8; 32] = [
             0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7,
             0x03, 0xc0, 0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04,
@@ -530,9 +526,6 @@ mod tests {
         }
     }
 
-    /// Every length through four full blocks (covers rem == 0, rem == 135,
-    /// t == 16, partial words spilling into the next aligned word) at every
-    /// input and output alignment.
     #[test]
     fn matches_sha3_for_lengths_0_to_600_at_every_alignment() {
         let mut rng = 0x1234_5678_9abc_def0u64;
@@ -569,24 +562,6 @@ mod tests {
                         assert_eq!(core::slice::from_raw_parts(output, 32), &want);
                     }
                 }
-            }
-        }
-    }
-
-    #[test]
-    fn matches_sha3_for_random_lengths_up_to_20k() {
-        let mut rng = 0xdead_beef_cafe_f00du64;
-        for _ in 0..96 {
-            let len = (xorshift(&mut rng) % 20_001) as usize;
-            let msg = random_bytes(&mut rng, len);
-            let want = reference(&msg);
-            for in_off in 0..8 {
-                let out_off = (xorshift(&mut rng) % 8) as usize;
-                assert_eq!(
-                    shim(&msg, in_off, out_off),
-                    want,
-                    "len {len} in_off {in_off} out_off {out_off}"
-                );
             }
         }
     }

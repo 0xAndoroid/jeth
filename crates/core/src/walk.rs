@@ -31,7 +31,6 @@ use alloy_rlp::{Error, Result, EMPTY_STRING_CODE};
 use core::ops::Range;
 use zeth_mpt::{decode_header, le_words_32};
 
-/// RLP header byte of a digest item (32-byte string) and the item's length.
 const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + 32;
 const DIGEST_ITEM_LENGTH: usize = 33;
 
@@ -390,9 +389,6 @@ mod tests {
     use alloc::{vec, vec::Vec};
     use alloy_rlp::Header;
 
-    /// `item_header` agrees with `Header::decode` (header/payload lengths, list
-    /// flag, or error) on every 1-byte item, every 33-byte item prefix,
-    /// truncated digest items and long-form headers.
     #[test]
     fn item_header_matches_header_decode() {
         fn via_header(p: &[u8]) -> Result<(bool, usize, usize)> {
@@ -514,9 +510,6 @@ mod tests {
         }
     }
 
-    /// The walk validator accepts exactly the list encodings `Node::decode`
-    /// accepts (bare strings are the documented narrowing) and reports the
-    /// kind the grammar implies.
     #[test]
     fn validate_entry_matches_node_decode() {
         let leaf = list(&[vec![0x83, 0x20, 0x12, 0x34], vec![0x82, 0xab, 0xcd]]);

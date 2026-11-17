@@ -87,7 +87,6 @@ pub fn from_container(
     Ok((block, signers, witness))
 }
 
-/// Decode JEF bytes whose backing allocation outlives validation.
 pub fn decode_container(bytes: &'static [u8]) -> Result<BlockInput, container::ContainerError> {
     let view = container::ContainerReader::read(bytes)?;
     if view.library_id_lo != code_library::LIBRARY_ID_LO {

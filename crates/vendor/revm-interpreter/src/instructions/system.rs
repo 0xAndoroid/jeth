@@ -145,7 +145,6 @@ pub fn calldataload<WIRE: InterpreterTypes, H: ?Sized>(
     if offset < input_len {
         let input = &*input.as_bytes_memory(&context.interpreter.memory);
         if offset + 32 <= input_len {
-            // Word-wise (see interpreter::words).
             *offset_ptr = crate::interpreter::words::read_u256_be(input, offset);
             return ip;
         }

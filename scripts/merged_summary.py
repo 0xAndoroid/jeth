@@ -234,7 +234,6 @@ def main() -> None:
                     "delta": m - ssum,
                 }
 
-            # execution + glue = validation - reveal - post_root
             def exec_glue(j: dict[str, int]) -> int:
                 return j.get("validation", 0) - j.get("witness_reveal", 0) - j.get("post_root", 0)
 

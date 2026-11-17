@@ -16,7 +16,6 @@
 
 use alloc::vec::Vec;
 use alloy_primitives::{map::B256IndexMap, Bytes, B256};
-#[allow(unused_imports)]
 use alloc::vec;
 use alloy_trie::Nibbles;
 use core::{cmp::PartialEq, fmt::Debug};
@@ -294,8 +293,6 @@ impl CachedTrie {
     #[inline]
     pub fn hash(&mut self) -> B256 {
         *self.hash.get_or_insert_with(|| {
-            // dirty nodes encode into one reused scratch buffer (single-pass,
-            // sealed length advice) instead of per-node Vecs
             let mut scratch = arena::Scratch::new();
             self.inner.memoize_arena(&mut scratch);
             self.inner.hash()

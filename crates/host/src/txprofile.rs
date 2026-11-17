@@ -1,11 +1,3 @@
-//! `jeth txprofile`: per-transaction cycle attribution.
-//!
-//! Builds the guest with per-tx cycle markers (`pertx` feature), runs the
-//! tracer in-process with a capturing `tracing` layer (the emulator reports
-//! every marker span as an INFO event), and joins the per-tx cycle counts with
-//! tx metadata + per-tx gas from a native run of the same vendored validation
-//! loop. Output: ranked table + `txprofile.json` next to the input.
-
 use anyhow::{Context, Result};
 use std::io::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -13,7 +5,6 @@ use std::time::Instant;
 
 use tracing_subscriber::layer::SubscriberExt;
 
-/// Captured `tracing` event messages (the tracer's cycle-marker reports).
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Vec<String>>>);
 
@@ -75,7 +66,6 @@ pub fn run(
 
     let memory_config = crate::trace::memory_config(&elf, variant);
 
-    /// (hash, to, selector, tx_type, input_len)
     type TxMeta = (String, Option<String>, Option<String>, u8, usize);
     let input = crate::trace::decode_input(&raw)?;
     let block_number = input.block.header.number;
@@ -144,7 +134,6 @@ pub fn run(
         trace_rows as f64 / wall.as_secs_f64() / 1e6
     );
 
-    // Marker report: "txNNNN": R RV64IMAC cycles + V virtual instructions = T total cycles
     let marker_re = regex_lite::Regex::new(
         r#""([^"]+)": (\d+) RV64IMAC cycles \+ (\d+) virtual instructions = (\d+) total cycles"#,
     )?;

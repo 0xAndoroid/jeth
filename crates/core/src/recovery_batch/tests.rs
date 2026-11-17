@@ -187,8 +187,6 @@ fn recovered_equation(i: u64) -> Equation {
     equation
 }
 
-/// An equation signed by `signing_key` over message `z`; equations from one
-/// signing key share their key point.
 fn signed_equation(signing_key: &SigningKey, z: u64) -> Equation {
     let msg = U256::from(z).to_be_bytes();
     let (sig, recid) = signing_key.sign_prehash_recoverable(&msg);

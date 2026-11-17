@@ -68,7 +68,6 @@ pub struct ValidatedBlock {
     pub receipts: Vec<EthereumReceipt>,
 }
 
-/// Stateless validation with the tx loop expanded in-line (see module docs).
 #[cfg_attr(
     not(feature = "pertx-markers"),
     expect(
@@ -113,12 +112,6 @@ pub fn validate_recovered_pertx(
     let (mut trie, bytecode) = crate::Trie::new_with_codes(&witness, parent.state_root)?;
 
     let db = WitnessDatabase::new(&trie, bytecode, ancestor_hashes);
-    // Presize revm's block cache from the witness node count: every existing
-    // account it can hold is a leaf of the revealed state trie (13x over on
-    // 25905781, where the table's growth path cost ~220k rows of rehash and a
-    // presized 32k-bucket table ~4k rows of ctrl memset). Non-existing accounts
-    // (exclusion proofs, coinbase, precompiles) also get entries but are few;
-    // exceeding the bound only costs the ordinary rehash, never correctness.
     let cache = CacheState {
         accounts: AddressMap::with_capacity_and_hasher(witness.state.len(), Default::default()),
         contracts: B256Map::default(),
@@ -383,7 +376,6 @@ pub(crate) fn receipt_root_bloom(
     receipts: &[EthereumReceipt],
     mut hash_address: impl FnMut(Address) -> B256,
 ) -> (B256, Bloom) {
-    // Distinct topics <= sum of topics over all logs: presize the memo.
     let topic_count: usize = receipts
         .iter()
         .flat_map(|receipt| receipt.logs())

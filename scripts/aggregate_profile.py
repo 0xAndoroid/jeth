@@ -123,7 +123,6 @@ ROOT_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[[0-9a-f]+\]::([A-Za-z0-9_:]*)")
 def root_path(sym: str) -> str:
     """Symbol -> `crate::ungeneric::path` of the defining item."""
     if sym.startswith("core[") or "drop_in_place" in sym:
-        # drop_in_place::<T>: classify by the dropped type T instead.
         inner = ROOT_RE.findall(sym)
         for crate, path in inner:
             if crate not in ("core", "alloc"):

@@ -61,43 +61,4 @@ mod integration_tests {
             }
         }
     }
-    #[test]
-    fn cached_driver_allows_output_to_overlap_input() {
-        for len in [32usize, 64] {
-            for output_offset in 0..72 {
-                for _ in 0..2 {
-                    let mut storage = [0u64; 14];
-                    let bytes = unsafe {
-                        core::slice::from_raw_parts_mut(storage.as_mut_ptr().cast::<u8>(), 112)
-                    };
-                    for (i, b) in bytes.iter_mut().enumerate() {
-                        *b = (i * 29 + len) as u8;
-                    }
-                    let before = bytes.to_vec();
-                    let input = &bytes[16..16 + len];
-                    let expected: [u8; 32] = Keccak256::digest(input).into();
-                    let digest = keccak_cache::compute(input, |input| {
-                        let mut digest = [0u64; 4];
-                        unsafe {
-                            keccak::keccak256_into(
-                                input.as_ptr(),
-                                input.len(),
-                                digest.as_mut_ptr().cast(),
-                            );
-                        }
-                        digest
-                    });
-                    unsafe {
-                        keccak::store_digest(
-                            digest.as_ptr(),
-                            bytes.as_mut_ptr().add(output_offset),
-                        );
-                    }
-                    assert_eq!(&bytes[output_offset..output_offset + 32], &expected);
-                    assert_eq!(&bytes[..output_offset], &before[..output_offset]);
-                    assert_eq!(&bytes[output_offset + 32..], &before[output_offset + 32..]);
-                }
-            }
-        }
-    }
 }

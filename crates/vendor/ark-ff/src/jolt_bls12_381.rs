@@ -8,7 +8,6 @@ use crate::{Field, PrimeField};
 use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 use jeth_inlines_bls12_381::{LIMBS, MINUS_ONE, MODULUS};
 
-/// `limbs == p`; false for every other modulus and every other limb count.
 pub(crate) const fn is_modulus(limbs: &[u64]) -> bool {
     if limbs.len() != LIMBS {
         return false;
