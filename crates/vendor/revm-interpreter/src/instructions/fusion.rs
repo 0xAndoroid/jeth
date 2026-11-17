@@ -42,7 +42,7 @@ pub(crate) fn matches<W: InterpreterTypes, H: Host + ?Sized>(
         && core::ptr::fn_addr_eq(table[JUMPDEST as usize].fn_, dest)
         && core::ptr::fn_addr_eq(table[PUSH2 as usize].fn_, push)
         // Not redundant: a custom ISZERO or EQ that delegates to the default handler reaches
-        // `test_jump`, which would fuse and hand it the state after the jump.
+        // `test_jump`, which would fuse and hand it the state after the JUMPI.
         && core::ptr::fn_addr_eq(table[ISZERO as usize].fn_, iszero)
         && core::ptr::fn_addr_eq(table[EQ as usize].fn_, eq)
 }

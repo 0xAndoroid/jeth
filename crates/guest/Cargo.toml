@@ -10,10 +10,11 @@ edition = "2021"
 [workspace]
 
 [features]
-# Jump fusion in the vendored interpreter's run loop: PUSH2 followed by JUMP or
-# JUMPI, alone or after ISZERO or EQ, runs as one dispatch when the whole
-# sequence succeeds. On by default; `--no-default-features` drops it (add
-# `--features keccak-census` to keep the census).
+# Jump fusion in the vendored interpreter's run loop: `PUSH2 JUMP`,
+# `PUSH2 JUMPI`, `ISZERO PUSH2 JUMPI` and `EQ PUSH2 JUMPI` each run as one
+# dispatch when the whole sequence succeeds. On by default;
+# `--no-default-features` drops it (add `--features keccak-census` to keep the
+# census).
 push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
 default = ["keccak-census", "push-jump-fusion"]
 guest = ["jeth-core/code-library"]
