@@ -107,5 +107,8 @@ mod host;
 #[cfg(feature = "host")]
 pub use host::*;
 
-#[cfg(all(test, feature = "host"))]
+// Kept as a bare `cfg(test)`: Clippy does not apply `allow-unwrap-in-tests` under
+// `cfg(all(test, ..))`.
+#[cfg(test)]
+#[cfg(feature = "host")]
 mod spec;

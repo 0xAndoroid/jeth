@@ -43,6 +43,8 @@ rustdoc-args = [
 [features]
 # jeth: MULMOD through the guest's `jeth_mul_mod` hook (Jolt BIGINT256_MUL inline).
 bigint-inline = []
+# Jolt's existing custom instructions, only on its bare-metal RV64 target.
+jolt-byte-swap = []
 arbitrary = [
     "std",
     "primitives/arbitrary",

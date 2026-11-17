@@ -10,6 +10,19 @@ use object::{Object, ObjectSymbol};
 use std::collections::HashMap;
 use std::time::Instant;
 
+/// The symbol named exactly `needle`, else the first one whose name contains
+/// it. A substring match alone resolves `memcmp` to
+/// `jeth_guest::mem::memcmp_generic`, which the address order puts first.
+fn find_symbol<'a>(
+    symbols: &'a [(u64, u64, String)],
+    needle: &str,
+) -> Option<&'a (u64, u64, String)> {
+    symbols
+        .iter()
+        .find(|(_, _, n)| n == needle)
+        .or_else(|| symbols.iter().find(|(_, _, n)| n.contains(needle)))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Arguments mirror independent profiler CLI options."
@@ -26,8 +39,11 @@ pub fn run(
     split_markers: bool,
     json_out: Option<String>,
     guest_features: &[&str],
+    variant: crate::trace::Variant,
 ) -> Result<()> {
-    let variant = crate::trace::Variant::Input;
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let input_bytes = crate::trace::guest_stream(&raw, variant)?;
+
     // --split-markers needs the per-tx marker build (plus symbols either way).
     let mut features: Vec<&str> = guest_features.to_vec();
     if split_markers && !features.contains(&"pertx") {
@@ -58,8 +74,6 @@ pub fn run(
     );
     println!("{} text symbols", symbols.len());
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     let tape = crate::trace::advice_pass1(variant, &features, skip_build, &input_bytes, &[])?;
@@ -87,9 +101,7 @@ pub fn run(
     let target_range: Option<(u64, u64)> = callers_of
         .as_deref()
         .map(|needle| -> Result<_> {
-            let (addr, size, name) = symbols
-                .iter()
-                .find(|(_, _, n)| n.contains(needle))
+            let (addr, size, name) = find_symbol(&symbols, needle)
                 .with_context(|| format!("no symbol matching {needle:?}"))?;
             println!("caller profile of {name} @ {addr:#x}+{size:#x}");
             Ok((*addr, *addr + *size))
@@ -99,9 +111,7 @@ pub fn run(
     let pc_range: Option<(u64, u64)> = pcs_of
         .as_deref()
         .map(|needle| -> Result<_> {
-            let (addr, size, name) = symbols
-                .iter()
-                .find(|(_, _, n)| n.contains(needle))
+            let (addr, size, name) = find_symbol(&symbols, needle)
                 .with_context(|| format!("no symbol matching {needle:?}"))?;
             println!("per-PC rows of {name} @ {addr:#x}+{size:#x}");
             Ok((*addr, *addr + *size))
@@ -336,4 +346,23 @@ pub fn run(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_symbol;
+
+    #[test]
+    fn exact_symbol_name_wins_over_substring_match() {
+        let symbols = [
+            (
+                0x1000,
+                0x40,
+                "jeth_guest[c4b5295f035d354]::mem::memcmp_generic".to_owned(),
+            ),
+            (0x2000, 0x10, "memcmp".to_owned()),
+        ];
+        assert_eq!(find_symbol(&symbols, "memcmp"), Some(&symbols[1]));
+        assert_eq!(find_symbol(&symbols, "memcmp_generic"), Some(&symbols[0]));
+    }
 }

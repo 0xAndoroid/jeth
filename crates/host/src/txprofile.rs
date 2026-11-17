@@ -57,8 +57,15 @@ struct TxRow {
     input_len: usize,
 }
 
-pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
-    let variant = crate::trace::Variant::Input;
+pub fn run(
+    input_path: &str,
+    top: usize,
+    skip_build: bool,
+    variant: crate::trace::Variant,
+) -> Result<()> {
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let wrapped = crate::trace::guest_stream(&raw, variant)?;
+
     let features = ["pertx"];
     let elf_file = crate::trace::elf_path_with(variant, &features);
     if !skip_build || !elf_file.exists() {
@@ -66,8 +73,6 @@ pub fn run(input_path: &str, top: usize, skip_build: bool) -> Result<()> {
     }
     let elf = std::fs::read(&elf_file).context("reading guest ELF")?;
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let wrapped = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     /// (hash, to, selector, tx_type, input_len)

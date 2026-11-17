@@ -1,5 +1,6 @@
 //! jeth — Jolt-trace stateless Ethereum block validation.
 
+mod cycles;
 mod fetch;
 mod library;
 mod merge;
@@ -13,6 +14,7 @@ mod txprofile;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::num::NonZeroUsize;
 
 #[derive(Parser)]
 #[command(
@@ -50,7 +52,8 @@ enum Command {
         input: String,
     },
     /// Merge N consecutive block inputs into one synthetic block input
-    /// (block 1's header context, all txs + withdrawals concatenated).
+    /// (block 1's header context, all txs + withdrawals concatenated). An output
+    /// above the default committed-input limit traces with `--large-input`.
     Merge {
         /// Comma-separated input.bin paths of consecutive blocks, ascending.
         #[arg(long, required = true, value_delimiter = ',', num_args = 1..)]
@@ -86,12 +89,14 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
+        #[command(flatten)]
+        layout: InputLayout,
         /// Deliver the payload as TRUSTED ADVICE instead of committed input.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "large_input")]
         advice: bool,
         /// Supply pre-computed witness digests as trusted advice (reveal skips
         /// keccak; digest map is verifier-trusted — see RESULTS.md caveat).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "large_input")]
         trusted_digests: bool,
         /// Extra guest cargo features (comma-separated), e.g. `lazy` for
         /// deferred bytecode analysis. Each set builds into its own target dir.
@@ -109,6 +114,8 @@ enum Command {
         /// symbols (uses the symbols guest build).
         #[arg(long)]
         symbols_for: Option<String>,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// PC-sampling profile of the guest run (symbol histogram).
     Profile {
@@ -120,15 +127,16 @@ enum Command {
         /// Show top N symbols.
         #[arg(long, default_value_t = 40)]
         top: usize,
-        /// Bucket return addresses while PC is inside the first symbol matching
-        /// this substring (one-level caller profile).
+        /// Bucket return addresses while PC is inside the symbol with this exact
+        /// name, else the first symbol containing it (one-level caller profile).
         #[arg(long)]
         callers_of: Option<String>,
         /// Exact trace-row attribution (real + virtual/inline rows) per symbol.
         #[arg(long)]
         rows: bool,
-        /// With --rows: per-PC row histogram inside the first symbol matching
-        /// this substring (splits a function into its phases).
+        /// With --rows: per-PC row histogram inside the symbol with this exact
+        /// name, else the first symbol containing it (splits a function into
+        /// its phases).
         #[arg(long)]
         pcs_of: Option<String>,
         /// With --rows: count entries (PC == symbol start) of every symbol
@@ -148,6 +156,8 @@ enum Command {
         /// Extra guest cargo features (comma-separated), e.g. `lazy`.
         #[arg(long, value_delimiter = ',', default_value = "")]
         guest_features: Vec<String>,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// Per-transaction cycle attribution (guest built with per-tx markers).
     Txprofile {
@@ -159,6 +169,8 @@ enum Command {
         /// Skip rebuilding the guest ELF if it already exists.
         #[arg(long)]
         skip_build: bool,
+        #[command(flatten)]
+        layout: InputLayout,
     },
     /// Native state-touch census: opcode counts, distinct/repeated accounts and
     /// slots, DB misses, code reuse (see jeth_core::census).
@@ -184,7 +196,58 @@ enum Command {
         /// Comma-separated JSON-RPC endpoint list (ordered failover).
         #[arg(long, value_delimiter = ',')]
         rpc_list: Option<Vec<String>>,
+        #[command(flatten)]
+        layout: InputLayout,
     },
+    /// Expanded-cycle counts over the frozen block set (RESULTS.md → Cycle-count harness).
+    Cycles {
+        #[command(subcommand)]
+        command: CyclesCommand,
+    },
+}
+
+#[derive(clap::Args)]
+struct InputLayout {
+    /// Use the guest with the 128 MiB committed-input region (`validate_block_128m`)
+    /// instead of the default one, for inputs above the default limit such as
+    /// `jeth merge` outputs. Never selected by input size.
+    #[arg(long)]
+    large_input: bool,
+}
+
+impl InputLayout {
+    fn variant(&self) -> trace::Variant {
+        if self.large_input {
+            trace::Variant::LargeInput
+        } else {
+            trace::Variant::Input
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum CyclesCommand {
+    /// Build a jeth tree, trace every block of the set with that tree's own
+    /// guest, and write cycles.json and cycles.md. Fails if any block fails.
+    Run {
+        /// Root of the jeth tree to measure.
+        #[arg(long, default_value = cycles::DEFAULT_TREE)]
+        tree: String,
+        /// GitHub repository whose release holds the block set.
+        #[arg(long, default_value = "0xAndoroid/jeth")]
+        repo: String,
+        /// Directory the block set is downloaded into.
+        #[arg(long, default_value = "data/cycles")]
+        blocks: String,
+        /// Output directory (default: <tree>/target/cycles).
+        #[arg(long)]
+        out: Option<String>,
+        /// Blocks traced concurrently.
+        #[arg(long, default_value = "4")]
+        jobs: NonZeroUsize,
+    },
+    /// Print the markdown comparison of two cycles.json files.
+    Compare { base: String, head: String },
 }
 
 #[derive(Subcommand)]
@@ -231,6 +294,7 @@ fn main() -> Result<()> {
         Command::Trace {
             input,
             skip_build,
+            layout,
             advice,
             trusted_digests,
             guest_features,
@@ -238,7 +302,7 @@ fn main() -> Result<()> {
             let variant = match (advice, trusted_digests) {
                 (_, true) => trace::Variant::Trusted,
                 (true, _) => trace::Variant::Advice,
-                _ => trace::Variant::Input,
+                _ => layout.variant(),
             };
             let features: Vec<&str> = guest_features
                 .iter()
@@ -251,7 +315,8 @@ fn main() -> Result<()> {
             input,
             skip_build,
             symbols_for,
-        } => opcodes::run(&input, skip_build, symbols_for),
+            layout,
+        } => opcodes::run(&input, skip_build, symbols_for, layout.variant()),
         Command::Profile {
             input,
             every,
@@ -264,6 +329,7 @@ fn main() -> Result<()> {
             split_markers,
             json,
             guest_features,
+            layout,
         } => {
             let features: Vec<&str> = guest_features
                 .iter()
@@ -283,13 +349,15 @@ fn main() -> Result<()> {
                 split_markers,
                 json,
                 &features,
+                layout.variant(),
             )
         }
         Command::Txprofile {
             input,
             top,
             skip_build,
-        } => txprofile::run(&input, top, skip_build),
+            layout,
+        } => txprofile::run(&input, top, skip_build, layout.variant()),
         Command::Touches {
             input,
             json,
@@ -299,6 +367,7 @@ fn main() -> Result<()> {
         Command::Bench {
             latest_minus,
             rpc_list,
+            layout,
         } => {
             let input = fetch::run(
                 None,
@@ -309,8 +378,18 @@ fn main() -> Result<()> {
             )?;
             let input = input.to_string_lossy();
             run_native(&input)?;
-            trace::run(&input, false, trace::Variant::Input, &[])
+            trace::run(&input, false, layout.variant(), &[])
         }
+        Command::Cycles { command } => match command {
+            CyclesCommand::Run {
+                tree,
+                repo,
+                blocks,
+                out,
+                jobs,
+            } => cycles::run(&tree, &repo, &blocks, out.as_deref(), jobs),
+            CyclesCommand::Compare { base, head } => cycles::compare(&base, &head),
+        },
     }
 }
 
@@ -382,4 +461,27 @@ pub(crate) fn run_native(input_path: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn large_input_is_accepted_wherever_a_guest_runs_except_with_trusted_advice() {
+        let input = ["--input", "input.bin"];
+        for command in ["trace", "profile", "txprofile", "opcodes"] {
+            let args = ["jeth", command].into_iter().chain(input);
+            assert!(
+                Cli::try_parse_from(args.chain(["--large-input"])).is_ok(),
+                "{command}"
+            );
+        }
+        assert!(Cli::try_parse_from(["jeth", "bench", "--large-input"]).is_ok());
+
+        let trace = ["jeth", "trace", "--large-input"].into_iter().chain(input);
+        for incompatible in ["--advice", "--trusted-digests"] {
+            assert!(Cli::try_parse_from(trace.clone().chain([incompatible])).is_err());
+        }
+    }
 }

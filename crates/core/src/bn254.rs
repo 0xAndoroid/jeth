@@ -6,8 +6,8 @@ use reth_evm::revm::precompile::PrecompileHalt;
 /// Canonical (< p) big-endian field element; revm's `read_fq` rejection.
 fn read_fq(bytes: &[u8]) -> Result<Fq, PrecompileHalt> {
     let mut limbs = [0u64; 4];
-    for (i, limb) in limbs.iter_mut().enumerate() {
-        *limb = u64::from_be_bytes(bytes[24 - 8 * i..32 - 8 * i].try_into().unwrap());
+    for (limb, word) in limbs.iter_mut().zip(bytes.as_chunks::<8>().0.iter().rev()) {
+        *limb = u64::from_be_bytes(*word);
     }
     Fq::from_bigint(BigInt::new(limbs)).ok_or(PrecompileHalt::Bn254FieldPointNotAMember)
 }

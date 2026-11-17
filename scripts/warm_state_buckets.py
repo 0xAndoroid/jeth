@@ -41,7 +41,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-HASH_RE = re.compile(r"\[[0-9a-f]{16}\]")
+HASH_RE = re.compile(r"\[[0-9a-f]{1,16}\]")
 GROUPS = ("reveal", "tx", "post_root", "outside")
 BUCKET_NAMES = {
     "a": "(a) witness verification",
@@ -165,8 +165,13 @@ RULES: list[tuple[str, str, str, str]] = [
         "f",
         "alloc",
     ),
-    ("text", r"^memcpy  ::", "f", "memcpy (no caller data)"),
-    ("text", r"^memcmp  ::", "f", "memcmp (no caller data)"),
+    (
+        "text",
+        r"^memcpy  ::|^__jeth_aligned_copy  ::|^__jeth_copy_fallback  ::",
+        "f",
+        "memcpy (no caller data)",
+    ),
+    ("text", r"^memcmp  ::|^jeth_guest::mem::memcmp_generic", "f", "memcmp (no caller data)"),
     ("text", r"^native_keccak256  ::", "f", "keccak (no caller data)"),
     ("text", r"^memset  ::", "f", "memset"),
     ("text", r"^memmove  ::|compiler_builtins", "f", "memmove/builtins"),

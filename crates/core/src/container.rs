@@ -4,7 +4,9 @@
 //! The extra word keeps every borrowed node, code, and header 8-aligned; this is
 //! required by the guest's word-at-a-time trie paths.
 
-use alloc::{vec, vec::Vec};
+#[cfg(feature = "std")]
+use alloc::vec;
+use alloc::vec::Vec;
 use core::fmt;
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"JEF1");
@@ -419,7 +421,6 @@ fn postcard_varint_len(mut value: usize) -> usize {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec;
     use alloy_primitives::Bytes;
