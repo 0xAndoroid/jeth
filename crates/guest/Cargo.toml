@@ -50,6 +50,8 @@ critical-section = "1.2"
 # alloy-eip7702: EIP-7702 authority recovery routed through the Jolt secp256k1
 # inline via the guest's jeth_ecrecover_prehash hook (software k256 measured at
 # ~1.5M rows/authorization — 16% of block 25698070; the inline is ~230k).
+#
+# crates/native-advice/Cargo.toml mirrors both `[patch]` tables; change them together.
 [patch.crates-io]
 # Word-aligned journal tags/payloads reduce guest sub-word accesses.
 revm-context-interface = { path = "../vendor/revm-context-interface" }

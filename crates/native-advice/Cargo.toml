@@ -1,0 +1,31 @@
+# Standalone package (NOT part of the jeth workspace), like crates/guest: a
+# `[patch]` covers a whole workspace, and the recorder must run the guest's
+# vendored revm-interpreter, whose MULMOD calls the `jeth_mul_mod` hook and so
+# records its quotient advice, while `jeth run-native` in the root workspace
+# keeps the registry interpreter as the independent reference.
+[package]
+name = "jeth-native-advice"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+jeth-core = { path = "../core", features = ["native-advice", "secp-inline", "code-library", "bigint-inline"] }
+# Direct dependency only to reach the vendored crate's feature, as in crates/guest.
+revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline"] }
+postcard = { version = "1.0.8", default-features = false, features = ["use-std"] }
+
+# Both patch tables mirror crates/guest/Cargo.toml, which gives the reason for each entry.
+[patch.crates-io]
+revm-context-interface = { path = "../vendor/revm-context-interface" }
+revm-interpreter = { path = "../vendor/revm-interpreter" }
+alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
+foldhash = { path = "../vendor/foldhash" }
+alloy-primitives = { path = "../vendor/alloy-primitives" }
+hashbrown = { path = "../vendor/hashbrown" }
+ark-ff = { path = "../vendor/ark-ff" }
+
+[patch."https://github.com/paradigmxyz/stateless.git"]
+zeth-mpt = { path = "../vendor/zeth-mpt" }

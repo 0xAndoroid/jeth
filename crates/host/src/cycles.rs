@@ -6,7 +6,7 @@
 //! that tree's `trace::run` writes: the rows of the proven pass after
 //! virtual-sequence and inline expansion, unpadded.
 //!
-//! In a tree that has the `native-advice` example, `run` also fails a block whose
+//! In a tree that has the `crates/native-advice` package, `run` also fails a block whose
 //! natively recorded advice tape differs from the tape `jeth trace` wrote for it.
 
 use alloy_primitives::{hex, B256};
@@ -31,16 +31,9 @@ const GUEST_ELF: &str = "-validate_block/riscv64imac-unknown-none-elf/release/je
 
 const JETH: [&str; 4] = ["-p", "jeth-host", "--bin", "jeth"];
 
-/// The example that records a native advice tape, with the features its
-/// `required-features` in `crates/core/Cargo.toml` names.
-const NATIVE_ADVICE: [&str; 6] = [
-    "-p",
-    "jeth-core",
-    "--example",
-    "native-advice",
-    "--features",
-    "native-advice,secp-inline,code-library,bigint-inline",
-];
+const NATIVE_ADVICE_MANIFEST: &str = "crates/native-advice/Cargo.toml";
+
+const NATIVE_ADVICE: [&str; 2] = ["--manifest-path", NATIVE_ADVICE_MANIFEST];
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -142,9 +135,7 @@ impl Tree {
     }
 
     fn records_native_advice(&self) -> bool {
-        self.root
-            .join("crates/core/examples/native-advice.rs")
-            .exists()
+        self.root.join(NATIVE_ADVICE_MANIFEST).exists()
     }
 
     fn build(&self, target: &[&str]) -> Result<()> {
@@ -365,7 +356,7 @@ pub fn run(
     if tree.records_native_advice() {
         let start = Instant::now();
         tree.build(&NATIVE_ADVICE)?;
-        println!("native-advice example built in {:.1?}", start.elapsed());
+        println!("native-advice recorder built in {:.1?}", start.elapsed());
     }
 
     let measure = |pin: &PinnedBlock, build_guest: bool| {
