@@ -195,11 +195,18 @@ pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: 
     if len == 32 || len == 64 {
         // SAFETY: inherited from this native-keccak entry point's input contract.
         let input = core::slice::from_raw_parts(bytes, len);
-        let digest = keccak_cache::compute(input, |input| {
-            let mut result = [0u64; 4];
-            keccak_uncached(input.as_ptr(), input.len(), result.as_mut_ptr().cast());
-            result
-        });
+        let digest = keccak_cache::compute(
+            input,
+            // A miss has to be hashed inside the `native_keccak256` symbol:
+            // `jeth profile --callers-of native_keccak256` and
+            // `scripts/warm_state_buckets.py` count Keccak rows by that name alone.
+            #[inline(always)]
+            |input| {
+                let mut result = [0u64; 4];
+                keccak_uncached(input.as_ptr(), input.len(), result.as_mut_ptr().cast());
+                result
+            },
+        );
         keccak::store_digest(digest.as_ptr(), output);
         return;
     }
