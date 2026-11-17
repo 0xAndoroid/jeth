@@ -17,7 +17,8 @@ default = ["keccak-census", "keccak-cache"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
 # normal `jeth trace` output (the `perms=` count is a campaign gate). Only
-# hashed calls count, at 21 rows each: a `keccak-cache` hit is not counted.
+# hashed calls count: a `keccak-cache` hit is not counted. A counted call
+# costs 22 rows, or 15 for a 32- or 64-byte input in a `keccak-cache` build.
 # `--no-default-features` drops it.
 keccak-census = []
 # Bounded cache for repeated 32-/64-byte Keccak inputs. Misses add work. On by
