@@ -20,6 +20,8 @@ extern crate alloc;
 // crates/guest/native-tests/Cargo.toml`), which includes these files by path.
 #[cfg(feature = "guest")]
 mod keccak;
+#[cfg(all(feature = "guest", feature = "keccak-cache"))]
+mod keccak_cache;
 #[cfg(feature = "guest")]
 mod mem;
 
@@ -163,7 +165,8 @@ fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> 
 
 /// Keccak accounting (census builds only): calls, input bytes, Keccak-f
 /// permutations (rate 136), and calls whose input pointer is not 8-aligned
-/// (they take the shift/or gather path in `keccak.rs`).
+/// (they take the shift/or gather path in `keccak.rs`). Only hashed calls
+/// count: a `keccak-cache` hit returns before these counters.
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_CALLS: u64 = 0;
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
@@ -175,7 +178,9 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 
 /// alloy-primitives (feature "native-keccak") declares this extern and calls it
 /// for every keccak256. Routes to the Jolt Keccak-f[1600] inlines (opcode 0x0B);
-/// the word-wise sponge driver lives in `keccak.rs`.
+/// the word-wise sponge driver lives in `keccak.rs`. With `keccak-cache`, a 32-
+/// or 64-byte input is looked up in `keccak_cache.rs` first and hashed only on
+/// a miss.
 ///
 /// `#[inline(never)]`: keeps the shim one out-of-line body. Its misaligned
 /// digest store is a five-word read-modify-write of the caller's `[u8; 32]`
@@ -186,6 +191,41 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 #[no_mangle]
 #[inline(never)]
 pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
+    #[cfg(feature = "keccak-cache")]
+    if len == 32 || len == 64 {
+        // SAFETY: inherited from this native-keccak entry point's input contract.
+        let input = core::slice::from_raw_parts(bytes, len);
+        let digest = keccak_cache::compute(
+            input,
+            // A miss has to be hashed inside the `native_keccak256` symbol:
+            // `jeth profile --callers-of native_keccak256` and
+            // `scripts/warm_state_buckets.py` count Keccak rows by that name alone.
+            #[inline(always)]
+            |input| {
+                let mut result = [0u64; 4];
+                let out = result.as_mut_ptr().cast();
+                // A constant length in each arm: the miss path is then small and inlines into
+                // this function. Given `input.len()` it carries the blocks of all 136 short
+                // lengths of `keccak.rs` (about 34 KB) and is kept out of line, in two
+                // `keccak_cache::compute_with` functions. The guard above admits no other
+                // length.
+                match input.len() {
+                    32 => keccak_uncached(input.as_ptr(), 32, out),
+                    64 => keccak_uncached(input.as_ptr(), 64, out),
+                    _ => unreachable!(),
+                }
+                result
+            },
+        );
+        keccak::store_digest(digest.as_ptr(), output);
+        return;
+    }
+    keccak_uncached(bytes, len, output);
+}
+
+#[cfg(feature = "guest")]
+#[inline(always)]
+unsafe fn keccak_uncached(bytes: *const u8, len: usize, output: *mut u8) {
     #[cfg(feature = "keccak-census")]
     {
         KECCAK_CALLS += 1;
