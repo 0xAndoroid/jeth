@@ -66,7 +66,6 @@ mod tests {
     use reth_evm::revm::precompile::bls12_381_const::TRUSTED_SETUP_TAU_G2_BYTES;
 
     #[test]
-    #[expect(clippy::unwrap_used, reason = "fixed valid setup point in test")]
     fn coefficients_match_ethereum_setup() {
         let tau = G2Affine::deserialize_compressed(&TRUSTED_SETUP_TAU_G2_BYTES[..]).unwrap();
         for (actual, point) in fixed_points()

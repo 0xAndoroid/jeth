@@ -1,4 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "test fixtures and assertions")]
 #![expect(clippy::many_single_char_names, reason = "KZG equation notation")]
 
 use super::*;
