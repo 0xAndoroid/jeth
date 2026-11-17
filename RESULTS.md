@@ -2100,12 +2100,12 @@ single proof padded to the next power of two; `max_trace_length` default 2^24, p
 200M-gas block is 143 default segments or 3–5 at the ceiling (continuations + aggregation); 600M gas extrapolates beyond N=19 (549M).
 Unpadded @10M/s: 240 / 437 / 635 s. A further −10.5% at 200M gas (≤10.7 c/g) drops the pad to 2^31 and halves the single proof.
 
-### Fidelity of the synthetic blocks (`merge-meta.json`; PR #6 body has the post-2848739 counts)
+### Fidelity of the synthetic blocks (`merge-meta.json` written before PR #6 commit `2848739` made `gas_changed` count status-changed txs too; the PR body has N=2 and N=6 recounted)
 | N | source txs | kept | dropped | status_changed | gas_changed (status unchanged) | gas retained | witness codes Σ→union | header rewrites |
 |---|---:|---:|---:|---:|---:|---:|---|---|
-| 6 | 1831 | 1819 | 12 | 28 | 24 (52 counted independently) | 97.22% | 260→240 | gas_limit, gas_used, base_fee, excess_blob_gas |
-| 13 | 3698 | 3652 | 46 | 81 | 100 | 95.99% | 550→481 | same four parent-header fields |
-| 19 | 5366 | 5277 | 89 | 137 | 168 | 93.71% | 871→719 | same four parent-header fields |
+| 6 | 1831 | 1819 | 12 | 28 | 24 (52 counted independently) | 97.22% | 260→240 | gas_limit, gas_used, base_fee, excess_blob_gas, blob_gas_used |
+| 13 | 3698 | 3652 | 46 | 81 | 100 | 95.99% | 550→481 | same five parent-header fields |
+| 19 | 5366 | 5277 | 89 | 137 | 168 | 93.71% | 871→719 | same five parent-header fields |
 
 Later-block txs run in block 1's context (timestamp, base fee, BLOCKHASH of merged-away blocks = 0); drops = blob cap / nonce cascade / state outside the witness union (`dropped_txs`). Merged gas is 94–99% of the constituents', so Σ-vs-merged row deltas carry a −0.8% (N=2) … −6.3% (N=19) gas effect.
 
