@@ -173,6 +173,21 @@ pub mod native {
             let ((), tape) = record(|| write_word(7)).expect("record after unwind");
             assert_eq!(tape, 7u64.to_le_bytes());
         }
+
+        #[test]
+        fn advice_smoke_records_the_sentinel_word() {
+            let ((), tape) = record(crate::advice::advice_smoke).expect("record");
+            assert_eq!(tape, [0x31, 0x76, 0x64, 0x61, 0x68, 0x74, 0x65, 0x6a]);
+        }
+
+        #[test]
+        fn trie_hashing_records_the_node_payload_length() {
+            let mut trie = zeth_mpt::CachedTrie::default();
+            trie.insert([0xab], [1, 2, 3]);
+            let (_, tape) = record(|| trie.hash()).expect("record");
+            // RLP payload of the one leaf: path `82 20 ab`, value `83 01 02 03`.
+            assert_eq!(tape, [7, 0, 0, 0, 0, 0, 0, 0]);
+        }
     }
 }
 
