@@ -308,6 +308,12 @@ RULES: list[tuple[str, str, str, str]] = [
         "c",
         "control ops (JUMP/JUMPI/JUMPDEST)",
     ),
+    (
+        "text",
+        r"^revm_interpreter::instructions::fusion::",
+        "c",
+        "PUSH2/ISZERO/EQ ops (jump fusion)",
+    ),
     ("text", r"^revm_interpreter::instructions::system::keccak256", "c", "KECCAK256 op glue"),
     (
         "text",

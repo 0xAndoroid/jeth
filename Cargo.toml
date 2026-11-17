@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-# NOTE: crates/guest is deliberately NOT a workspace member — it is a standalone
-# package (own [workspace] table) built exclusively through the `jolt` CLI for
-# riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
-# from native host builds.
+# NOTE: crates/guest is deliberately NOT a workspace member — it is the root of its
+# own workspace, built exclusively through the `jolt` CLI for riscv64imac. This
+# keeps guest feature resolution (native-keccak etc.) isolated from this
+# workspace's native host builds.
 members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254", "crates/inlines/bls12-381", "crates/vendor/revm-bytecode"]
 
 [workspace.package]

@@ -148,7 +148,7 @@ def fidelity(merged_dir: str, n: int) -> dict:
         "source_txs": tot.get("txs"),
         "dropped": tot.get("dropped"),
         "status_changed": tot.get("status_changed"),
-        "gas_changed_status_unchanged": tot.get("gas_changed"),
+        "gas_changed": tot.get("gas_changed"),
         "unchanged": tot.get("unchanged"),
         "input_bin_bytes": meta["input_bin_bytes"],
         "block_rlp_bytes": meta["block_rlp_bytes"],
@@ -378,13 +378,13 @@ def render_md(s: dict) -> str:
                 f"| {ph} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {v['delta']:+,} | {100 * v['delta'] / v['singles_sum']:+.1f}% |"
             )
     lines.append(
-        "\n| N | source txs | kept | dropped | status_changed | gas_changed (status same) | gas retained | input MB | state nodes (dedup) | codes (dedup) |\n|---|---:|---:|---:|---:|---:|---:|---:|---|---|"
+        "\n| N | source txs | kept | dropped | status_changed | gas_changed | gas retained | input MB | state nodes (dedup) | codes (dedup) |\n|---|---:|---:|---:|---:|---:|---:|---:|---|---|"
     )
     for r in s["merged"]:
         fd = r["fidelity"]
         w = fd["witness"]
         lines.append(
-            f"| {fd['n']} | {fd['source_txs']} | {fd['tx_count']} | {fd['dropped']} | {fd['status_changed']} | {fd['gas_changed_status_unchanged']} | {fd['gas_retained_pct']:.2f}% | {fd['input_bin_bytes'] / 1e6:.1f} | {w['state_nodes_before_dedup']:,} → {w['state_nodes']:,} | {w['codes_before_dedup']} → {w['codes']} |"
+            f"| {fd['n']} | {fd['source_txs']} | {fd['tx_count']} | {fd['dropped']} | {fd['status_changed']} | {fd['gas_changed']} | {fd['gas_retained_pct']:.2f}% | {fd['input_bin_bytes'] / 1e6:.1f} | {w['state_nodes_before_dedup']:,} → {w['state_nodes']:,} | {w['codes_before_dedup']} → {w['codes']} |"
         )
     return "\n".join(lines) + "\n"
 

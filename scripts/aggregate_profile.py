@@ -64,6 +64,7 @@ RULES: list[tuple[str, str, str]] = [
     (r"instructions::arithmetic", "interpreter: arithmetic/bitwise", "arithmetic"),
     (r"instructions::bitwise", "interpreter: arithmetic/bitwise", "bitwise"),
     (r"instructions::control", "interpreter: control (JUMP/JUMPI)", "control"),
+    (r"instructions::fusion", "interpreter: PUSH2/ISZERO/EQ (jump fusion)", "fusion"),
     (r"instructions::system::keccak256", "interpreter: KECCAK256 op glue", "keccak op"),
     (r"instructions::system", "interpreter: system (CALLDATA/RETURN)", "system"),
     (
