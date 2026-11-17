@@ -33,10 +33,6 @@ pub unsafe extern "C" fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64)
 
 /// `(a * b) % modulus`, written over `modulus`; zero when the modulus is zero.
 #[inline(always)]
-#[expect(
-    clippy::expect_used,
-    reason = "Invalid untrusted advice must terminate guest execution."
-)]
 pub fn mul_mod(a: &U256, b: &U256, modulus: &mut U256) {
     if modulus.as_limbs()[3] == 0 || *modulus == U256::MAX || (a >= modulus && b >= modulus) {
         *modulus = a.mul_mod(*b, *modulus);
@@ -51,7 +47,12 @@ pub fn mul_mod(a: &U256, b: &U256, modulus: &mut U256) {
     let q = U256::from_limbs(core::array::from_fn(|_i| {
         crate::advice::advice_u64!(quotient.as_limbs()[_i])
     }));
-    *modulus = checked_mulmod_remainder(a, b, modulus, &q).expect("invalid MULMOD advice");
+    let remainder = checked_mulmod_remainder(a, b, modulus, &q);
+    assert!(remainder.is_some(), "invalid MULMOD advice");
+    let Some(remainder) = remainder else {
+        unreachable!()
+    };
+    *modulus = remainder;
 }
 
 // The full products fit in eight limbs. The high-half and borrow checks
