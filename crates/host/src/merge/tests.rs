@@ -59,7 +59,6 @@ fn rewritten_parent_makes_synthetic_header_valid() {
         assert_eq!(rewritten.parent_hash, original.parent_hash);
         assert_eq!(rewritten.number, original.number);
         assert!(!rewrites.is_empty());
-        // EIP-1559: the parent sat exactly at its gas target, so the fee carries over.
         assert_eq!(
             calc_next_block_base_fee(
                 rewritten.gas_used,
@@ -88,8 +87,6 @@ fn rewritten_parent_makes_synthetic_header_valid() {
 
 #[test]
 fn required_gas_limit_covers_every_tx_gas_limit() {
-    // Second tx: 5M gas limit with 800k already used → 5.8M of room needed,
-    // far above the 900k actually burned; rounds up to the next 1M.
     assert_eq!(
         required_gas_limit([(900_000, 800_000), (5_000_000, 900_000)]),
         6_000_000
@@ -190,11 +187,6 @@ fn rlp_cap_uses_completed_header() {
     assert!(block.length() <= MAX_RLP_BLOCK_SIZE);
 }
 
-/// A tx reading a trie node no witness carries is dropped on its own: the
-/// lenient pass records it, resumes on a fresh executor and finishes the
-/// block; the strict pass aborts. Storage leaves (the short nodes) are tried
-/// in witness order until one is read during execution rather than only by
-/// the post-state root.
 #[test]
 fn unresolved_node_drops_only_the_reading_tx() {
     let bytes = std::fs::read(concat!(
@@ -218,7 +210,6 @@ fn unresolved_node_drops_only_the_reading_tx() {
         witness.state.remove(index);
         let lenient = execute(input.block.clone(), input.signers.clone(), &witness, true);
         let Ok(executed) = lenient else {
-            // Only the post-state root needed this node.
             continue;
         };
         if executed.failures.is_empty() {

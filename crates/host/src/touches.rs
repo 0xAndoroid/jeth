@@ -1,7 +1,3 @@
-//! `jeth touches`: native state-touch census over an input.bin (see
-//! `jeth_core::census`). Prints the per-block table and, with `--json`, the
-//! full report.
-
 use anyhow::{Context, Result};
 use jeth_core::census::{CensusReport, KeyStats};
 use std::time::Instant;
@@ -15,8 +11,6 @@ pub fn run(
     let bytes = std::fs::read(input_path)?;
     let input = crate::trace::decode_input(&bytes)?;
     if let Some(path) = dump_digests {
-        // One keccak per witness state node, sorted hex, one per line: the
-        // cross-block reuse census diffs these sets between consecutive blocks.
         let mut digests: Vec<String> = input
             .witness
             .state

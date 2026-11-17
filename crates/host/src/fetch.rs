@@ -1,5 +1,3 @@
-//! `jeth fetch`: block RLP + execution witness + recovered pubkeys → JEF input.bin.
-
 use crate::rpc::{parse_hex_bytes, parse_quantity, RpcClient, DEFAULT_ENDPOINTS};
 use anyhow::{Context, Result};
 use jeth_core::{BlockInput, ExecutionWitness, UncompressedPublicKey};
@@ -29,7 +27,6 @@ pub fn run(
     };
     let tag = format!("0x{target:x}");
 
-    // 2. Raw block RLP (skips all JSON block parsing; RLP is also the guest wire format).
     let (raw, ep_block) = client.call("debug_getRawBlock", json!([tag]))?;
     let raw = parse_hex_bytes(&raw)?;
     let block: Block = alloy_rlp::decode_exact(raw.as_slice())

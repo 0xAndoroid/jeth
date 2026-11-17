@@ -1,6 +1,3 @@
-//! `jeth trace`: run the guest over an input on the Jolt RV64IMAC emulator —
-//! execute-only streaming count (no trace materialization, no proving).
-
 use anyhow::{bail, Context, Result};
 use jolt_common::jolt_device::{MemoryConfig, MemoryLayout};
 use std::path::PathBuf;
@@ -25,10 +22,10 @@ extern crate jolt_inlines_sha2 as _;
 const DEFAULT_INPUT_SIZE: u64 = 16 << 20;
 const LARGE_INPUT_SIZE: u64 = 128 << 20;
 const MAX_OUTPUT_SIZE: u64 = 4096;
-const HEAP_SIZE: u64 = 1_610_612_736; // 1.5 GiB
-const STACK_SIZE: u64 = 33_554_432; // 32 MiB
+const HEAP_SIZE: u64 = 1_610_612_736;
+const STACK_SIZE: u64 = 33_554_432;
 const MAX_ADVICE_SIZE: u64 = 4096; // jolt defaults (attrs unset)
-const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4_194_304; // 4 MiB (validate_block_trusted)
+const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4_194_304;
 
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
@@ -36,7 +33,6 @@ const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
 const DEFAULT_GUEST_TARGET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/guest");
 const DEFAULT_JOLT_CLI: &str = "jolt";
 
-/// Guest target-dir prefix (this worktree's target/guest); `JETH_GUEST_TARGET_DIR` overrides it.
 fn guest_target_dir() -> String {
     std::env::var("JETH_GUEST_TARGET_DIR").unwrap_or_else(|_| DEFAULT_GUEST_TARGET_DIR.to_string())
 }
@@ -94,8 +90,6 @@ impl Variant {
     }
 }
 
-/// ELF path for a build with extra guest features (each feature set gets its
-/// own target dir so switching configurations doesn't thrash rebuilds).
 pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
     let suffix: String = extra_features.iter().flat_map(|f| ["-", *f]).collect();
     PathBuf::from(format!("{}-{}{suffix}", guest_target_dir(), variant.func()))
@@ -141,8 +135,6 @@ pub fn stream_start(variant: Variant) -> u64 {
     }
 }
 
-/// Address at which the Trusted variant's digest blob (second argument,
-/// trusted advice) is mapped.
 fn digest_stream_start() -> u64 {
     MemoryLayout::new(&memory_config_for_program(0, Variant::Trusted)).trusted_advice_start
 }
@@ -176,9 +168,6 @@ pub fn build_guest_symbols_features(variant: Variant, extra_features: &[&str]) -
     build_guest_inner(variant, true, extra_features)
 }
 
-/// Build the guest ELF via the `jolt` CLI (jolt-amber-nolane build recipe:
-/// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.)
-/// with extra guest cargo features (e.g. `pertx` for per-tx markers).
 pub fn build_guest_features(variant: Variant, extra_features: &[&str]) -> Result<()> {
     build_guest_inner(variant, false, extra_features)
 }
@@ -261,14 +250,6 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
     Ok(blob)
 }
 
-/// Build (unless `skip_build` and both ELFs exist) the proven + `compute_advice`
-/// ELF pair, run pass 1 (full emulation of the compute ELF — writes the advice
-/// tape; its rows never count), and return the tape positioned for reading.
-///
-/// Advice-trie two-pass: jeth drives builds itself, so the SDK's
-/// automatic two-pass does not apply. The two builds are DIFFERENT ELFs with
-/// the same `JOLT_FUNC_NAME`; a forgotten tape panics the proven pass at the
-/// smoke sentinel.
 pub fn advice_pass1(
     variant: Variant,
     extra_features: &[&str],
@@ -373,9 +354,6 @@ pub fn run(
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
     let memory_config = memory_config(&elf, variant);
 
-    // Execute-only streaming pass: counts trace rows (real + virtual/inline
-    // expansions — the prover-relevant "cycles") without materializing anything.
-    // Cycle markers print via tracing::info as the guest hits them.
     println!("tracing (execute-only streaming count)...");
     let start = Instant::now();
     let (trace_rows, device, _advice) = tracer::execute(

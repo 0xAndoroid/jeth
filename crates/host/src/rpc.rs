@@ -7,7 +7,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-/// Default Tier-1 endpoint list (live-verified 2026-08-06, PLAN.md §3).
 pub const DEFAULT_ENDPOINTS: &[&str] = &[
     "https://docs-demo.quiknode.pro/",
     "https://ethereum.public.blockpi.network/v1/rpc/public",

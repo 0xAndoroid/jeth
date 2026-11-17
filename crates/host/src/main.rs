@@ -1,5 +1,3 @@
-//! jeth — Jolt-trace stateless Ethereum block validation.
-
 mod cycles;
 mod fetch;
 mod library;

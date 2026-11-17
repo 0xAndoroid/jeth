@@ -1,10 +1,3 @@
-//! `jeth profile`: PC-sampling profiler over the Jolt emulator.
-//!
-//! Drives the emulator tick-by-tick (execute-only speed), samples the guest PC
-//! every `--every` ticks, buckets samples by ELF symbol, and prints a top-N
-//! table. Requires a guest built with symbols (JOLT_BACKTRACE=1 — symbol
-//! metadata only, no codegen change).
-
 use anyhow::{Context, Result};
 use object::{Object, ObjectSymbol};
 use std::collections::HashMap;
@@ -44,7 +37,6 @@ pub fn run(
     let raw = std::fs::read(input_path).context("reading input.bin")?;
     let input_bytes = crate::trace::guest_stream(&raw, variant)?;
 
-    // --split-markers needs the per-tx marker build (plus symbols either way).
     let mut features: Vec<&str> = guest_features.to_vec();
     if split_markers && !features.contains(&"pertx") {
         features.push("pertx");
@@ -96,8 +88,6 @@ pub fn run(
         }
     };
 
-    // --callers-of: restrict to samples whose PC is inside a matching symbol and
-    // bucket the RETURN ADDRESS (ra/x1) instead — a one-level caller profile.
     let target_range: Option<(u64, u64)> = callers_of
         .as_deref()
         .map(|needle| -> Result<_> {
@@ -125,10 +115,6 @@ pub fn run(
         .collect();
     let mut entry_hits: HashMap<u64, u64> = HashMap::new();
 
-    // --split-markers: track the guest's active cycle-marker (phase / per-tx)
-    // by watching the entry PC of the jeth_phase_start/end hooks and reading the
-    // label bytes out of guest memory. Rows are attributed to (innermost marker,
-    // symbol) — a full phase × component matrix in one run.
     let hook_addr = |name: &str| -> Option<u64> {
         symbols
             .iter()
@@ -148,7 +134,6 @@ pub fn run(
     );
     let start = Instant::now();
     let mut samples: HashMap<usize, u64> = HashMap::new();
-    // (marker label id, symbol idx) -> rows; label id 0 = outside any marker.
     let mut marker_samples: HashMap<(u16, usize), u64> = HashMap::new();
     let mut labels: Vec<String> = vec!["(outside markers)".into()];
     let mut label_ids: HashMap<String, u16> = HashMap::new();
@@ -187,10 +172,6 @@ pub fn run(
             ticks += 1;
         }
     } else if rows {
-        // Exact TRACE-ROW attribution: every tick's row delta (1 real row +
-        // virtual-sequence/inline expansion rows) is charged to the executing
-        // symbol — or, with --callers-of, to the RETURN ADDRESS while the PC
-        // is inside the target symbol. Slower than sampling but exact.
         let mut prev_rows = emulator.get_cpu().trace_len as u64;
         loop {
             let pc = emulator.get_cpu().read_pc();

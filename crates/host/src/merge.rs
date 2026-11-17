@@ -500,7 +500,6 @@ fn split_cands(cands: &[Cand]) -> (Vec<TransactionSigned>, Vec<UncompressedPubli
     )
 }
 
-/// Per-tx `(status, gas)` from receipts (cumulative gas differences).
 fn per_tx_outcomes(receipts: &[EthereumReceipt]) -> Vec<(bool, u64)> {
     let mut previous = 0u64;
     receipts
@@ -590,8 +589,6 @@ fn union_ancestors(sources: &[Source]) -> Result<(Vec<(u64, Bytes)>, Header)> {
     Ok((chain, parent))
 }
 
-/// Ancestor records for the witness: the union chain with the parent replaced
-/// by its rewritten form.
 fn ancestor_records(ancestors: &[(u64, Bytes)], parent: &Header) -> Vec<Bytes> {
     let mut records: Vec<Bytes> = ancestors.iter().map(|(_, b)| b.clone()).collect();
     records.pop();
