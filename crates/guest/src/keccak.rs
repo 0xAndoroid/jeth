@@ -232,7 +232,7 @@ unsafe fn merge_short_block<const LEN: usize>(state: *mut u64, bytes: *const u8)
 
 /// Writes the four digest lanes to the 32 bytes at `out` (any alignment).
 #[inline(always)]
-unsafe fn store_digest(state: *const u64, out: *mut u8) {
+pub(crate) unsafe fn store_digest(state: *const u64, out: *mut u8) {
     let mut d = [0u64; DIGEST_WORDS];
     for (i, lane) in d.iter_mut().enumerate() {
         *lane = read_volatile(state.add(i));
