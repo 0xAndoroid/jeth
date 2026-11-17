@@ -326,3 +326,53 @@ fn handler_wrapping_iszero_or_eq_sees_one_opcode() {
         assert_eq!(i.extend, (1, 97, 1), "op={op:#x}");
     }
 }
+
+#[test]
+fn target_inside_push_data_is_an_invalid_jump() {
+    let table = instruction_table::<EthInterpreter, DummyHost>();
+    let one = U256::from(1);
+    let cases: [(&[u8], &[U256]); 4] = [
+        (&[PUSH2, 0, 6, JUMP, STOP, PUSH1, JUMPDEST, STOP], &[]),
+        (&[PUSH2, 0, 6, JUMPI, STOP, PUSH1, JUMPDEST, STOP], &[one]),
+        (
+            &[ISZERO, PUSH2, 0, 7, JUMPI, STOP, PUSH1, JUMPDEST, STOP],
+            &[U256::ZERO],
+        ),
+        (
+            &[EQ, PUSH2, 0, 7, JUMPI, STOP, PUSH1, JUMPDEST, STOP],
+            &[one, one],
+        ),
+    ];
+    for (code, values) in cases {
+        assert_eq!(
+            run(&table, code, values).0,
+            InstructionResult::InvalidJump,
+            "code={code:x?}"
+        );
+    }
+}
+
+#[test]
+fn immediate_is_big_endian() {
+    let table = instruction_table::<EthInterpreter, DummyHost>();
+    let one = U256::from(1);
+    let (target, byte_swapped) = (0x0102, 0x0201);
+    let cases: [(&[u8], &[U256], u64); 4] = [
+        (&[PUSH2, 1, 2, JUMP], &[], 12),
+        (&[PUSH2, 1, 2, JUMPI], &[one], 14),
+        (&[ISZERO, PUSH2, 1, 2, JUMPI], &[U256::ZERO], 17),
+        (&[EQ, PUSH2, 1, 2, JUMPI], &[one, one], 17),
+    ];
+    for (head, values, gas_used) in cases {
+        let mut code = vec![INVALID; byte_swapped + 3];
+        code[..head.len()].copy_from_slice(head);
+        code[target..target + 2].copy_from_slice(&[JUMPDEST, STOP]);
+        code[byte_swapped..].copy_from_slice(&[JUMPDEST, PC, STOP]);
+        let (result, i) = run(&table, &code, values);
+        assert_eq!(
+            (result, 100 - i.gas.remaining(), i.stack.len()),
+            (InstructionResult::Stop, gas_used, 0),
+            "head={head:x?}"
+        );
+    }
+}
