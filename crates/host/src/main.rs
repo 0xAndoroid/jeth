@@ -127,15 +127,16 @@ enum Command {
         /// Show top N symbols.
         #[arg(long, default_value_t = 40)]
         top: usize,
-        /// Bucket return addresses while PC is inside the first symbol matching
-        /// this substring (one-level caller profile).
+        /// Bucket return addresses while PC is inside the symbol with this exact
+        /// name, else the first symbol containing it (one-level caller profile).
         #[arg(long)]
         callers_of: Option<String>,
         /// Exact trace-row attribution (real + virtual/inline rows) per symbol.
         #[arg(long)]
         rows: bool,
-        /// With --rows: per-PC row histogram inside the first symbol matching
-        /// this substring (splits a function into its phases).
+        /// With --rows: per-PC row histogram inside the symbol with this exact
+        /// name, else the first symbol containing it (splits a function into
+        /// its phases).
         #[arg(long)]
         pcs_of: Option<String>,
         /// With --rows: count entries (PC == symbol start) of every symbol
