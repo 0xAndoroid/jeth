@@ -203,7 +203,17 @@ pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: 
             #[inline(always)]
             |input| {
                 let mut result = [0u64; 4];
-                keccak_uncached(input.as_ptr(), input.len(), result.as_mut_ptr().cast());
+                let out = result.as_mut_ptr().cast();
+                // A constant length in each arm: the miss path is then small and inlines into
+                // this function. Given `input.len()` it carries the blocks of all 136 short
+                // lengths of `keccak.rs` (about 34 KB) and is kept out of line, in two
+                // `keccak_cache::compute_with` functions. The guard above admits no other
+                // length.
+                match input.len() {
+                    32 => keccak_uncached(input.as_ptr(), 32, out),
+                    64 => keccak_uncached(input.as_ptr(), 64, out),
+                    _ => unreachable!(),
+                }
                 result
             },
         );
