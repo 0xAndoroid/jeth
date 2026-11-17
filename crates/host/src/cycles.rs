@@ -5,6 +5,9 @@
 //! including trees that predate this file. The count is the `trace_rows_total`
 //! that tree's `trace::run` writes: the rows of the proven pass after
 //! virtual-sequence and inline expansion, unpadded.
+//!
+//! In a tree that has the `native-advice` example, `run` also fails a block whose
+//! natively recorded advice tape differs from the tape `jeth trace` wrote for it.
 
 use alloy_primitives::{hex, B256};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -25,6 +28,19 @@ const MANIFEST: &str = include_str!("../../../fixtures/cycles-blocks.json");
 /// `trace::Variant::Input` with no extra guest features: the target-dir suffix
 /// `trace::elf_path_with` derives for it.
 const GUEST_ELF: &str = "-validate_block/riscv64imac-unknown-none-elf/release/jeth-guest";
+
+const JETH: [&str; 4] = ["-p", "jeth-host", "--bin", "jeth"];
+
+/// The example that records a native advice tape, with the features its
+/// `required-features` in `crates/core/Cargo.toml` names.
+const NATIVE_ADVICE: [&str; 6] = [
+    "-p",
+    "jeth-core",
+    "--example",
+    "native-advice",
+    "--features",
+    "native-advice,secp-inline,code-library,bigint-inline",
+];
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -106,11 +122,11 @@ struct Tree {
 }
 
 impl Tree {
-    /// `cargo <subcommand>` on the tree's `jeth` binary, under the tree's own toolchain.
-    fn cargo(&self, subcommand: &str) -> Command {
+    /// `cargo <subcommand>` on one of the tree's targets, under the tree's own toolchain.
+    fn cargo(&self, subcommand: &str, target: &[&str]) -> Command {
         let mut cmd = Command::new("cargo");
         cmd.args([subcommand, "--locked", "--release"])
-            .args(["-p", "jeth-host", "--bin", "jeth"])
+            .args(target)
             .current_dir(&self.root)
             // A harness started through `cargo run` carries its own toolchain in
             // RUSTUP_TOOLCHAIN, which overrides the measured tree's rust-toolchain.toml.
@@ -119,17 +135,27 @@ impl Tree {
     }
 
     fn jeth(&self) -> Command {
-        let mut cmd = self.cargo("run");
+        let mut cmd = self.cargo("run", &JETH);
         cmd.args(["-q", "--"])
             .env("JETH_GUEST_TARGET_DIR", self.root.join("target/guest"));
         cmd
     }
 
-    fn build_host(&self) -> Result<()> {
-        let status = self.cargo("build").status().context("running cargo")?;
+    fn records_native_advice(&self) -> bool {
+        self.root
+            .join("crates/core/examples/native-advice.rs")
+            .exists()
+    }
+
+    fn build(&self, target: &[&str]) -> Result<()> {
+        let status = self
+            .cargo("build", target)
+            .status()
+            .context("running cargo")?;
         ensure!(
             status.success(),
-            "building jeth-host in {} failed",
+            "cargo build {} in {} failed",
+            target.join(" "),
             self.root.display()
         );
         Ok(())
@@ -163,7 +189,8 @@ impl Tree {
     }
 
     /// Derives the block's input with the tree's `repack`, traces it with the
-    /// tree's guest and checks the guest validated the pinned block.
+    /// tree's guest and checks the guest validated the pinned block and, where
+    /// the tree records native advice, that both advice tapes agree.
     fn measure(
         &self,
         pin: &PinnedBlock,
@@ -205,6 +232,31 @@ impl Tree {
             pin.hash,
             pin.gas_used
         );
+        if self.records_native_advice() {
+            let native = dir.join("advice-native.bin");
+            let mut record = self.cargo("run", &NATIVE_ADVICE);
+            record
+                .args(["-q", "--"])
+                .arg(dir.join("input.bin"))
+                .arg(&native);
+            run_logged(record, &dir.join("native-advice.log"))?;
+            let native = std::fs::read(native)?;
+            let interpreted = std::fs::read(dir.join("advice-tape.bin"))
+                .context("the tree's `jeth trace` wrote no advice tape")?;
+            if native != interpreted {
+                let agree = native
+                    .iter()
+                    .zip(&interpreted)
+                    .take_while(|(native, interpreted)| native == interpreted)
+                    .count();
+                bail!(
+                    "the native advice tape ({} bytes) and the compute_advice tape ({} bytes) \
+                     differ from byte {agree}",
+                    native.len(),
+                    interpreted.len()
+                );
+            }
+        }
         Ok(summary.trace_rows_total)
     }
 }
@@ -308,8 +360,13 @@ pub fn run(
 
     println!("measuring {}", tree.root.display());
     let start = Instant::now();
-    tree.build_host()?;
+    tree.build(&JETH)?;
     println!("jeth-host built in {:.1?}", start.elapsed());
+    if tree.records_native_advice() {
+        let start = Instant::now();
+        tree.build(&NATIVE_ADVICE)?;
+        println!("native-advice example built in {:.1?}", start.elapsed());
+    }
 
     let measure = |pin: &PinnedBlock, build_guest: bool| {
         let start = Instant::now();

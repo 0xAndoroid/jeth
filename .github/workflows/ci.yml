@@ -108,6 +108,10 @@ jobs:
             args: -p jeth-core --lib --features bn254-pairing-residue
           - name: kzg-residue
             args: -p jeth-core --lib --features kzg-residue
+          - name: native-advice
+            args: -p jeth-core --features native-advice,secp-inline,code-library,bigint-inline
+          - name: native-advice-residue
+            args: -p jeth-core --lib --features native-advice,bn254-pairing-residue,kzg-residue recorded_native_advice
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
