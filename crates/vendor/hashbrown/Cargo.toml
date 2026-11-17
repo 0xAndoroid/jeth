@@ -82,6 +82,11 @@ serde = [
 
 [workspace]
 
+# Mirrors the entries of crates/guest's [patch.crates-io] that this crate's graph contains,
+# so the riscv64 CI job tests it against the crates the guest links.
+[patch.crates-io]
+foldhash = { path = "../foldhash" }
+
 [lib]
 name = "hashbrown"
 path = "src/lib.rs"

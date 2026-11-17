@@ -123,3 +123,14 @@ priority = -1
 all = "warn"
 
 [workspace]
+
+# Mirrors the entries of crates/guest's [patch.crates-io] that this crate's graph contains,
+# so the riscv64 CI job tests it against the crates the guest links.
+[patch.crates-io]
+revm-context-interface = { path = "../revm-context-interface" }
+revm-bytecode = { path = "../revm-bytecode" }
+alloy-eip7702 = { path = "../alloy-eip7702" }
+foldhash = { path = "../foldhash" }
+alloy-primitives = { path = "../alloy-primitives" }
+hashbrown = { path = "../hashbrown" }
+ark-ff = { path = "../ark-ff" }
