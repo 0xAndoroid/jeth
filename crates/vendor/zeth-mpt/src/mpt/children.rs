@@ -198,14 +198,33 @@ impl<M: Memoization> Children<M> {
     /// Encode every dirty child through the reused arena scratch buffer.
     /// Empty and digest slots cost a tag test; clean children a cache test;
     /// neither a call.
+    #[inline(always)]
     pub(super) fn memoize_arena(&mut self, scratch: &mut Scratch) {
-        for slot in &mut self.0 {
-            if let Slot::Node(child) = slot {
-                if child.needs_memo() {
-                    child.encode_dirty(scratch);
+        macro_rules! visit {
+            ($i:literal) => {
+                if let Slot::Node(child) = &mut self.0[$i] {
+                    if child.needs_memo() {
+                        child.encode_dirty(scratch);
+                    }
                 }
-            }
+            };
         }
+        visit!(0);
+        visit!(1);
+        visit!(2);
+        visit!(3);
+        visit!(4);
+        visit!(5);
+        visit!(6);
+        visit!(7);
+        visit!(8);
+        visit!(9);
+        visit!(10);
+        visit!(11);
+        visit!(12);
+        visit!(13);
+        visit!(14);
+        visit!(15);
     }
 }
 
