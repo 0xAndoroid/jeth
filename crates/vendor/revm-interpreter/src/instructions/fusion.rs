@@ -28,6 +28,10 @@ const _: () = assert!(
         && super::static_gas(EQ, SpecId::FRONTIER) == TEST_COST
 );
 
+/// Stock handlers in the six slots a fused sequence runs or skips. Nothing checks the other 250:
+/// a custom handler there that calls the default PUSH2, ISZERO or EQ entry still reaches `push2`
+/// or `test_jump` and gets the state after the jump, so it has to call `stack::push::<2>`,
+/// `bitwise::iszero` or `bitwise::eq` itself.
 pub(crate) fn matches<W: InterpreterTypes, H: Host + ?Sized>(
     table: &InstructionTable<W, H>,
 ) -> bool {
