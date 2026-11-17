@@ -27,7 +27,6 @@ mod mem;
 
 use jeth_core::{BlockInput, ValidationResult};
 
-/// Print keccak counters with a phase label (census builds only).
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
 fn keccak_stats(label: &str) {
     unsafe {
@@ -44,7 +43,6 @@ fn keccak_stats(label: &str) {
 #[cfg(not(all(feature = "guest", feature = "keccak-census")))]
 fn keccak_stats(_label: &str) {}
 
-/// Shared body: read JEF (measured), verify signatures, validate statelessly.
 fn run_validation(bytes: &[u8]) -> ValidationResult {
     // Advice-tape alignment sentinel: panics immediately on a missing tape or
     // mismatched compute/proven ELF pair (~6 rows).
@@ -81,9 +79,9 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
 /// Standard path: JEF arrives as committed input, borrowed from the input region.
 #[jolt::provable(
     max_input_size = 16777216,   // `DEFAULT_INPUT_SIZE` in crates/host/src/trace.rs
-    max_output_size = 4096,      // 4 KiB
-    heap_size = 1610612736,      // 1.5 GiB (keeps addr space < 4 GiB)
-    stack_size = 33554432        // 32 MiB
+    max_output_size = 4096,
+    heap_size = 1610612736,
+    stack_size = 33554432
 )]
 fn validate_block(input: &[u8]) -> ValidationResult {
     run_validation(input)
@@ -110,7 +108,7 @@ fn validate_block_128m(input: &[u8]) -> ValidationResult {
 #[jolt::provable(
     max_input_size = 4096,
     max_output_size = 4096,
-    max_trusted_advice_size = 134217728, // 128 MiB
+    max_trusted_advice_size = 134217728,
     heap_size = 1610612736,
     stack_size = 33554432
 )]
@@ -128,9 +126,9 @@ fn validate_block_advice(input: jolt::TrustedAdvice<&[u8]>) -> ValidationResult 
 /// Blob layout: u32 LE state-digest count, then that many 32-byte digests,
 /// then 32-byte code hashes for every witness code entry.
 #[jolt::provable(
-    max_input_size = 134217728,         // 128 MiB
+    max_input_size = 134217728,
     max_output_size = 4096,
-    max_trusted_advice_size = 4194304,  // 4 MiB (52k digests ≈ 1.7 MB observed)
+    max_trusted_advice_size = 4194304,
     heap_size = 1610612736,
     stack_size = 33554432
 )]

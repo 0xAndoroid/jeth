@@ -379,7 +379,6 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
                 host,
             };
             ip = instruction.execute(next, context);
-            // Null: the instruction halted or yielded and set the action.
             if ip.is_null() {
                 break;
             }

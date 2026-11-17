@@ -59,7 +59,6 @@ jeth-inlines-bls12-381 = { workspace = true, features = ["host"] }
 # profiler: guest ELF symbolization
 object = "0.40"
 rustc-demangle = "0.1"
-# txprofile: cycle-marker report parsing
 regex-lite = "0.1"
 sha2 = "0.11"
 
