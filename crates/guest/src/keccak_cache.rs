@@ -172,4 +172,34 @@ mod tests {
         }
         assert_eq!(count, 1);
     }
+    #[test]
+    fn key_is_the_whole_input_and_its_length_at_every_alignment() {
+        #[repr(align(8))]
+        struct Buffer([u8; 72]);
+        for len in [32usize, 64] {
+            let mut reference = Buffer([0; 72]);
+            for (i, byte) in reference.0.iter_mut().enumerate() {
+                *byte = (i * 7 + len) as u8;
+            }
+            let expected = Key::new(&reference.0[..len]);
+            for offset in 0..8 {
+                let mut buffer = Buffer([0; 72]);
+                buffer.0[offset..offset + len].copy_from_slice(&reference.0[..len]);
+                assert!(
+                    Key::new(&buffer.0[offset..offset + len]) == expected,
+                    "len {len} offset {offset}"
+                );
+                for bit in 0..len * 8 {
+                    buffer.0[offset + bit / 8] ^= 1 << (bit % 8);
+                    assert!(
+                        Key::new(&buffer.0[offset..offset + len]) != expected,
+                        "len {len} offset {offset} bit {bit}"
+                    );
+                    buffer.0[offset + bit / 8] ^= 1 << (bit % 8);
+                }
+            }
+        }
+        let zeros = [0u8; 64];
+        assert!(Key::new(&zeros[..32]) != Key::new(&zeros));
+    }
 }
