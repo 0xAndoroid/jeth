@@ -350,9 +350,9 @@ or point `JOLT_PATH` at a `jolt` binary built from that rev.
 `just cycles` (`jeth cycles run`) counts expanded cycles for a tree over a frozen block set: the
 ten consecutive mainnet blocks 26227668–26227677 (277,426,425 gas). The count per block is the
 `trace_rows_total` of `jeth trace`: the rows `tracer::execute` returns for the proven pass of the
-committed-input `validate_block` guest with its default features (`keccak-census` and
-`keccak-cache` on), after virtual-sequence and inline expansion, unpadded. The advice pass is not
-counted.
+committed-input `validate_block` guest with its default features (`keccak-census`,
+`keccak-cache` and `push-jump-fusion` on), after virtual-sequence and inline expansion, unpadded.
+The advice pass is not counted.
 
 ```bash
 just cycles                               # this tree → target/cycles/cycles.{json,md}

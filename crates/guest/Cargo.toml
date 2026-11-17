@@ -13,7 +13,13 @@ edition = "2021"
 bn254-pairing-residue = ["jeth-core/bn254-pairing-residue"]
 # KZG pairing check from an advice-tape witness (see jeth-core/kzg-residue).
 kzg-residue = ["jeth-core/kzg-residue"]
-default = ["keccak-census", "keccak-cache"]
+# Jump fusion in the vendored interpreter's run loop: `PUSH2 JUMP`,
+# `PUSH2 JUMPI`, `ISZERO PUSH2 JUMPI` and `EQ PUSH2 JUMPI` each run as one
+# dispatch when the whole sequence succeeds. On by default;
+# `--no-default-features` drops it (name `keccak-census` and `keccak-cache` in
+# `--features` to keep the other two defaults).
+push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
+default = ["keccak-census", "keccak-cache", "push-jump-fusion"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
 # normal `jeth trace` output (the `perms=` count is a campaign gate). Only
@@ -22,7 +28,8 @@ guest = ["jeth-core/code-library"]
 keccak-census = []
 # Bounded cache for repeated 32-/64-byte Keccak inputs. Misses add work. On by
 # default in the proven and the `compute_advice` build; `--no-default-features`
-# drops it (name `keccak-census` in `--features` to keep the census).
+# drops it (name `keccak-census` and `push-jump-fusion` in `--features` to keep
+# the other two defaults).
 keccak-cache = ["dep:fixed-cache"]
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
