@@ -104,6 +104,10 @@ jobs:
         include:
           - name: secp-inline
             args: -p jeth-core --features secp-inline
+          - name: bn254-pairing-residue
+            args: -p jeth-core --lib --features bn254-pairing-residue
+          - name: kzg-residue
+            args: -p jeth-core --lib --features kzg-residue
           - name: native-advice
             args: -p jeth-core --features native-advice,secp-inline,code-library,bigint-inline
     env:

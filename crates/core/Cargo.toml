@@ -8,6 +8,12 @@ name = "native-advice"
 required-features = ["native-advice", "secp-inline", "code-library", "bigint-inline"]
 
 [features]
+bn254-pairing-residue = ["secp-inline"]
+# KZG pairing check from a root witness that the guest reads from the advice tape and verifies,
+# in place of the final exponentiation (src/kzg/residue.rs). No code in this tree writes that
+# witness: the compute-advice pass writes flag 0, so a guest built with the feature reads one
+# more advice word per check and still runs the final exponentiation.
+kzg-residue = ["secp-inline"]
 std = []
 # Record untrusted advice while executing the validation logic natively.
 native-advice = ["std", "zeth-mpt/native-advice", "jolt-inlines-secp256k1?/host"]
@@ -78,11 +84,14 @@ reth-primitives-traits.workspace = true
 revm-database-interface.workspace = true
 revm-state.workspace = true
 
-# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs):
-# the registry 0.5 crates revm-precompile's arkworks backend already compiles.
+# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs) and the KZG
+# point-evaluation check (src/kzg.rs): the registry 0.5 crates revm-precompile's arkworks
+# backend already compiles.
 ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
 
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -103,6 +112,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e53
 sha3 = { version = "0.12", default-features = false }
 
 [dev-dependencies]
+num-bigint = "0.4"
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jeth-inlines-blake2f.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
