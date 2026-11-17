@@ -2,7 +2,7 @@
 //!
 //! Run one block per process. Match the guest's source revision, dependency
 //! versions, and features; a tape is not portable across arbitrary guest builds.
-//! This example does not support the trusted-digest guest or optional guest
+//! This recorder does not support the trusted-digest guest or optional guest
 //! features such as lazy analysis.
 
 use std::{
@@ -16,7 +16,7 @@ use std::{
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = env::args_os().skip(1);
-    let usage = "usage: native-advice INPUT_JEF OUTPUT_TAPE";
+    let usage = "usage: jeth-native-advice INPUT_JEF OUTPUT_TAPE";
     let input_path = args.next().ok_or(usage)?;
     let output_path = args.next().ok_or(usage)?;
     if args.next().is_some() {

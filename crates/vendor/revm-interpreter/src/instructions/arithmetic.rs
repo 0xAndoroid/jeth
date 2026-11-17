@@ -178,7 +178,7 @@ pub fn mulmod<WIRE: InterpreterTypes, H: ?Sized>(
 
 #[cfg(feature = "bigint-inline")]
 unsafe extern "C" {
-    /// jeth guest hook: `(a * b) % m` via the Jolt BIGINT256_MUL inline, the
+    /// jeth hook, defined in jeth-core's `bigint.rs`: `(a * b) % m`, the
     /// remainder written over `m` (zero when `m` is zero).
     fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64);
 }

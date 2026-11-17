@@ -3,11 +3,17 @@ name = "jeth-guest"
 version = "0.1.0"
 edition = "2021"
 
-# Standalone package (NOT part of the jeth workspace): built exclusively via the
-# `jolt` CLI for riscv64imac-unknown-none-elf with `--features guest`. Keeping it
-# out of the workspace isolates guest-only feature choices (alloy native-keccak)
-# from native host builds.
+# Root of its own workspace (NOT part of the jeth workspace): this package is built
+# exclusively via the `jolt` CLI for riscv64imac-unknown-none-elf with `--features
+# guest`. Keeping it out of the jeth workspace isolates guest-only feature choices
+# (alloy native-keccak) from that workspace's native host builds.
+#
+# The one other member, crates/native-advice, records advice natively and must run
+# the `[patch]` tables and the lockfile of the guest. Select one member per command
+# (`-p` or `--manifest-path`): Cargo unifies features over the packages a command
+# builds, so a `--workspace` build would give the recorder the guest's features.
 [workspace]
+members = ["../native-advice"]
 
 [features]
 bn254-pairing-residue = ["jeth-core/bn254-pairing-residue"]
@@ -47,8 +53,8 @@ jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f19
 jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "blake2f-inline", "p256-inline", "bigint-inline", "bn254-inline", "bls12-381-inline", "guest-instrument"] }
 # Direct dependency only to reach the vendored crate's features (always on, like
 # the jeth-core inline features above). `bigint-inline`: EVM MULMOD through the
-# `jeth_mul_mod` hook in lib.rs. `jolt-byte-swap`: `bswap64` through Jolt's
-# VirtualRev8W instruction.
+# `jeth_mul_mod` hook in jeth-core's `bigint.rs`. `jolt-byte-swap`: `bswap64`
+# through Jolt's VirtualRev8W instruction.
 revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline", "jolt-byte-swap"] }
 
 # `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM
@@ -101,6 +107,13 @@ zeth-mpt = { path = "../vendor/zeth-mpt" }
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+
+# For crates/native-advice, a native binary: `release` above is tuned for the guest
+# ELF, and its fat LTO and single codegen unit slow the recorder's build.
+[profile.recorder]
+inherits = "release"
+lto = false
+codegen-units = 16
 
 [lib]
 test = false

@@ -242,7 +242,7 @@ changing the proof statement. Measured against block 25698189 post-campaign-2:
 |---|---|---|
 | RLP/MPT structure advice (node boundaries, field offsets) | **not exploitable** | verifying a claimed RLP header at an offset = reading the same header bytes the parser reads; the actual decode cost was alignment overhead (fixed by word-RMW) + per-child recursion, not scanning. Zero-copy + override supersede. |
 | Trie-traversal / storage-slot position advice | **not exploitable** | a Merkle lookup's verification IS the root-anchored walk; `get` is already ~free post-reveal, and reveal work is witness-bounded. Advising positions saves the compare-free walk but still pays node decode + hash — the actual costs. |
-| Verify-by-multiply for U256 division | **not worth it** | Jolt's hardware DIV/REM is already advice-backed (division virtual sequence). Out-of-line `div_rem` = 1.27M rows (0.1%), mostly MULMOD's 512÷256 reduction; advice (q,r) + 256×256 mul check ≈ half of ~1M. Skip. |
+| Verify-by-multiply for U256 division | **not worth it**; superseded for MULMOD by #29 | Jolt's hardware DIV/REM is already advice-backed (division virtual sequence). Out-of-line `div_rem` = 1.27M rows (0.1%), mostly MULMOD's 512÷256 reduction; advice (q,r) + 256×256 mul check ≈ half of ~1M. Skip. **Superseded:** #29 advises MULMOD's quotient alone and takes the remainder from the checked difference of two 256×256 products (`crates/core/src/bigint.rs`); its rows are in that PR's Cycles table (→ Cycle-count harness). |
 | Advice-carried jump tables (R7) | **exploitable — next up** | `analyze_legacy` = 39.7M rows (3.1%). Sound WITHOUT in-guest verification: a wrong table bit either never influences execution or diverges a consensus-checked output (receipts/gas/state root) → panic → no proof. Needs the two-pass harness in trace.rs (compute_advice ELF + tape plumbing); est −35–40M, ~1 day incl. harness. |
 | keccak via advice | **impossible by construction** | verification = recomputation for a hash. The trusted-digests variant is the honest version of this trade (verifier-attested digests), already shipped. |
 
@@ -366,8 +366,8 @@ just jeth cycles compare <base>/cycles.json <head>/cycles.json
   `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
   `input.bin`, so a change to the input encoding is measured with its own encoder.
 - **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
-  pinned ones. In a tree that has the `native-advice` example (README → Native advice
-  generation), a block also fails when the tape the example records for its `input.bin` differs
+  pinned ones. In a tree that has the `crates/native-advice` package (README → Native advice
+  generation), a block also fails when the tape that recorder writes for its `input.bin` differs
   from `advice-tape.bin`, the `compute_advice` pass's tape, which `jeth trace` writes beside
   `trace-summary.json`. The run still reports the other blocks, then exits nonzero.
 - **One checkout path per comparison.** Absolute totals are specific to the build paths
@@ -2140,7 +2140,7 @@ against the software path) before merging.
 | p256 (MULQ 264, FAKE_GLV_ADV 29) | P256VERIFY (0x100), `crates/core/src/p256.rs` | 3,784,035 → 501,756 per verify | **539.1 → 71.5** |
 | sha2 (SHA256INIT 1864 + SHA256 1900) | SHA256 (0x02) | 554,560 → 255,650 (8 KiB) · 78,673 → 38,595 (1 KiB) · 9,751 → 7,004 (32 B) | 170.6 → 78.6 · 139.7 → 68.6 · 51.1 → 36.7 |
 | blake2 (BLAKE2 1067, fixed 12 rounds) | BLAKE2F (0x09), `rounds == 12 && t[1] == 0` only | 9,853 → 7,814 (r12) · r1000 unchanged | 75.2 → 59.7 · 232.4 |
-| bigint (BIGINT256_MUL 141) | MULMOD 512-bit product (vendored interpreter, `jeth_mul_mod` hook) | 1,239 → 1,005 (op alone 65.2 → 52.9 c/g); N128 1,015 → 788; N3 947 → 718 | — |
+| bigint (BIGINT256_MUL 141) | MULMOD 512-bit product (vendored interpreter, `jeth_mul_mod` hook). Since #29 the hook is in `crates/core/src/bigint.rs` and checks a quotient hint with two such products when the modulus is at least 2^192, is not 2^256−1 and is above at least one operand; ruint computes the other cases | 1,239 → 1,005 (op alone 65.2 → 52.9 c/g); N128 1,015 → 788; N3 947 → 718, all for the product-only hook (#29: that PR's Cycles table) | — |
 | bigint | MODEXP, odd moduli of 9..=32 significant bytes, `crates/core/src/bigint.rs` Montgomery ladder | 32-32-32 479,810 → 207,620 · 24-32-24 338,167 → 202,788 · 16-32-16 220,236 → 200,067 · 32-e1-32 19,192 → 11,741 | 115.2 → ~49.8 |
 
 Not routed, measured: MUL (95 rows compiled vs 141 inline), EXP, ADDMOD,

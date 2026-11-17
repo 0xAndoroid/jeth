@@ -6,7 +6,7 @@
 //! that tree's `trace::run` writes: the rows of the proven pass after
 //! virtual-sequence and inline expansion, unpadded.
 //!
-//! In a tree that has the `native-advice` example, `run` also fails a block whose
+//! In a tree that has the `crates/native-advice` package, `run` also fails a block whose
 //! natively recorded advice tape differs from the tape `jeth trace` wrote for it.
 
 use alloy_primitives::{hex, B256};
@@ -29,17 +29,16 @@ const MANIFEST: &str = include_str!("../../../fixtures/cycles-blocks.json");
 /// `trace::elf_path_with` derives for it.
 const GUEST_ELF: &str = "-validate_block/riscv64imac-unknown-none-elf/release/jeth-guest";
 
-const JETH: [&str; 4] = ["-p", "jeth-host", "--bin", "jeth"];
+const JETH: [&str; 5] = ["--release", "-p", "jeth-host", "--bin", "jeth"];
 
-/// The example that records a native advice tape, with the features its
-/// `required-features` in `crates/core/Cargo.toml` names.
-const NATIVE_ADVICE: [&str; 6] = [
-    "-p",
-    "jeth-core",
-    "--example",
-    "native-advice",
-    "--features",
-    "native-advice,secp-inline,code-library,bigint-inline",
+const NATIVE_ADVICE_MANIFEST: &str = "crates/native-advice/Cargo.toml";
+
+/// `crates/guest/Cargo.toml`, the root of the recorder's workspace, defines the `recorder` profile.
+const NATIVE_ADVICE: [&str; 4] = [
+    "--profile",
+    "recorder",
+    "--manifest-path",
+    NATIVE_ADVICE_MANIFEST,
 ];
 
 #[derive(Deserialize)]
@@ -125,7 +124,7 @@ impl Tree {
     /// `cargo <subcommand>` on one of the tree's targets, under the tree's own toolchain.
     fn cargo(&self, subcommand: &str, target: &[&str]) -> Command {
         let mut cmd = Command::new("cargo");
-        cmd.args([subcommand, "--locked", "--release"])
+        cmd.args([subcommand, "--locked"])
             .args(target)
             .current_dir(&self.root)
             // A harness started through `cargo run` carries its own toolchain in
@@ -142,9 +141,7 @@ impl Tree {
     }
 
     fn records_native_advice(&self) -> bool {
-        self.root
-            .join("crates/core/examples/native-advice.rs")
-            .exists()
+        self.root.join(NATIVE_ADVICE_MANIFEST).exists()
     }
 
     fn build(&self, target: &[&str]) -> Result<()> {
@@ -365,7 +362,7 @@ pub fn run(
     if tree.records_native_advice() {
         let start = Instant::now();
         tree.build(&NATIVE_ADVICE)?;
-        println!("native-advice example built in {:.1?}", start.elapsed());
+        println!("native-advice recorder built in {:.1?}", start.elapsed());
     }
 
     let measure = |pin: &PinnedBlock, build_guest: bool| {
