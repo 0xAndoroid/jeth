@@ -65,7 +65,6 @@ jobs:
           for crate in $crates; do
             cargo clippy -p "$crate" --all-targets -q --message-format=short -- -D warnings
           done
-      - run: cargo clippy -p jeth-core --all-targets --features native-advice,code-library -q --message-format=short -- -D warnings
       - if: always()
         run: echo "clippy wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
@@ -89,7 +88,6 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo nextest run --workspace --locked --no-fail-fast
-      - run: cargo nextest run -p jeth-core --features native-advice,secp-inline,code-library,bigint-inline --locked --no-fail-fast
       - if: always()
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
@@ -106,6 +104,8 @@ jobs:
         include:
           - name: secp-inline
             args: -p jeth-core --features secp-inline
+          - name: native-advice
+            args: -p jeth-core --features native-advice,secp-inline,code-library,bigint-inline
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
