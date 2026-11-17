@@ -232,7 +232,7 @@ enum CyclesCommand {
         #[arg(long, default_value = cycles::DEFAULT_TREE)]
         tree: String,
         /// GitHub repository whose release holds the block set.
-        #[arg(long, default_value = "0xAndoroid/jeth")]
+        #[arg(long, default_value = "a16z/jeth")]
         repo: String,
         /// Directory the block set is downloaded into.
         #[arg(long, default_value = "data/cycles")]

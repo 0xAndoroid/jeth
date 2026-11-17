@@ -70,7 +70,7 @@ jobs:
 
   test:
     name: host unit tests
-    runs-on: ubicloud-standard-2-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 60 }}
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
@@ -94,9 +94,9 @@ jobs:
   features:
     # `test` builds the default features, so a test that compiles only with a
     # cargo feature never runs there. Each entry runs one such feature set in
-    # its own job: a second build in `test` does not fit its pull-request cap.
+    # its own job, beside `test` and outside its pull-request cap.
     name: feature tests (${{ matrix.name }})
-    runs-on: ubicloud-standard-2-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: ${{ github.event_name == 'pull_request' && 10 || 60 }}
     strategy:
       fail-fast: false
