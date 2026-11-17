@@ -97,8 +97,6 @@ pub(crate) unsafe fn load_gathered(p: *const u8) -> u64 {
 
 #[cfg(all(test, target_arch = "riscv64"))]
 mod gather_tests {
-    /// The gather must reproduce the unaligned read at all 8 offsets inside an
-    /// aligned 32-byte window.
     #[test]
     fn gathered_load_matches_unaligned_read() {
         #[repr(align(8))]

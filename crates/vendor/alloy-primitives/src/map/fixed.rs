@@ -187,7 +187,6 @@ fn write_bytes_unrolled(hasher: &mut FbHasherInner, mut bytes: &[u8]) {
     debug_assert!(bytes.is_empty());
 }
 
-/// `usize::from_ne_bytes(*chunk)`, read through the containing-word gather on the guest.
 // Not `const`: the riscv64 branch is an inline-asm load (crate lint `missing_const_for_fn`).
 #[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
@@ -203,7 +202,6 @@ fn read_ne_usize(chunk: &[u8; core::mem::size_of::<usize>()]) -> usize {
     }
 }
 
-/// `u32::from_ne_bytes(*chunk)`, read through the containing-word gather on the guest.
 // Not `const`: the riscv64 branch is an inline-asm load (crate lint `missing_const_for_fn`).
 #[allow(clippy::missing_const_for_fn)]
 #[inline(always)]
@@ -283,8 +281,6 @@ mod tests {
         FbBuildHasher::<N>::default().hash_one(&FixedBytes::<N>::ZERO)
     }
 
-    /// jeth patch: the gather must reproduce the byte-wise read for every source
-    /// alignment (8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window).
     #[cfg(target_arch = "riscv64")]
     #[test]
     fn gather_matches_from_ne_bytes() {
@@ -306,8 +302,6 @@ mod tests {
         }
     }
 
-    /// jeth patch: on riscv64 `FbHasher::write` reads key chunks through `gather`; it must
-    /// feed the hasher the `from_ne_bytes` chunks at every key length and source alignment.
     #[cfg(target_arch = "riscv64")]
     #[test]
     fn write_gather_matches_from_ne_bytes() {
