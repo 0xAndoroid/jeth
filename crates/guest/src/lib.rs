@@ -1,13 +1,15 @@
 //! jeth guest: statelessly validate one Ethereum mainnet block inside Jolt.
 //!
-//! Sizing rationale (PLAN.md D6): input ~10–15 MB observed for single mainnet
-//! blocks, up to 90 MB for `jeth merge` multi-block synthetic inputs (19 blocks);
-//! decoded witness + sparse trie + revm state for a ~29M-gas block needs
-//! high-hundreds-MB heap. The I/O region lives below RAM_START and is padded to a
-//! power of two (128 MiB input → 256 MiB region), so widening it moves only
-//! `input_start`; program/stack/heap are unchanged and all guest addresses stay
-//! < 4 GiB (cycle-marker pointers truncate to u32).
-//! KEEP IN SYNC with `GUEST_MEMORY` in `crates/host/src/trace.rs`.
+//! Sizing rationale (PLAN.md D6): `validate_block`'s committed-input region is
+//! sized for one mainnet block; the largest single-block input observed is
+//! 13,627,820 bytes (block 25512816, Jul–Sep 2026 top-50 set, 60M gas limit).
+//! `validate_block_128m` reserves 128 MiB for `jeth merge` multi-block synthetic
+//! inputs (90 MB at 19 blocks). The I/O region lives below RAM_START and is
+//! padded to a power of two (128 MiB input → 256 MiB region), so the input size
+//! moves only the I/O addresses; program/stack/heap are unchanged and all guest
+//! addresses stay < 4 GiB (cycle-marker pointers truncate to u32).
+//! KEEP IN SYNC with the size constants in `crates/host/src/trace.rs`; its test
+//! `guest_attributes_declare_the_host_memory_config` compares the two files.
 
 #![cfg_attr(feature = "guest", no_std)]
 
@@ -76,12 +78,25 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
 
 /// Standard path: JEF arrives as committed input, borrowed from the input region.
 #[jolt::provable(
-    max_input_size = 134217728,  // 128 MiB (multi-block synthetic inputs reach 90 MB at 19 blocks)
+    max_input_size = 16777216,   // `DEFAULT_INPUT_SIZE` in crates/host/src/trace.rs
     max_output_size = 4096,      // 4 KiB
     heap_size = 1610612736,      // 1.5 GiB (keeps addr space < 4 GiB)
     stack_size = 33554432        // 32 MiB
 )]
 fn validate_block(input: &[u8]) -> ValidationResult {
+    run_validation(input)
+}
+
+/// The same validation with a 128 MiB committed-input region, for inputs above
+/// `validate_block`'s limit. The host builds it only on `--large-input`, never
+/// by input size.
+#[jolt::provable(
+    max_input_size = 134217728,
+    max_output_size = 4096,
+    heap_size = 1610612736,
+    stack_size = 33554432
+)]
+fn validate_block_128m(input: &[u8]) -> ValidationResult {
     run_validation(input)
 }
 

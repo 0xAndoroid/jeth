@@ -31,8 +31,8 @@ use reth_consensus::{Consensus, HeaderValidator};
 use reth_ethereum_consensus::{validate_block_post_execution, EthBeaconConsensus};
 use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_evm::{
-    execute::{BlockExecutionOutput, BlockExecutor},
-    revm::database::{states::bundle_state::BundleRetention, CacheState, State},
+    execute::BlockExecutor,
+    revm::database::{CacheState, State},
     ConfigureEvm,
 };
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
@@ -69,9 +69,12 @@ pub struct ValidatedBlock {
 }
 
 /// Stateless validation with the tx loop expanded in-line (see module docs).
-#[expect(
-    clippy::unused_enumerate_index,
-    reason = "The transaction index is consumed only by guest instrumentation."
+#[cfg_attr(
+    not(feature = "pertx-markers"),
+    expect(
+        clippy::unused_enumerate_index,
+        reason = "The transaction index is consumed only by guest instrumentation."
+    )
 )]
 pub fn validate_recovered_pertx(
     current_block: RecoveredBlock<Block>,
@@ -150,26 +153,30 @@ pub fn validate_recovered_pertx(
         .apply_post_execution_changes()
         .map_err(|e| StatelessValidationError::StatelessExecutionFailed(e.to_string()))?;
 
-    state.merge_transitions(BundleRetention::Reverts);
-    let output = BlockExecutionOutput {
-        state: state.take_bundle(),
-        result,
+    // Validation needs the final values, not a rollback bundle. Move the
+    // accumulated transitions directly into their final-account view.
+    let Some(transition_state) = state.transition_state.take() else {
+        return Err(StatelessValidationError::StatelessStateRootCalculationFailed);
     };
+    let final_accounts: Vec<_> = transition_state
+        .transitions
+        .into_iter()
+        .filter_map(|(address, transition)| {
+            crate::final_state::final_account(transition).map(|account| (address, account))
+        })
+        .collect();
     // Single-shot process: leak the block state instead of tearing it down.
     core::mem::forget(state);
 
-    let root_bloom = receipt_root_bloom(&output.result.receipts, |address| {
-        trie.hashed_address(address)
-    });
-    validate_block_post_execution(
-        &current_block,
-        &chain_spec,
-        &output.result,
-        Some(root_bloom),
-    )
-    .map_err(StatelessValidationError::ConsensusValidationFailed)?;
+    let root_bloom = receipt_root_bloom(&result.receipts, |address| trie.hashed_address(address));
+    validate_block_post_execution(&current_block, &chain_spec, &result, Some(root_bloom))
+        .map_err(StatelessValidationError::ConsensusValidationFailed)?;
 
-    let hashed_state = trie.hashed_post_state(&output.state.state);
+    let hashed_state = trie.hashed_post_state(
+        final_accounts
+            .iter()
+            .map(|(address, account)| (address, account)),
+    );
     let state_root = trie.calculate_state_root(hashed_state)?;
     if state_root != current_block.state_root {
         return Err(StatelessValidationError::PostStateRootMismatch {
@@ -180,11 +187,11 @@ pub fn validate_recovered_pertx(
 
     let validated = ValidatedBlock {
         block_hash: current_block.hash_slow(),
-        gas_used: output.result.gas_used,
-        receipts: output.result.receipts,
+        gas_used: result.gas_used,
+        receipts: result.receipts,
     };
     core::mem::forget(trie);
-    core::mem::forget(output.state);
+    core::mem::forget(final_accounts);
     core::mem::forget(witness);
     core::mem::forget(current_block);
     Ok(validated)
@@ -391,10 +398,35 @@ pub(crate) fn receipt_root_bloom(
         })
         .collect();
     let root = calculate_receipt_root(&receipts);
-    let bloom = receipts
-        .iter()
-        .fold(Bloom::ZERO, |bloom, r| bloom | r.logs_bloom);
-    (root, bloom)
+    let mut words = [0u64; 32];
+    for receipt in &receipts {
+        union_bloom_words(&mut words, &receipt.logs_bloom.0 .0);
+    }
+    // SAFETY: Both arrays have the same size and every bit pattern is valid. Native
+    // byte order is intentional: OR of native words is byte-wise OR on either
+    // endianness, and this preserves the resulting bytes without conversion.
+    let bytes = unsafe { core::mem::transmute::<[u64; 32], [u8; 256]>(words) };
+    (root, Bloom::from(bytes))
+}
+
+#[inline]
+fn union_bloom_words(out: &mut [u64; 32], bytes: &[u8; 256]) {
+    let ptr = bytes.as_ptr();
+    if (ptr as usize) & (core::mem::align_of::<u64>() - 1) == 0 {
+        #[expect(clippy::cast_ptr_alignment, reason = "alignment was checked above")]
+        let aligned = ptr.cast::<u64>();
+        for (i, word) in out.iter_mut().enumerate() {
+            // SAFETY: alignment was checked, all 32 words are inside the
+            // initialized byte array, and every u64 bit pattern is valid.
+            // Keep the aligned load as a word operation on RISC-V; otherwise
+            // LLVM can merge it with the byte-wise unaligned alternative.
+            *word |= unsafe { aligned.add(i).read_volatile() };
+        }
+    } else {
+        for (word, chunk) in out.iter_mut().zip(bytes.as_chunks::<8>().0) {
+            *word |= u64::from_ne_bytes(*chunk);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +434,31 @@ mod tests {
     use super::*;
     use alloy_consensus::TxType;
     use alloy_primitives::Log;
+
+    #[test]
+    fn bloom_word_union_matches_bytes_at_every_alignment() {
+        #[repr(align(8))]
+        struct Buffer([u8; 264]);
+        let mut src = Buffer([0; 264]);
+        for (i, byte) in src.0.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(73).wrapping_add(19);
+        }
+        for (offset, bytes) in src.0.array_windows::<256>().take(8).enumerate() {
+            for initial in [0u64, u64::MAX, 0x1020_3040_5060_7080] {
+                let mut out = [initial; 32];
+                union_bloom_words(&mut out, bytes);
+                let result: Vec<_> = out.iter().flat_map(|word| word.to_ne_bytes()).collect();
+                let expected: Vec<_> = initial
+                    .to_ne_bytes()
+                    .into_iter()
+                    .cycle()
+                    .zip(bytes)
+                    .map(|(a, b)| a | b)
+                    .collect();
+                assert_eq!(result, expected, "offset={offset}");
+            }
+        }
+    }
 
     #[test]
     fn receipt_root_bloom_matches_direct_hashing() {

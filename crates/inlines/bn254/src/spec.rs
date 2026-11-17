@@ -1,4 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use ark_bn254::Fq;
 use ark_ff::{BigInt, Field};
 use jolt_inlines_sdk::{InlineReference, InlineSpec};

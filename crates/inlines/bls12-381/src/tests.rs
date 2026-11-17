@@ -1,4 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use ark_ff::{Field, Fp2Config, MontConfig};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
