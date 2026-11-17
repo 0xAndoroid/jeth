@@ -1,5 +1,3 @@
-//! U256 modular arithmetic and MODEXP.
-
 #![expect(
     clippy::inline_always,
     reason = "Guest word operations must stay in the caller to avoid register spills."
@@ -55,8 +53,9 @@ pub fn mul_mod(a: &U256, b: &U256, modulus: &mut U256) {
     *modulus = remainder;
 }
 
-// The full products fit in eight limbs. The high-half and borrow checks
-// establish a*b - q*m = r as an integer equality; r < m then fixes the remainder.
+// The full products fit in eight limbs. A zero high half establishes
+// a*b - q*m = r as an integer equality: a negative difference wraps to at least
+// 2^257 - 1, so the final borrow test never decides. r < m then fixes the remainder.
 #[inline(always)]
 fn checked_mulmod_remainder(a: &U256, b: &U256, m: &U256, q: &U256) -> Option<U256> {
     let lhs = full_product(a, b);
