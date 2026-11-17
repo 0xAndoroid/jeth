@@ -46,9 +46,3 @@ for it; a guest built by hand with `--no-default-features` leaves it out
 Keccak permutations, while misses add lookup/copy work. Every hit compares the
 complete input and length; index-hash collisions only cause eviction. The
 feature changes guest execution, not the Jolt protocol.
-
-On mainnet blocks 26235156, 26235168, and 26235159, matched full guest traces
-used 0.79%, 1.00%, and 1.43% fewer expanded rows, respectively. These are trace
-counts, not end-to-end prover timings. An isolated stream of distinct,
-deliberately colliding 32-/64-byte inputs added 8.5% to the hash routine's row
-count. Workloads with little reuse may therefore be slower with the cache.

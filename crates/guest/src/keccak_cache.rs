@@ -100,7 +100,6 @@ mod tests {
     use sha3::{Digest, Keccak256};
     fn hash(input: &[u8]) -> [u64; 4] {
         let digest: [u8; 32] = Keccak256::digest(input).into();
-        // Keep the digest's byte representation, with word alignment for the cache.
         unsafe { core::mem::transmute::<[u8; 32], [u64; 4]>(digest) }
     }
     fn cache() -> SmallCache {
