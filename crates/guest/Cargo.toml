@@ -95,6 +95,13 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 
+# For crates/native-advice, a native binary: `release` above is tuned for the guest
+# ELF, and its fat LTO and single codegen unit slow the recorder's build.
+[profile.recorder]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [lib]
 test = false
 doctest = false

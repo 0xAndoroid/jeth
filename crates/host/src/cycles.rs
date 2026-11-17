@@ -29,11 +29,17 @@ const MANIFEST: &str = include_str!("../../../fixtures/cycles-blocks.json");
 /// `trace::elf_path_with` derives for it.
 const GUEST_ELF: &str = "-validate_block/riscv64imac-unknown-none-elf/release/jeth-guest";
 
-const JETH: [&str; 4] = ["-p", "jeth-host", "--bin", "jeth"];
+const JETH: [&str; 5] = ["--release", "-p", "jeth-host", "--bin", "jeth"];
 
 const NATIVE_ADVICE_MANIFEST: &str = "crates/native-advice/Cargo.toml";
 
-const NATIVE_ADVICE: [&str; 2] = ["--manifest-path", NATIVE_ADVICE_MANIFEST];
+/// `crates/guest/Cargo.toml`, the root of the recorder's workspace, defines the `recorder` profile.
+const NATIVE_ADVICE: [&str; 4] = [
+    "--profile",
+    "recorder",
+    "--manifest-path",
+    NATIVE_ADVICE_MANIFEST,
+];
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -118,7 +124,7 @@ impl Tree {
     /// `cargo <subcommand>` on one of the tree's targets, under the tree's own toolchain.
     fn cargo(&self, subcommand: &str, target: &[&str]) -> Command {
         let mut cmd = Command::new("cargo");
-        cmd.args([subcommand, "--locked", "--release"])
+        cmd.args([subcommand, "--locked"])
             .args(target)
             .current_dir(&self.root)
             // A harness started through `cargo run` carries its own toolchain in
