@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Zero-copy node decoder: nodes decode straight into their final slots,
-//! leaf values are views into the witness bytes, and list payloads are
-//! scanned in place instead of through alloy's `PayloadView`.
 use super::{
     children::{Children, Slot},
     memoize::Memoization,
@@ -117,15 +114,13 @@ fn decode_node_zc_into<M: Memoization>(
     match count_items(payload)? {
         // branch node: 17-item node [ v0 ... v15, value ]
         17 => {
-            // Write the empty branch first and decode the children into
-            // its slots, so the 640-byte `Children` is never moved.
             let node = out.write(Node::Branch(Children::default(), M::default()));
             let Node::Branch(children, _) = &mut *node else {
                 unreachable!()
             };
             let filled = decode_branch_children(source, payload, children);
             if filled.is_err() {
-                *node = Node::Null; // drops the partial branch
+                *node = Node::Null;
             }
             filled
         }
@@ -680,9 +675,6 @@ mod tests {
         }
     }
 
-    /// `item_len` agrees with `Header::decode` (length or error) on every
-    /// 1-byte item, every 33-byte item prefix, truncated digest items and
-    /// long-form headers.
     #[test]
     fn item_len_matches_header_decode() {
         fn via_header(p: &[u8]) -> alloy_rlp::Result<usize> {
@@ -713,8 +705,6 @@ mod tests {
         }
     }
 
-    /// The zero-copy decoder agrees with the `Decodable` impl (which scans
-    /// through `Header::decode_raw`) on nodes, errors and trailing bytes.
     #[test]
     fn zc_decode_matches_decodable_impl() {
         fn digest_item(seed: u8) -> Vec<u8> {
@@ -818,10 +808,6 @@ mod tests {
         }
     }
 
-    /// `decode_header` agrees with `Header::decode` (header or error, and the
-    /// buffer advance) for every first byte over a range of tails: short and
-    /// long lengths with and without their payload, leading zeros,
-    /// non-canonical sizes, truncated length fields.
     #[test]
     fn decode_header_matches_alloy() {
         let tails: Vec<Vec<u8>> = vec![
@@ -855,7 +841,6 @@ mod tests {
         }
     }
 
-    /// Word gather is byte-exact for every source alignment.
     #[test]
     fn le_words_32_matches_from_le_bytes() {
         let bytes: Vec<u8> = (0..48u8)
@@ -871,8 +856,6 @@ mod tests {
         }
     }
 
-    /// The digest fast path yields the general decoder's node for every
-    /// source alignment.
     #[test]
     fn digest_fast_path_matches_generic_decode() {
         let mut digest = [0u8; 32];

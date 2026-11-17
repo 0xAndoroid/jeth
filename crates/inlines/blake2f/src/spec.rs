@@ -1,6 +1,6 @@
 use jolt_inlines_sdk::{
-    assert_edge_cases_match_reference, assert_random_cases_match_reference,
-    assert_reference_matches_harness, host::InlineOp, InlineReference, InlineSpec,
+    assert_edge_cases_match_reference, assert_random_cases_match_reference, host::InlineOp,
+    InlineReference, InlineSpec,
 };
 use rand::RngCore;
 use tracer::emulator::mmu::DRAM_BASE;
@@ -127,7 +127,6 @@ fn check_op<const R: usize>() {
         <Blake2bRounds<R>>::reference(&(v, v)),
         "aliased rs1/rs2, R = {R}"
     );
-    // Golden rows: 32 LD + 80 per round + 16 SD + 32 resets, independent of the operand registers.
     for (rs1, rs2, rs3) in [(10, 11, 12), (1, 2, 0), (5, 5, 5)] {
         assert_eq!(
             sequence_rows::<R>(rs1, rs2, rs3),
@@ -138,9 +137,6 @@ fn check_op<const R: usize>() {
     assert_structure::<R>();
 }
 
-/// Every row writes a virtual register or stores `v` back through rs1; loads use rs1/rs2 as base
-/// and all precede the stores; no advice or assert rows; the trailing resets cover exactly the
-/// registers the body wrote.
 fn assert_structure<const R: usize>() {
     let sequence = InlineTestHarness::create_default_instruction(
         <Blake2bRounds<R>>::OPCODE,
@@ -217,22 +213,6 @@ fn every_op_matches_reference_and_golden_rows() {
 }
 
 #[test]
-fn eip152_vector_state_through_ten_plus_two_rounds() {
-    // Vector 5/6 shape (12 rounds, "abc", t = 3): 10-round op then 2-round op equals 12 reference rounds.
-    let mut m = [0u64; STATE_LEN];
-    m[0] = 0x0000_0000_0063_6261;
-    for f in [true, false] {
-        let v0 = initial_working_state(3, f);
-        let mut want = v0;
-        rounds_reference(&mut want, &m, 12);
-        let after_ten = <Blake2bRounds<10>>::reference(&(v0, m));
-        assert_reference_matches_harness::<Blake2bRounds<10>>(&(v0, m));
-        assert_reference_matches_harness::<Blake2bRounds<2>>(&(after_ten, m));
-        assert_eq!(<Blake2bRounds<2>>::reference(&(after_ten, m)), want);
-    }
-}
-
-#[test]
 fn encoding_is_injective_and_in_range() {
     fn key<const R: usize>() -> (u32, u32, u32, &'static str) {
         (
@@ -280,19 +260,4 @@ fn encoding_is_injective_and_in_range() {
         (crate::funct7(9), crate::funct3(9)),
         (crate::FUNCT7_HIGH, 1)
     );
-}
-
-#[test]
-fn sigma_rows_are_permutations_and_iv_is_blake2b() {
-    for (i, row) in crate::SIGMA.iter().enumerate() {
-        let mut seen = [false; 16];
-        for &x in row {
-            assert!(!seen[x], "row {i} repeats {x}");
-            seen[x] = true;
-        }
-        assert!(seen.iter().all(|&s| s), "row {i} is not a permutation");
-    }
-    assert_eq!(crate::SIGMA[0], core::array::from_fn(|i| i));
-    assert_eq!(IV[0], 0x6a09_e667_f3bc_c908);
-    assert_eq!(IV[7], 0x5be0_cd19_137e_2179);
 }

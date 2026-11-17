@@ -24,7 +24,7 @@ static mut ARENA: Arena = Arena {
 #[inline]
 fn class_of(layout: Layout) -> u32 {
     let needed = layout.size().max(layout.align()).max(8);
-    let shift = usize::BITS - (needed - 1).leading_zeros(); // ceil(log2)
+    let shift = usize::BITS - (needed - 1).leading_zeros();
     shift - MIN_SHIFT
 }
 

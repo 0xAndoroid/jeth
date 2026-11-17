@@ -478,7 +478,6 @@ impl SharedMemory {
         }
     }
 
-    /// Mutable [`Self::context_bytes`].
     #[inline(always)]
     fn context_bytes_mut(&mut self) -> &mut [u8] {
         // SAFETY: as `context_bytes`; `&mut self` plus no live `Ref`/`RefMut`

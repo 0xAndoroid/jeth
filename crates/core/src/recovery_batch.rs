@@ -201,8 +201,6 @@ impl KeyIndex {
         }
     }
 
-    /// The index of the term already holding `key`, or `None` after recording
-    /// `index` as the term about to be pushed for it.
     fn find_or_insert(
         &mut self,
         terms: &[(Secp256k1Fr, Secp256k1Point)],

@@ -92,8 +92,6 @@ impl<T: alloy_rlp::Decodable + alloy_rlp::Encodable> RlpTrie<T> {
         Ok(Self::new(CachedTrie::from_resolver_zc(root, resolver)?))
     }
 
-    /// Lazy trie anchored at `root` — nothing resolved up front; mutations
-    /// resolve on demand. `EMPTY_ROOT_HASH` short-circuits to the empty trie.
     pub fn from_digest_root(root: B256) -> Self {
         Self::new(CachedTrie::from_digest(root))
     }
@@ -149,12 +147,7 @@ pub struct SparseState {
     storage_roots: RefCell<B256IndexMap<[u64; 4]>>,
     resolver: RefCell<WitnessResolver>,
     address_hashes: RefCell<AddressMemo>,
-    /// slot → keccak(slot): address-independent, so one entry serves every
-    /// contract that touches the same slot number. Keyed by the limbs; the
-    /// big-endian form is only built for the keccak.
     slot_hashes: RefCell<SlotMemo>,
-    /// last address resolved by `account()` / `storage()`: consecutive reads
-    /// of one contract skip the address-hash and storage-root map probes
     last_read: RefCell<LastRead>,
 }
 
@@ -218,7 +211,6 @@ impl SparseState {
             Self {
                 state,
                 storages: B256IndexMap::default(),
-                // one entry per loaded account <= state-trie leaves <= witness nodes
                 storage_roots: RefCell::new(B256IndexMap::with_capacity_and_hasher(
                     witness.state.len(),
                     Default::default(),
@@ -233,7 +225,6 @@ impl SparseState {
     }
 }
 
-/// Minimal local `Either` iterator (avoids an itertools dependency).
 mod itertools_either {
     pub enum Either<L, R> {
         Left(L),
@@ -283,7 +274,6 @@ impl StatelessTrie for SparseState {
             Self {
                 state,
                 storages: B256IndexMap::default(),
-                // one entry per loaded account <= state-trie leaves <= witness nodes
                 storage_roots: RefCell::new(B256IndexMap::with_capacity_and_hasher(
                     witness.state.len(),
                     Default::default(),

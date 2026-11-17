@@ -121,7 +121,6 @@ struct Tree {
 }
 
 impl Tree {
-    /// `cargo <subcommand>` on one of the tree's targets, under the tree's own toolchain.
     fn cargo(&self, subcommand: &str, target: &[&str]) -> Command {
         let mut cmd = Command::new("cargo");
         cmd.args([subcommand, "--locked"])
@@ -174,7 +173,6 @@ impl Tree {
         Ok(if dirty { format!("{head}-dirty") } else { head })
     }
 
-    /// The `a16z/jolt` rev the root manifest pins for the tracer.
     fn jolt_rev(&self) -> Result<String> {
         let manifest = std::fs::read_to_string(self.root.join("Cargo.toml"))?;
         let pin = regex_lite::Regex::new(r#"(?m)^tracer\s*=.*\brev\s*=\s*"([0-9a-f]+)""#)?;
@@ -185,9 +183,6 @@ impl Tree {
         Ok(rev.as_str().to_string())
     }
 
-    /// Derives the block's input with the tree's `repack`, traces it with the
-    /// tree's guest and checks the guest validated the pinned block and, where
-    /// the tree records native advice, that both advice tapes agree.
     fn measure(
         &self,
         pin: &PinnedBlock,
@@ -258,7 +253,6 @@ impl Tree {
     }
 }
 
-/// Runs `cmd` with its output in `log`; a failure reports the log's last line.
 fn run_logged(mut cmd: Command, log: &Path) -> Result<()> {
     let file = File::create(log)?;
     let status = cmd
@@ -279,8 +273,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// Downloads the block-set files `cache` lacks from `repo`'s release, checking
-/// every file's sha256 and every block header against the manifest.
 fn fetch_block_set(manifest: &Manifest, repo: &str, cache: &Path) -> Result<()> {
     std::fs::create_dir_all(cache)?;
     for pin in &manifest.blocks {
@@ -524,7 +516,6 @@ impl Report {
     }
 }
 
-/// Markdown table of `head` against `base`, block by block.
 fn comparison(base: &Report, head: &Report) -> Result<String> {
     ensure!(
         base.block_set == head.block_set

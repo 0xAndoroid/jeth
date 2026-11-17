@@ -63,7 +63,6 @@ CATEGORY_OF_FAMILY = {
     "U256 arithmetic (ruint)": "u256_ruint",
 }
 
-# Defining-crate paths the family rules do not know about.
 ROOT_OVERRIDES = [
     (re.compile(r"^jeth_core::(container|from_container|code_library)"), "deserialize"),
     (re.compile(r"^jeth_core::(recover|recovery_batch)|^jolt_inlines_secp256k1"), "sig_verify"),

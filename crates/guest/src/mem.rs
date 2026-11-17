@@ -158,7 +158,6 @@ unsafe fn store_le_partial(d: *mut u8, v: u64, n: usize) {
     }
 }
 
-/// Core implementation (also compiled natively for the fuzz tests).
 pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     if n == 0 {
         return dst;
@@ -311,7 +310,6 @@ pub(crate) unsafe fn memcpy_impl(dst: *mut u8, src: *const u8, n: usize) -> *mut
     d = dw as *mut u8;
 
     if rem > 0 {
-        // tail < 8: destination is 8-aligned here, so this is a single RMW.
         let v = load_le_partial(s, rem);
         store_le_partial(d, v, rem);
     }
@@ -530,7 +528,6 @@ mod tests {
 
     #[test]
     fn fixed_key_memcmp_preserves_order_and_boundaries() {
-        // Outside bytes deliberately differ.
         for n in [0, 1, 19, 20, 21, 31, 32, 33] {
             for a_offset in 0..8 {
                 for b_offset in 0..8 {

@@ -223,7 +223,7 @@ mod hooks {
 /// rows). Turns "forgot to thread the tape / mismatched ELF pair" into an
 /// instant, unambiguous panic instead of a misaligned-tape heisenbug later.
 pub fn advice_smoke() {
-    const SENTINEL: u64 = 0x6a65_7468_6164_7631; // "jethadv1"
+    const SENTINEL: u64 = 0x6a65_7468_6164_7631;
     let v = advice_u64!(SENTINEL);
     advice_assert_eq!(v, SENTINEL);
 }

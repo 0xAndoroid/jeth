@@ -24,7 +24,6 @@ use alloy_primitives::{Bytes, B256, U256};
 use alloy_trie::Nibbles;
 use core::{mem, ops::Deref};
 
-/// Nibble `d` of the raw key bytes (two nibbles per byte, high first).
 #[inline(always)]
 fn key_nibble(key: &[u8], d: usize) -> u8 {
     let b = key[d >> 1];
@@ -35,7 +34,6 @@ fn key_nibble(key: &[u8], d: usize) -> u8 {
     }
 }
 
-/// Sixty-four zero nibbles: the shape of every packed 32-byte key.
 const FULL_KEY: Nibbles = Nibbles::unpack_array(&[0; 32]);
 
 /// `Nibbles::unpack(key)`, assembled from containing words. Short paths
@@ -99,7 +97,6 @@ pub(super) type Child<M> = Box<Node<M>>;
 pub(super) struct Digest(pub(super) B256);
 
 impl Digest {
-    /// Digest from its four little-endian words (word `i` = bytes `8i..8i+8`).
     #[inline(always)]
     pub(super) fn from_le_limbs(limbs: [u64; 4]) -> Self {
         // SAFETY: `[[u8; 8]; 4]` and `[u8; 32]` have identical layout.
@@ -117,8 +114,6 @@ impl Deref for Digest {
     }
 }
 
-/// Resolver that never resolves — plain `insert`/`remove` keep the
-/// panic-on-stub contract by threading this.
 pub(super) struct Unresolvable;
 
 impl DigestResolver for Unresolvable {
@@ -139,7 +134,6 @@ impl DigestResolver for Unresolvable {
 /// [`Self::replace_with_branch`]). Boxing the children array (and the arena
 /// layout) measured worse — hence the variant size spread.
 #[derive(Debug, Clone, Default)]
-#[allow(clippy::large_enum_variant)]
 pub(super) enum Node<M> {
     #[default]
     Null,
@@ -167,11 +161,6 @@ impl<M> Eq for Node<M> {}
 
 impl<M: Memoization> Node<M> {
     /// Retrieves the value associated with a given key (raw key bytes).
-    ///
-    /// Walks by depth over the key: branch nibbles are read straight from the
-    /// key bytes, extension and leaf prefixes are compared against the packed
-    /// key sliced at the current depth — the key is never re-sliced per level
-    /// and never unpacked byte by byte ([`packed_key`]).
     pub(super) fn get(&self, key: &[u8]) -> Option<&Bytes> {
         let total = 2 * key.len();
         let packed = packed_key(key);
@@ -482,8 +471,6 @@ impl<M: Memoization> Slot<M> {
 mod tests {
     use super::*;
 
-    /// The word-assembled packed key equals `Nibbles::unpack` for every
-    /// source alignment and every supported byte length.
     #[test]
     fn packed_key_matches_unpack() {
         let bytes: alloc::vec::Vec<u8> = (0..48u8)

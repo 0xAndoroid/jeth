@@ -419,8 +419,6 @@ unsafe fn hash_bytes_long(mut v: &[u8], accumulator: u64, seeds: &[u64; 6]) -> u
 
 #[cfg(all(test, target_arch = "riscv64"))]
 mod gather_tests {
-    /// The gather must reproduce the unaligned read for every source alignment:
-    /// 8- and 4-byte reads at all 8 offsets inside an aligned 32-byte window.
     #[test]
     fn gather_matches_unaligned_read() {
         #[repr(align(8))]

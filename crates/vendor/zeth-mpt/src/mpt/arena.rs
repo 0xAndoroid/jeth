@@ -185,7 +185,6 @@ unsafe fn put_window(dst: *mut u64, d: usize, w0: u64, rest: *const u64, so: usi
     debug_assert!(d < 8 && so < 8 && len >= 1);
     let n_dst = (d + len + 7) >> 3;
     let n_src = (so + len + 7) >> 3;
-    // bytes below the cursor in the first destination word
     let keep = !(u64::MAX << (8 * d));
     let merge = |v: u64| (read_volatile(dst) & keep) | (v & !keep);
     // Relative byte shift between the source window and the destination
@@ -306,7 +305,6 @@ unsafe fn put_window33_at<const D: usize>(dst: *mut u64, v: [u64; 5], so: usize)
     }
 }
 
-/// Destination word containing the cursor and the cursor's byte offset in it.
 #[inline(always)]
 fn dst_word(buf: &mut Scratch, cursor: usize) -> (*mut u64, usize) {
     // SAFETY (alignment): `Scratch` is `align(8)`, `cursor & !7` is a multiple of 8.
@@ -403,9 +401,6 @@ impl<M: Memoization> Node<M> {
         }
     }
 
-    /// Whether this node still needs an encoding — an unmemoized Leaf,
-    /// Extension or Branch. Parents test this before descending, so clean and
-    /// digest children cost a tag/cache test instead of a call.
     #[inline(always)]
     pub(super) fn needs_memo(&self) -> bool {
         match self {
@@ -416,8 +411,6 @@ impl<M: Memoization> Node<M> {
         }
     }
 
-    /// [`Self::memoize_arena`] for a node that [`Self::needs_memo`]: memoize
-    /// the dirty children, then encode this node into the scratch.
     pub(super) fn encode_dirty(&mut self, scratch: &mut Scratch) {
         debug_assert!(self.needs_memo());
         match self {
@@ -479,7 +472,6 @@ impl<M: Memoization> Node<M> {
     /// Exact RLP payload length of this node (children must be memoized —
     /// guaranteed by the post-order arena walk). Pass-1 / native only: the
     /// proven pass reads this value from the advice tape.
-    #[allow(dead_code)] // proven riscv64 ELF reads the tape instead
     fn encoded_payload_length(&self) -> usize {
         match self {
             Node::Leaf(prefix, value, _) => {
@@ -777,8 +769,6 @@ fn write_child_ref<M: Memoization>(buf: &mut Scratch, cursor: &mut usize, node: 
     }
 }
 
-/// [`write_child_ref`] for a branch slot: the inline digest of an unresolved
-/// child is written from its 8-aligned words.
 #[inline(always)]
 fn write_slot_ref<M: Memoization>(buf: &mut Scratch, cursor: &mut usize, slot: &Slot<M>) {
     debug_assert!(*cursor + DIGEST_RLP_LENGTH <= MAX_NODE_ENCODING);
@@ -946,9 +936,6 @@ mod tests {
         }
     }
 
-    /// The word writer is byte-exact for every source offset, cursor offset
-    /// and length, preserves everything below the cursor and clobbers at most
-    /// 7 bytes past the item.
     #[test]
     fn word_writer_matches_byte_copy() {
         let mut src_words = [0u64; 16];

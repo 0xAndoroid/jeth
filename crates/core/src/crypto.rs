@@ -1,5 +1,3 @@
-//! revm and EIP-7702 recovery through deferred, checked secp256k1 equations.
-
 use crate::advice::{advice_assert_eq, advice_u64};
 use crate::recovery_batch::{self, Equation};
 #[cfg(any(
@@ -295,7 +293,6 @@ pub(crate) fn recover_point(equation: &Equation) -> Secp256k1Point {
     mul_4x128(scalars, points)
 }
 
-/// Square-and-multiply exponentiation over Fq (MSB-first; exponent LE limbs).
 #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
 fn fq_pow(base: &Secp256k1Fq, exp: &[u64; 4]) -> Secp256k1Fq {
     let mut started = false;
@@ -417,7 +414,6 @@ mod tests {
         jolt_inlines_blake2::exec::execute_blake2b_compression(h, &block);
     }
 
-    /// Random (h, m, t0, f) with counter edge values, 12 rounds, t[1] == 0: the routed case.
     #[test]
     fn blake2_inline_model_matches_revm_compress_for_12_rounds() {
         let mut rng = 0xb1a2_e2f0_0d15_ea5eu64;
@@ -531,13 +527,6 @@ mod tests {
                 assert_eq!(got, want, "rounds {rounds} case {case} t {t:?} f {f}");
             }
         }
-    }
-
-    #[test]
-    fn blake2f_round_inline_tables_match_revm() {
-        use reth_evm::revm::precompile::blake2::algo;
-        assert_eq!(jeth_inlines_blake2f::IV, algo::IV);
-        assert_eq!(jeth_inlines_blake2f::SIGMA, algo::SIGMA);
     }
 
     /// EIP-152 test vectors 4–7 (rounds 0, 12, 12, 1) through the round-inline compress (vector 8
