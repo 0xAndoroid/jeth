@@ -1916,7 +1916,7 @@ The `XLEN = 64` `debug_assert`s the reviewer flagged live in those table
 decompositions and go with them.
 
 **Jolt pin.** Branch `jolt-amber-nolane` @ `a0d7b74baa`, pushed to the private
-mirror `git@github.com:0xAndoroid/jolt-private.git`; read-only worktree
+mirror `jolt-private`; read-only worktree
 `/Volumes/Dev/worktrees/jolt/jolt-amber-nolane`, CLI
 `/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt`. It is
 a16z/jolt `main` @ `f09bbc1e34` (4 commits past amber's base `628713fd46`,

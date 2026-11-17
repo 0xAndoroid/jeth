@@ -20,8 +20,8 @@ permissions:
 jobs:
   cycles:
     name: expanded cycles
-    runs-on: ubicloud-standard-16
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:

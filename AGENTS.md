@@ -1,6 +1,8 @@
 ## Contributing flow
 
 branch → PR → CI green (`.github/workflows/ci.yml`) → merge; no direct pushes to main.
+The repository's home is `a16z/jeth`: open pull requests there as drafts, and merge one only
+with the owner's explicit authorization.
 
 CI: first-party rustfmt, Clippy (default features, `--all-features`, then each crate alone),
 `cargo nextest run --workspace` (Jolt is a public git dependency pinned by rev), typos,
