@@ -195,6 +195,38 @@ fn jumpdest_at_end_and_chained_pairs_match_single_step() {
 }
 
 #[test]
+fn untaken_jump_falls_through() {
+    let table = instruction_table::<EthInterpreter, DummyHost>();
+    let values = [U256::ZERO, U256::from(1), U256::from(1) << 200];
+    for top in values {
+        let spec = SpecId::AMSTERDAM;
+        compare_values(
+            &[PUSH2, 0, 5, JUMPI, STOP, JUMPDEST, PC, STOP],
+            &[top],
+            100,
+            &table,
+            spec,
+        );
+        compare_values(
+            &[ISZERO, PUSH2, 0, 6, JUMPI, STOP, JUMPDEST, PC, STOP],
+            &[top],
+            100,
+            &table,
+            spec,
+        );
+        for other in values {
+            compare_values(
+                &[EQ, PUSH2, 0, 6, JUMPI, STOP, JUMPDEST, PC, STOP],
+                &[other, top],
+                100,
+                &table,
+                spec,
+            );
+        }
+    }
+}
+
+#[test]
 fn inspector_step_executes_only_push() {
     let table = instruction_table::<EthInterpreter, DummyHost>();
     let mut i = Interpreter::<EthInterpreter>::new(
