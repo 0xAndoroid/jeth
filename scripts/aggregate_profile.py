@@ -17,7 +17,7 @@ from pathlib import Path
 # (family, subkey) classification rules, first match wins. Order matters.
 RULES: list[tuple[str, str, str]] = [
     (r"native_keccak256", "keccak256 inline", "keccak-f + absorb"),
-    (r"^memcpy$", "memcpy/memset/memcmp", "memcpy"),
+    (r"^memcpy$|^__jeth_aligned_copy$|^__jeth_copy_fallback$", "memcpy/memset/memcmp", "memcpy"),
     (r"^memset$", "memcpy/memset/memcmp", "memset"),
     (r"^memcmp$|^jeth_guest::mem::memcmp_generic", "memcpy/memset/memcmp", "memcmp"),
     (r"jeth_core.*recover::inline_verify", "tx sig-verify (secp inline)", "ecdsa_verify"),

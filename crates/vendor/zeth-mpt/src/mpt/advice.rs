@@ -18,6 +18,14 @@ extern "C" {
     pub(super) fn jeth_advice_assert_eq_u64(left: u64, right: u64);
 }
 
+#[cfg(all(
+    feature = "native-advice",
+    not(all(target_arch = "riscv64", target_os = "none"))
+))]
+extern "C" {
+    pub(super) fn jeth_advice_write_u64(value: u64);
+}
+
 /// One u64 of untrusted advice; `$body` is compiled out of the proven ELF.
 macro_rules! advice_u64 {
     ($body:expr) => {{
@@ -43,7 +51,14 @@ macro_rules! advice_u64 {
         }
         #[cfg(not(all(target_arch = "riscv64", target_os = "none")))]
         {
-            $body
+            let value: u64 = $body;
+            #[cfg(feature = "native-advice")]
+            // SAFETY: jeth-core exports this hook; it appends to a thread-local
+            // tape only while a native recording scope is active.
+            unsafe {
+                $crate::mpt::advice::jeth_advice_write_u64(value);
+            }
+            value
         }
     }};
 }

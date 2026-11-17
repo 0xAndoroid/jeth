@@ -2635,18 +2635,22 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "alloy-trie",
+ "ark-bls12-381",
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0",
+ "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "aurora-engine-modexp",
  "jeth-inlines-blake2f",
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
+ "jolt-inlines-sdk",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-sdk",
  "k256 0.14.0",
+ "num-bigint",
  "p256 0.14.0",
  "postcard",
  "reth-chainspec",
@@ -4243,13 +4247,15 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "10.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdbb3a3d735efa94c91f2ef6bf20a35f99a77bc78f3e25bd758336901bdf9661"
 dependencies = [
+ "anyhow",
  "bitvec",
+ "paste",
  "phf 0.13.1",
+ "rand 0.9.5",
  "revm-primitives",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

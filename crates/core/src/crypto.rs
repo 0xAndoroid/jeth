@@ -94,6 +94,21 @@ impl alloy_consensus::crypto::backend::CryptoProvider for JoltCryptoProvider {
 struct JoltCrypto;
 
 impl Crypto for JoltCrypto {
+    #[cfg(any(target_arch = "riscv64", feature = "kzg-residue"))]
+    fn verify_kzg_proof(
+        &self,
+        z: &[u8; 32],
+        y: &[u8; 32],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
+    ) -> Result<(), PrecompileHalt> {
+        if crate::kzg::verify(commitment, z, y, proof) {
+            Ok(())
+        } else {
+            Err(PrecompileHalt::BlobVerifyKzgProofFailed)
+        }
+    }
+
     #[inline]
     fn secp256k1_ecrecover(
         &self,
@@ -107,6 +122,10 @@ impl Crypto for JoltCrypto {
     #[inline]
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
         crate::bn254::g1_mul(point, scalar)
+    }
+
+    fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, PrecompileHalt> {
+        crate::bn254_pairing::pairing_check(pairs)
     }
 
     /// SHA-256 on the Jolt inline; the native build keeps revm's default so `run-native` stays

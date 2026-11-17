@@ -8,6 +8,7 @@ use crate::{InstructionContext, Ip};
 /// Implements the MLOAD instruction.
 ///
 /// Loads a 32-byte word from memory.
+#[inline(always)]
 pub fn mload<WIRE: InterpreterTypes, H: Host + ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -23,6 +24,7 @@ pub fn mload<WIRE: InterpreterTypes, H: Host + ?Sized>(
 /// Implements the MSTORE instruction.
 ///
 /// Stores a 32-byte word to memory.
+#[inline(always)]
 pub fn mstore<WIRE: InterpreterTypes, H: Host + ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,

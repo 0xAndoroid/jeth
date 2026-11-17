@@ -1,5 +1,6 @@
 # Native differential tests for the guest's word-wise shims (`src/keccak.rs`,
-# `src/mem.rs`), included by path. The guest crate itself is `test = false`
+# `src/mem.rs`) and its short-input Keccak cache (`src/keccak_cache.rs`),
+# included by path. The guest crate itself is `test = false`
 # (built only through the `jolt` CLI for riscv64imac), so this standalone
 # package is the one place their `#[cfg(test)]` modules compile and run:
 #
@@ -26,5 +27,6 @@ path = "src/lib.rs"
 doctest = false
 
 [dependencies]
+fixed-cache = { version = "0.1.11", default-features = false }
 keccak = "0.2"
 sha3 = { version = "0.12", default-features = false }

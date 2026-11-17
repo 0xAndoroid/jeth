@@ -13,6 +13,7 @@ use crate::{InstructionContext, Ip};
 /// Implements the KECCAK256 instruction.
 ///
 /// Computes Keccak-256 hash of memory data.
+#[inline(always)]
 pub fn keccak256<WIRE: InterpreterTypes, H: Host + ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -58,6 +59,7 @@ pub fn address<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the CALLER instruction.
 ///
 /// Pushes the caller's address onto the stack.
+#[inline(always)]
 pub fn caller<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -129,6 +131,7 @@ pub fn codecopy<WIRE: InterpreterTypes, H: Host + ?Sized>(
 /// Implements the CALLDATALOAD instruction.
 ///
 /// Loads 32 bytes of input data from the specified offset.
+#[inline(always)]
 pub fn calldataload<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -160,6 +163,7 @@ pub fn calldataload<WIRE: InterpreterTypes, H: ?Sized>(
 /// Implements the CALLDATASIZE instruction.
 ///
 /// Pushes the size of input data onto the stack.
+#[inline(always)]
 pub fn calldatasize<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -230,6 +234,7 @@ pub fn calldatacopy<WIRE: InterpreterTypes, H: Host + ?Sized>(
 }
 
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
+#[inline(always)]
 pub fn returndatasize<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,
@@ -291,6 +296,7 @@ pub fn returndatacopy<WIRE: InterpreterTypes, H: Host + ?Sized>(
 /// Pushes the amount of remaining gas onto the stack.
 /// Returns `gas_left` only (excluding the state gas reservoir) per EIP-8037.
 /// On mainnet (no state gas), this is equivalent to returning `remaining`.
+#[inline(always)]
 pub fn gas<WIRE: InterpreterTypes, H: ?Sized>(
     ip: Ip,
     context: InstructionContext<'_, H, WIRE>,

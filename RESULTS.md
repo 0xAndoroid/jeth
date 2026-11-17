@@ -350,9 +350,9 @@ or point `JOLT_PATH` at a `jolt` binary built from that rev.
 `just cycles` (`jeth cycles run`) counts expanded cycles for a tree over a frozen block set: the
 ten consecutive mainnet blocks 26227668–26227677 (277,426,425 gas). The count per block is the
 `trace_rows_total` of `jeth trace`: the rows `tracer::execute` returns for the proven pass of the
-committed-input `validate_block` guest with its default features (`keccak-census` and
-`push-jump-fusion` on), after virtual-sequence and inline expansion, unpadded. The advice pass is
-not counted.
+committed-input `validate_block` guest with its default features (`keccak-census`,
+`keccak-cache` and `push-jump-fusion` on), after virtual-sequence and inline expansion, unpadded.
+The advice pass is not counted.
 
 ```bash
 just cycles                               # this tree → target/cycles/cycles.{json,md}
@@ -366,7 +366,10 @@ just jeth cycles compare <base>/cycles.json <head>/cycles.json
   `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
   `input.bin`, so a change to the input encoding is measured with its own encoder.
 - **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
-  pinned ones. The run still reports the other blocks, then exits nonzero.
+  pinned ones. In a tree that has the `native-advice` example (README → Native advice
+  generation), a block also fails when the tape the example records for its `input.bin` differs
+  from `advice-tape.bin`, the `compute_advice` pass's tape, which `jeth trace` writes beside
+  `trace-summary.json`. The run still reports the other blocks, then exits nonzero.
 - **One checkout path per comparison.** Absolute totals are specific to the build paths
   (checkout, cargo home, toolchain); only counts taken at the same paths are comparable.
   Observed, mechanism not established (the guest ELF embeds absolute source paths): on one

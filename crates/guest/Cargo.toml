@@ -10,18 +10,26 @@ edition = "2021"
 [workspace]
 
 [features]
+bn254-pairing-residue = ["jeth-core/bn254-pairing-residue"]
+# KZG pairing check from an advice-tape witness (see jeth-core/kzg-residue).
+kzg-residue = ["jeth-core/kzg-residue"]
 # Jump fusion in the vendored interpreter's run loop: `PUSH2 JUMP`,
 # `PUSH2 JUMPI`, `ISZERO PUSH2 JUMPI` and `EQ PUSH2 JUMPI` each run as one
 # dispatch when the whole sequence succeeds. On by default;
 # `--no-default-features` drops it (add `--features keccak-census` to keep the
 # census).
 push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
-default = ["keccak-census", "push-jump-fusion"]
+default = ["keccak-census", "keccak-cache", "push-jump-fusion"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
-# normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
-# 21 rows per keccak call; `--no-default-features` drops it.
+# normal `jeth trace` output (the `perms=` count is a campaign gate). Only
+# hashed calls count, at about 22 to 24 rows each: a `keccak-cache` hit is
+# not counted. `--no-default-features` drops it.
 keccak-census = []
+# Bounded cache for repeated 32-/64-byte Keccak inputs. Misses add work. On by
+# default in the proven and the `compute_advice` build; `--no-default-features`
+# drops it (name `keccak-census` in `--features` to keep the census).
+keccak-cache = ["dep:fixed-cache"]
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
@@ -31,6 +39,7 @@ lazy = ["jeth-core/lazy-analysis"]
 compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
+fixed-cache = { version = "0.1.11", default-features = false, optional = true }
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
 jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
 
@@ -59,6 +68,7 @@ critical-section = "1.2"
 # Word-aligned journal tags/payloads reduce guest sub-word accesses.
 revm-context-interface = { path = "../vendor/revm-context-interface" }
 revm-interpreter = { path = "../vendor/revm-interpreter" }
+revm-bytecode = { path = "../vendor/revm-bytecode" }
 alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 # Fixed foldhash seeds (design law L5): hashbrown iteration order must be
 # identical across the compute_advice/proven ELF pair — upstream seeds from
@@ -88,7 +98,7 @@ zeth-mpt = { path = "../vendor/zeth-mpt" }
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 
 [lib]

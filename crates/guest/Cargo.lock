@@ -1276,6 +1276,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "fixed-cache"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57b811067c17dd16568d50c522f03fa65227c7f602c88f77d38e7842c51ba964"
+dependencies = [
+ "equivalent",
+]
+
+[[package]]
 name = "fixed-map"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1644,13 +1653,16 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "alloy-trie",
+ "ark-bls12-381",
  "ark-bn254",
  "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ark-ff 0.5.0",
+ "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "jeth-inlines-blake2f",
  "jolt-inlines-bigint",
  "jolt-inlines-blake2",
  "jolt-inlines-p256",
+ "jolt-inlines-sdk",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-sdk",
@@ -1680,6 +1692,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "critical-section",
+ "fixed-cache",
  "jeth-core",
  "jolt-inlines-keccak256",
  "jolt-sdk",
@@ -2779,8 +2792,6 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "10.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdbb3a3d735efa94c91f2ef6bf20a35f99a77bc78f3e25bd758336901bdf9661"
 dependencies = [
  "bitvec",
  "phf 0.13.1",
