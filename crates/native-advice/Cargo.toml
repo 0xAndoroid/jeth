@@ -1,0 +1,21 @@
+# Member of the guest's workspace (crates/guest), not of the jeth workspace: the
+# recorder must run the guest's `[patch]` tables, in particular the vendored
+# revm-interpreter, whose MULMOD calls the `jeth_mul_mod` hook and so records its
+# quotient advice, while `jeth run-native` in the jeth workspace keeps the registry
+# interpreter as the independent reference.
+[package]
+name = "jeth-native-advice"
+version = "0.1.0"
+edition = "2021"
+publish = false
+workspace = "../guest"
+
+[features]
+# Plan checked Keccak prefix reuse for a guest built with the same feature.
+keccak-prefix-cache = ["jeth-core/keccak-prefix-cache"]
+
+[dependencies]
+jeth-core = { path = "../core", features = ["native-advice", "secp-inline", "code-library", "bigint-inline"] }
+# Direct dependency only to reach the vendored crate's feature, as in crates/guest.
+revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline"] }
+postcard = { version = "1.0.8", default-features = false, features = ["use-std"] }

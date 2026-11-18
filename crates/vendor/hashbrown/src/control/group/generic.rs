@@ -68,11 +68,6 @@ impl Group {
     }
 
     /// Loads a group of tags starting at the given address.
-    ///
-    /// jeth patch: on the riscv64 Jolt guest the unaligned word read lowers to
-    /// 8 `lbu` + 14 shift/or (about 46 trace rows per probe); gather the group
-    /// from the one or two aligned words containing it instead
-    /// (`super::load_gathered`, see its comment).
     #[inline]
     pub(crate) unsafe fn load(ptr: *const Tag) -> Self {
         #[cfg(target_arch = "riscv64")]

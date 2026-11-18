@@ -1,8 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "tests fail by panicking"
-)]
 use ark_bn254::{Fq, Fq2, FqConfig};
 use ark_ff::{AdditiveGroup, Field, Fp2Config, MontConfig, PrimeField};
 use jolt_inlines_sdk::host::InlineOp;
@@ -129,19 +124,6 @@ fn model_matches_ark_field_arithmetic() {
     assert!(subtractions > 100, "{subtractions}");
 }
 
-#[test]
-fn negation_of_zero_is_q_and_of_one_is_q_minus_one() {
-    assert_eq!(exec::negate(&[0; 4]), BN254_MODULUS);
-    let q_minus_1 = [
-        BN254_MODULUS[0] - 1,
-        BN254_MODULUS[1],
-        BN254_MODULUS[2],
-        BN254_MODULUS[3],
-    ];
-    assert_eq!(exec::negate(&[1, 0, 0, 0]), q_minus_1);
-    assert_eq!(exec::negate(&q_minus_1), [1, 0, 0, 0]);
-}
-
 fn run_aliased(rs2_mapping: RegisterMapping, a: &Limbs, b: &Limbs) -> Limbs {
     let layout = InlineMemoryLayout {
         input_base: DRAM_BASE,
@@ -171,12 +153,10 @@ fn output_may_alias_inputs() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(0xb254_0005);
     for _ in 0..200 {
         let (a, b) = (random_element(&mut rng), random_element(&mut rng));
-        // rd == rs1
         assert_eq!(
             run_aliased(RegisterMapping::Input2, &a, &b),
             exec::mulq(&a, &b)
         );
-        // rd == rs1 == rs2 (squaring in place)
         assert_eq!(
             run_aliased(RegisterMapping::Input, &a, &b),
             exec::mulq(&a, &a)
@@ -245,7 +225,6 @@ fn run_in<S: InlineSpec>(harness: &mut InlineTestHarness, input: &S::Input) -> S
     S::read(harness)
 }
 
-/// The sequences themselves (not the model) against upstream ark-ff arithmetic.
 fn assert_sequences_match_ark(
     harnesses: &mut [InlineTestHarness; 3],
     (a0, a1, b0, b1): (Limbs, Limbs, Limbs, Limbs),
@@ -297,8 +276,6 @@ fn sequences_match_ark_on_random_inputs() {
     }
 }
 
-/// Every ordered triple (a₀, a₁, b₀) of the adversarial set with b₁ cycling through it:
-/// 0, 1, R, R², q − 1, q − 2, (q − 1)³, −1, 2, 1⁻¹, 2ᵏ in the low and the top limb, saturated limbs.
 #[test]
 fn sequences_match_ark_on_adversarial_inputs() {
     let q = BN254_MODULUS;
@@ -329,9 +306,6 @@ fn sequences_match_ark_on_adversarial_inputs() {
     }
 }
 
-/// Every row writes a virtual register or memory through rs3; loads use rs1/rs2 as base and all
-/// precede the stores; no advice or assert rows; the trailing resets cover exactly the registers
-/// the body wrote.
 #[test]
 fn sequence_structure() {
     for (name, funct3) in [

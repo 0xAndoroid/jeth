@@ -1,6 +1,3 @@
-//! Synthetic-block harness (dev tool): build a synthetic block + full-trie witness
-//! from a JSON spec, fix header fields from native validation errors, write
-//! witness.json / block.rlp / meta.json / receipts.json into --out.
 use alloy_consensus::{
     transaction::SignableTransaction, BlockBody, EthereumTxEnvelope, Header, TxEip4844, TxLegacy,
 };
@@ -236,7 +233,6 @@ fn main() -> Result<()> {
     let pre_root = state.hash_slow();
     let mut state_nodes = state.rlp_nodes();
     state_nodes.extend(nodes);
-    // Dedupe, keep root first.
     let mut seen = std::collections::HashSet::new();
     state_nodes.retain(|n| seen.insert(keccak256(n)));
 

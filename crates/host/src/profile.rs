@@ -1,14 +1,20 @@
-//! `jeth profile`: PC-sampling profiler over the Jolt emulator.
-//!
-//! Drives the emulator tick-by-tick (execute-only speed), samples the guest PC
-//! every `--every` ticks, buckets samples by ELF symbol, and prints a top-N
-//! table. Requires a guest built with symbols (JOLT_BACKTRACE=1 — symbol
-//! metadata only, no codegen change).
-
 use anyhow::{Context, Result};
 use object::{Object, ObjectSymbol};
 use std::collections::HashMap;
 use std::time::Instant;
+
+/// The symbol named exactly `needle`, else the first one whose name contains
+/// it. A substring match alone resolves `memcmp` to
+/// `jeth_guest::mem::memcmp_generic`, which the address order puts first.
+fn find_symbol<'a>(
+    symbols: &'a [(u64, u64, String)],
+    needle: &str,
+) -> Option<&'a (u64, u64, String)> {
+    symbols
+        .iter()
+        .find(|(_, _, n)| n == needle)
+        .or_else(|| symbols.iter().find(|(_, _, n)| n.contains(needle)))
+}
 
 #[expect(
     clippy::too_many_arguments,
@@ -26,9 +32,11 @@ pub fn run(
     split_markers: bool,
     json_out: Option<String>,
     guest_features: &[&str],
+    variant: crate::trace::Variant,
 ) -> Result<()> {
-    let variant = crate::trace::Variant::Input;
-    // --split-markers needs the per-tx marker build (plus symbols either way).
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let input_bytes = crate::trace::guest_stream(&raw, variant)?;
+
     let mut features: Vec<&str> = guest_features.to_vec();
     if split_markers && !features.contains(&"pertx") {
         features.push("pertx");
@@ -58,8 +66,6 @@ pub fn run(
     );
     println!("{} text symbols", symbols.len());
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
 
     let tape = crate::trace::advice_pass1(variant, &features, skip_build, &input_bytes, &[])?;
@@ -82,14 +88,10 @@ pub fn run(
         }
     };
 
-    // --callers-of: restrict to samples whose PC is inside a matching symbol and
-    // bucket the RETURN ADDRESS (ra/x1) instead — a one-level caller profile.
     let target_range: Option<(u64, u64)> = callers_of
         .as_deref()
         .map(|needle| -> Result<_> {
-            let (addr, size, name) = symbols
-                .iter()
-                .find(|(_, _, n)| n.contains(needle))
+            let (addr, size, name) = find_symbol(&symbols, needle)
                 .with_context(|| format!("no symbol matching {needle:?}"))?;
             println!("caller profile of {name} @ {addr:#x}+{size:#x}");
             Ok((*addr, *addr + *size))
@@ -99,9 +101,7 @@ pub fn run(
     let pc_range: Option<(u64, u64)> = pcs_of
         .as_deref()
         .map(|needle| -> Result<_> {
-            let (addr, size, name) = symbols
-                .iter()
-                .find(|(_, _, n)| n.contains(needle))
+            let (addr, size, name) = find_symbol(&symbols, needle)
                 .with_context(|| format!("no symbol matching {needle:?}"))?;
             println!("per-PC rows of {name} @ {addr:#x}+{size:#x}");
             Ok((*addr, *addr + *size))
@@ -115,10 +115,6 @@ pub fn run(
         .collect();
     let mut entry_hits: HashMap<u64, u64> = HashMap::new();
 
-    // --split-markers: track the guest's active cycle-marker (phase / per-tx)
-    // by watching the entry PC of the jeth_phase_start/end hooks and reading the
-    // label bytes out of guest memory. Rows are attributed to (innermost marker,
-    // symbol) — a full phase × component matrix in one run.
     let hook_addr = |name: &str| -> Option<u64> {
         symbols
             .iter()
@@ -138,7 +134,6 @@ pub fn run(
     );
     let start = Instant::now();
     let mut samples: HashMap<usize, u64> = HashMap::new();
-    // (marker label id, symbol idx) -> rows; label id 0 = outside any marker.
     let mut marker_samples: HashMap<(u16, usize), u64> = HashMap::new();
     let mut labels: Vec<String> = vec!["(outside markers)".into()];
     let mut label_ids: HashMap<String, u16> = HashMap::new();
@@ -177,10 +172,6 @@ pub fn run(
             ticks += 1;
         }
     } else if rows {
-        // Exact TRACE-ROW attribution: every tick's row delta (1 real row +
-        // virtual-sequence/inline expansion rows) is charged to the executing
-        // symbol — or, with --callers-of, to the RETURN ADDRESS while the PC
-        // is inside the target symbol. Slower than sampling but exact.
         let mut prev_rows = emulator.get_cpu().trace_len as u64;
         loop {
             let pc = emulator.get_cpu().read_pc();
@@ -336,4 +327,23 @@ pub fn run(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_symbol;
+
+    #[test]
+    fn exact_symbol_name_wins_over_substring_match() {
+        let symbols = [
+            (
+                0x1000,
+                0x40,
+                "jeth_guest[c4b5295f035d354]::mem::memcmp_generic".to_owned(),
+            ),
+            (0x2000, 0x10, "memcmp".to_owned()),
+        ];
+        assert_eq!(find_symbol(&symbols, "memcmp"), Some(&symbols[1]));
+        assert_eq!(find_symbol(&symbols, "memcmp_generic"), Some(&symbols[0]));
+    }
 }

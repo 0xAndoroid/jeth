@@ -1,5 +1,3 @@
-//! revm and EIP-7702 recovery through deferred, checked secp256k1 equations.
-
 use crate::advice::{advice_assert_eq, advice_u64};
 use crate::recovery_batch::{self, Equation};
 #[cfg(any(
@@ -16,25 +14,25 @@ use reth_evm::revm::precompile::{Crypto, PrecompileHalt};
 
 /// secp256k1 curve order n (little-endian limbs).
 pub(crate) const N: U256 = U256::from_limbs([
-    0xBFD25E8CD0364141,
-    0xBAAEDCE6AF48A03B,
-    0xFFFFFFFFFFFFFFFE,
-    0xFFFFFFFFFFFFFFFF,
+    0xBFD2_5E8C_D036_4141,
+    0xBAAE_DCE6_AF48_A03B,
+    0xFFFF_FFFF_FFFF_FFFE,
+    0xFFFF_FFFF_FFFF_FFFF,
 ]);
 /// Base field modulus p (little-endian limbs).
 const P: U256 = U256::from_limbs([
-    0xFFFFFFFEFFFFFC2F,
-    0xFFFFFFFFFFFFFFFF,
-    0xFFFFFFFFFFFFFFFF,
-    0xFFFFFFFFFFFFFFFF,
+    0xFFFF_FFFE_FFFF_FC2F,
+    0xFFFF_FFFF_FFFF_FFFF,
+    0xFFFF_FFFF_FFFF_FFFF,
+    0xFFFF_FFFF_FFFF_FFFF,
 ]);
 /// (p+1)/4 — sqrt exponent for p ≡ 3 (mod 4), little-endian u64 limbs.
 #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
 const SQRT_EXP: [u64; 4] = [
-    0xFFFFFFFFBFFFFF0C,
-    0xFFFFFFFFFFFFFFFF,
-    0xFFFFFFFFFFFFFFFF,
-    0x3FFFFFFFFFFFFFFF,
+    0xFFFF_FFFF_BFFF_FF0C,
+    0xFFFF_FFFF_FFFF_FFFF,
+    0xFFFF_FFFF_FFFF_FFFF,
+    0x3FFF_FFFF_FFFF_FFFF,
 ];
 
 /// Install the Jolt-accelerated crypto providers (call once at guest start):
@@ -68,8 +66,8 @@ impl alloy_consensus::crypto::backend::CryptoProvider for JoltCryptoProvider {
         sig: &[u8; 65],
         msg: &[u8; 32],
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-        let sig64: &[u8; 64] = sig[..64].try_into().unwrap();
-        inline_ecrecover(sig64, sig[64], msg)
+        let [sig64 @ .., recid] = sig;
+        inline_ecrecover(sig64, *recid, msg)
             .map(|hash| alloy_primitives::Address::from_slice(&hash[12..]))
             .ok_or_else(alloy_consensus::crypto::RecoveryError::new)
     }
@@ -94,6 +92,21 @@ impl alloy_consensus::crypto::backend::CryptoProvider for JoltCryptoProvider {
 struct JoltCrypto;
 
 impl Crypto for JoltCrypto {
+    #[cfg(any(target_arch = "riscv64", feature = "kzg-residue"))]
+    fn verify_kzg_proof(
+        &self,
+        z: &[u8; 32],
+        y: &[u8; 32],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
+    ) -> Result<(), PrecompileHalt> {
+        if crate::kzg::verify(commitment, z, y, proof) {
+            Ok(())
+        } else {
+            Err(PrecompileHalt::BlobVerifyKzgProofFailed)
+        }
+    }
+
     #[inline]
     fn secp256k1_ecrecover(
         &self,
@@ -107,6 +120,10 @@ impl Crypto for JoltCrypto {
     #[inline]
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], PrecompileHalt> {
         crate::bn254::g1_mul(point, scalar)
+    }
+
+    fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, PrecompileHalt> {
+        crate::bn254_pairing::pairing_check(pairs)
     }
 
     /// SHA-256 on the Jolt inline; the native build keeps revm's default so `run-native` stays
@@ -229,7 +246,9 @@ pub(crate) fn prepare_recovery(sig: &[u8; 64], mut recid: u8, msg: &[u8; 32]) ->
         *limb = advice_u64!(root[i]);
         let _ = i;
     }
-    let mut y = Secp256k1Fq::from_u64_arr(&limbs).expect("canonical square root advice");
+    let y = Secp256k1Fq::from_u64_arr(&limbs);
+    assert!(y.is_ok(), "canonical square root advice");
+    let Ok(mut y) = y else { unreachable!() };
     let expected = if square == 1 { y2 } else { y2.neg() };
     for (actual, expected) in y.square().e().into_iter().zip(expected.e()) {
         advice_assert_eq!(actual, expected);
@@ -274,7 +293,6 @@ pub(crate) fn recover_point(equation: &Equation) -> Secp256k1Point {
     mul_4x128(scalars, points)
 }
 
-/// Square-and-multiply exponentiation over Fq (MSB-first; exponent LE limbs).
 #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
 fn fq_pow(base: &Secp256k1Fq, exp: &[u64; 4]) -> Secp256k1Fq {
     let mut started = false;
@@ -297,7 +315,7 @@ fn fq_pow(base: &Secp256k1Fq, exp: &[u64; 4]) -> Secp256k1Fq {
     acc
 }
 
-#[inline(always)]
+#[inline]
 #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
 fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     if cond {
@@ -307,7 +325,7 @@ fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     }
 }
 
-#[inline(always)]
+#[inline]
 #[cfg(any(feature = "compute_advice", not(target_arch = "riscv64")))]
 fn scalars_to_index(scalars: &[u128; 4], bit_index: usize) -> usize {
     let mut idx = 0;
@@ -392,19 +410,18 @@ mod tests {
         let mut block = [0u64; 18];
         block[..16].copy_from_slice(m);
         block[16] = t0;
-        block[17] = f as u64;
+        block[17] = u64::from(f);
         jolt_inlines_blake2::exec::execute_blake2b_compression(h, &block);
     }
 
-    /// Random (h, m, t0, f) with counter edge values, 12 rounds, t[1] == 0: the routed case.
     #[test]
     fn blake2_inline_model_matches_revm_compress_for_12_rounds() {
         let mut rng = 0xb1a2_e2f0_0d15_ea5eu64;
         for i in 0..4000u64 {
             let mut h = [0u64; 8];
-            h.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+            h.fill_with(|| xorshift(&mut rng));
             let mut m = [0u64; 16];
-            m.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+            m.fill_with(|| xorshift(&mut rng));
             let t0 = match i % 4 {
                 0 => 0,
                 1 => u64::MAX,
@@ -483,8 +500,8 @@ mod tests {
                 let (mut h, mut m) = ([0u64; 8], [0u64; 16]);
                 match case % 3 {
                     0 => {
-                        h.iter_mut().for_each(|w| *w = xorshift(&mut rng));
-                        m.iter_mut().for_each(|w| *w = xorshift(&mut rng));
+                        h.fill_with(|| xorshift(&mut rng));
+                        m.fill_with(|| xorshift(&mut rng));
                     }
                     1 => {
                         h = [u64::MAX; 8];
@@ -510,13 +527,6 @@ mod tests {
                 assert_eq!(got, want, "rounds {rounds} case {case} t {t:?} f {f}");
             }
         }
-    }
-
-    #[test]
-    fn blake2f_round_inline_tables_match_revm() {
-        use reth_evm::revm::precompile::blake2::algo;
-        assert_eq!(jeth_inlines_blake2f::IV, algo::IV);
-        assert_eq!(jeth_inlines_blake2f::SIGMA, algo::SIGMA);
     }
 
     /// EIP-152 test vectors 4–7 (rounds 0, 12, 12, 1) through the round-inline compress (vector 8

@@ -1,10 +1,3 @@
-//! `jeth opcodes`: exact dynamic RV-opcode histogram (execs × trace rows).
-//!
-//! Drives the emulator tick-by-tick like `profile --rows`, but buckets each
-//! tick's row delta by the DECODED instruction class at the pre-tick PC
-//! (compressed forms folded into their expanded class). Sizes the sub-word
-//! load/store pool for the Jolt ISA lane without touching the guest.
-
 #![expect(
     clippy::verbose_bit_mask,
     reason = "Masks match the RISC-V encoding bit positions."
@@ -13,8 +6,6 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Sub-word ops split by `imm & 7 == 0` (`/a` aligned-imm, `/u` not): the
-/// aligned-imm fast path can reuse the base register's low address bits.
 fn classify(insn: u32, compressed: bool) -> &'static str {
     if compressed {
         let quadrant = insn & 3;
@@ -124,9 +115,15 @@ fn classify(insn: u32, compressed: bool) -> &'static str {
     }
 }
 
-pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> Result<()> {
-    let variant = crate::trace::Variant::Input;
-    // Symbol attribution needs the symbols guest build (JOLT_BACKTRACE=1).
+pub fn run(
+    input_path: &str,
+    skip_build: bool,
+    symbols_for: Option<String>,
+    variant: crate::trace::Variant,
+) -> Result<()> {
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    let input_bytes = crate::trace::guest_stream(&raw, variant)?;
+
     let elf_file = if symbols_for.is_some() {
         crate::trace::build_guest_symbols_features(variant, &[])?;
         crate::trace::elf_path_with(variant, &[])
@@ -163,8 +160,6 @@ pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> R
         .map(|s| s.split(',').collect())
         .unwrap_or_default();
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    let input_bytes = crate::trace::wrap_input(&raw)?;
     let memory_config = crate::trace::memory_config(&elf, variant);
     let tape = crate::trace::advice_pass1(variant, &[], skip_build, &input_bytes, &[])?;
 
@@ -180,9 +175,7 @@ pub fn run(input_path: &str, skip_build: bool, symbols_for: Option<String>) -> R
 
     println!("opcode histogram (exact rows)...");
     let start = Instant::now();
-    // kind -> (execs, rows)
     let mut buckets: HashMap<&'static str, (u64, u64)> = HashMap::new();
-    // (kind, symbol idx) -> (execs, rows), only for kinds in --symbols-for.
     let mut sym_buckets: HashMap<(&'static str, usize), (u64, u64)> = HashMap::new();
     let lookup = |pc: u64| -> usize {
         match symbols.binary_search_by(|(addr, _, _)| addr.cmp(&pc)) {

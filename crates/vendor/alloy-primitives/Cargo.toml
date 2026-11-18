@@ -187,6 +187,13 @@ tiny-keccak = ["dep:tiny-keccak"]
 
 [workspace]
 
+# Mirrors the entries of crates/guest's [patch.crates-io] that this crate's graph contains,
+# so the riscv64 CI job tests it against the crates the guest links.
+[patch.crates-io]
+foldhash = { path = "../foldhash" }
+hashbrown = { path = "../hashbrown" }
+ark-ff = { path = "../ark-ff" }
+
 [lib]
 name = "alloy_primitives"
 path = "src/lib.rs"

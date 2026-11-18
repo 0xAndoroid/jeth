@@ -14,6 +14,8 @@ pub mod advice;
 pub mod bigint;
 #[cfg(feature = "secp-inline")]
 mod bn254;
+#[cfg(any(feature = "secp-inline", test))]
+mod bn254_pairing;
 #[cfg(feature = "census")]
 pub mod census;
 mod chainspec;
@@ -21,6 +23,7 @@ pub mod code_library;
 pub mod container;
 #[cfg(feature = "secp-inline")]
 mod crypto;
+mod final_state;
 #[cfg(feature = "guest-instrument")]
 mod instrument;
 mod keccak_memo;
@@ -30,6 +33,12 @@ mod keccak_memo;
     not(target_arch = "riscv64")
 ))]
 mod keccak_prefix_params;
+#[cfg(any(
+    all(feature = "secp-inline", target_arch = "riscv64"),
+    feature = "kzg-residue",
+    test
+))]
+mod kzg;
 #[cfg(any(all(feature = "p256-inline", target_arch = "riscv64"), test))]
 mod p256;
 #[cfg(all(
@@ -90,7 +99,6 @@ pub fn from_container(
     Ok((block, signers, witness))
 }
 
-/// Decode JEF bytes whose backing allocation outlives validation.
 pub fn decode_container(bytes: &'static [u8]) -> Result<BlockInput, container::ContainerError> {
     let view = container::ContainerReader::read(bytes)?;
     if view.library_id_lo != code_library::LIBRARY_ID_LO {

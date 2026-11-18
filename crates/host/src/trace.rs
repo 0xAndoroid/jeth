@@ -1,6 +1,3 @@
-//! `jeth trace`: run the guest over an input on the Jolt RV64IMAC emulator —
-//! execute-only streaming count (no trace materialization, no proving).
-
 use anyhow::{bail, Context, Result};
 use jolt_common::jolt_device::{MemoryConfig, MemoryLayout};
 use std::path::PathBuf;
@@ -18,13 +15,17 @@ extern crate jolt_inlines_p256 as _;
 extern crate jolt_inlines_secp256k1 as _;
 extern crate jolt_inlines_sha2 as _;
 
-/// Must match the `#[jolt::provable(...)]` attributes in crates/guest/src/lib.rs.
-const MAX_INPUT_SIZE: u64 = 134_217_728; // 128 MiB (multi-block synthetic inputs)
+// The sizes below must match the `#[jolt::provable(...)]` attributes in
+// crates/guest/src/lib.rs, which cannot name these constants: the attribute takes
+// integer literals only. `guest_attributes_declare_the_host_memory_config` compares them.
+
+const DEFAULT_INPUT_SIZE: u64 = 16 << 20;
+const LARGE_INPUT_SIZE: u64 = 128 << 20;
 const MAX_OUTPUT_SIZE: u64 = 4096;
-const HEAP_SIZE: u64 = 1_610_612_736; // 1.5 GiB
-const STACK_SIZE: u64 = 33_554_432; // 32 MiB
+const HEAP_SIZE: u64 = 1_610_612_736;
+const STACK_SIZE: u64 = 33_554_432;
 const MAX_ADVICE_SIZE: u64 = 4096; // jolt defaults (attrs unset)
-const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4_194_304; // 4 MiB (validate_block_trusted)
+const TRUSTED_DIGEST_ADVICE_SIZE: u64 = 4_194_304;
 
 const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
@@ -32,7 +33,6 @@ const GUEST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../guest");
 const DEFAULT_GUEST_TARGET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/guest");
 const DEFAULT_JOLT_CLI: &str = "jolt";
 
-/// Guest target-dir prefix (this worktree's target/guest); `JETH_GUEST_TARGET_DIR` overrides it.
 fn guest_target_dir() -> String {
     std::env::var("JETH_GUEST_TARGET_DIR").unwrap_or_else(|_| DEFAULT_GUEST_TARGET_DIR.to_string())
 }
@@ -41,6 +41,8 @@ fn guest_target_dir() -> String {
 pub enum Variant {
     /// Committed input (fully self-verifying — the headline configuration).
     Input,
+    /// The same validation with the larger committed-input region (`--large-input`).
+    LargeInput,
     /// Whole payload via trusted advice (prover-side commitment savings only).
     Advice,
     /// Committed input + pre-computed witness digests via trusted advice
@@ -49,17 +51,45 @@ pub enum Variant {
 }
 
 impl Variant {
+    fn payload_capacity(self) -> u64 {
+        match self {
+            Variant::Input => DEFAULT_INPUT_SIZE,
+            Variant::LargeInput | Variant::Advice | Variant::Trusted => LARGE_INPUT_SIZE,
+        }
+    }
+
+    fn check_stream_len(self, len: usize) -> Result<()> {
+        let capacity = self.payload_capacity();
+        if len as u64 <= capacity {
+            return Ok(());
+        }
+        let remedy = match self {
+            Variant::Input => format!(
+                "pass --large-input to use `{}` ({} MiB)",
+                Variant::LargeInput.func(),
+                LARGE_INPUT_SIZE >> 20
+            ),
+            Variant::LargeInput => "--large-input already selects the largest region".into(),
+            Variant::Advice | Variant::Trusted => "no variant reserves more".into(),
+        };
+        bail!(
+            "input stream is {len} bytes (input.bin plus its length prefix) but `{}` reserves \
+             {capacity} ({} MiB); {remedy}",
+            self.func(),
+            capacity >> 20
+        );
+    }
+
     pub fn func(self) -> &'static str {
         match self {
             Variant::Input => "validate_block",
+            Variant::LargeInput => "validate_block_128m",
             Variant::Advice => "validate_block_advice",
             Variant::Trusted => "validate_block_trusted",
         }
     }
 }
 
-/// ELF path for a build with extra guest features (each feature set gets its
-/// own target dir so switching configurations doesn't thrash rebuilds).
 pub fn elf_path_with(variant: Variant, extra_features: &[&str]) -> PathBuf {
     let suffix: String = extra_features.iter().flat_map(|f| ["-", *f]).collect();
     PathBuf::from(format!("{}-{}{suffix}", guest_target_dir(), variant.func()))
@@ -75,10 +105,11 @@ pub fn memory_config(elf: &[u8], variant: Variant) -> MemoryConfig {
 }
 
 fn memory_config_for_program(program_size: u64, variant: Variant) -> MemoryConfig {
+    let payload = variant.payload_capacity();
     let (input_size, trusted_size) = match variant {
-        Variant::Input => (MAX_INPUT_SIZE, MAX_ADVICE_SIZE),
-        Variant::Advice => (MAX_ADVICE_SIZE, MAX_INPUT_SIZE),
-        Variant::Trusted => (MAX_INPUT_SIZE, TRUSTED_DIGEST_ADVICE_SIZE),
+        Variant::Input | Variant::LargeInput => (payload, MAX_ADVICE_SIZE),
+        Variant::Advice => (MAX_ADVICE_SIZE, payload),
+        Variant::Trusted => (payload, TRUSTED_DIGEST_ADVICE_SIZE),
     };
     MemoryConfig {
         max_input_size: input_size,
@@ -95,23 +126,34 @@ fn memory_config_for_program(program_size: u64, variant: Variant) -> MemoryConfi
 ///
 /// The JEF self-align prefix only depends on this address mod 8; every region
 /// start is 8-aligned by `MemoryLayout` construction, which is what lets one
-/// input.bin serve all three variants (Advice maps it at trusted_advice_start).
+/// input.bin serve every variant (Advice maps it at trusted_advice_start).
 pub fn stream_start(variant: Variant) -> u64 {
     let layout = MemoryLayout::new(&memory_config_for_program(0, variant));
     match variant {
         Variant::Advice => layout.trusted_advice_start,
-        Variant::Input | Variant::Trusted => layout.input_start,
+        Variant::Input | Variant::LargeInput | Variant::Trusted => layout.input_start,
     }
 }
 
-/// Address at which the Trusted variant's digest blob (second argument,
-/// trusted advice) is mapped.
 fn digest_stream_start() -> u64 {
     MemoryLayout::new(&memory_config_for_program(0, Variant::Trusted)).trusted_advice_start
 }
 
-pub fn wrap_input(raw: &[u8]) -> Result<Vec<u8>> {
+fn wrap_input(raw: &[u8]) -> Result<Vec<u8>> {
     Ok(postcard::to_stdvec(&raw)?)
+}
+
+/// `raw` (an input.bin) as the stream the guest reads its payload from: Jolt's
+/// generated entry point decodes a postcard `&[u8]`, so the stream is `raw`
+/// behind its length prefix. The only source of a stream outside this module.
+///
+/// Errors when the stream exceeds the region `variant`'s guest reserves for it.
+/// Call it before building a guest: `tracer::create_emulator` panics on such a
+/// stream ("Input too long"), which a command reaches only after both builds.
+pub fn guest_stream(raw: &[u8], variant: Variant) -> Result<Vec<u8>> {
+    let stream = wrap_input(raw)?;
+    variant.check_stream_len(stream.len())?;
+    Ok(stream)
 }
 
 pub fn decode_input(raw: &[u8]) -> Result<jeth_core::BlockInput> {
@@ -126,9 +168,6 @@ pub fn build_guest_symbols_features(variant: Variant, extra_features: &[&str]) -
     build_guest_inner(variant, true, extra_features)
 }
 
-/// Build the guest ELF via the `jolt` CLI (jolt-amber-nolane build recipe:
-/// lower-atomic pass, custom linker script from --stack-size/--heap-size, etc.)
-/// with extra guest cargo features (e.g. `pertx` for per-tx markers).
 pub fn build_guest_features(variant: Variant, extra_features: &[&str]) -> Result<()> {
     build_guest_inner(variant, false, extra_features)
 }
@@ -211,14 +250,6 @@ fn digest_blob_for(input_bin: &[u8]) -> Result<Vec<u8>> {
     Ok(blob)
 }
 
-/// Build (unless `skip_build` and both ELFs exist) the proven + `compute_advice`
-/// ELF pair, run pass 1 (full emulation of the compute ELF — writes the advice
-/// tape; its rows never count), and return the tape positioned for reading.
-///
-/// Advice-trie two-pass: jeth drives builds itself, so the SDK's
-/// automatic two-pass does not apply. The two builds are DIFFERENT ELFs with
-/// the same `JOLT_FUNC_NAME`; a forgotten tape panics the proven pass at the
-/// smoke sentinel.
 pub fn advice_pass1(
     variant: Variant,
     extra_features: &[&str],
@@ -267,6 +298,10 @@ pub fn run(
     variant: Variant,
     extra_features: &[&str],
 ) -> Result<()> {
+    let raw = std::fs::read(input_path).context("reading input.bin")?;
+    println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
+    let wrapped = guest_stream(&raw, variant)?;
+
     let elf_file = elf_path_with(variant, extra_features);
     if !skip_build || !elf_file.exists() {
         build_guest_features(variant, extra_features)?;
@@ -279,23 +314,12 @@ pub fn run(
         variant.func()
     );
 
-    let raw = std::fs::read(input_path).context("reading input.bin")?;
-    println!("input: {} ({:.1} MB)", input_path, raw.len() as f64 / 1e6);
-    // Jolt's generated entry point adds only the &[u8] argument length prefix.
-    let wrapped = wrap_input(&raw)?;
-    if wrapped.len() as u64 > MAX_INPUT_SIZE {
-        bail!(
-            "input {} bytes exceeds guest size budget {}",
-            wrapped.len(),
-            MAX_INPUT_SIZE
-        );
-    }
     let digest_blob = match variant {
         Variant::Trusted => Some(wrap_input(&digest_blob_for(&raw)?)?),
         _ => None,
     };
     let (input_stream, trusted_stream): (&[u8], &[u8]) = match variant {
-        Variant::Input => (&wrapped, &[]),
+        Variant::Input | Variant::LargeInput => (&wrapped, &[]),
         Variant::Advice => (&[], &wrapped),
         Variant::Trusted => (
             &wrapped,
@@ -312,13 +336,24 @@ pub fn run(
         input_stream,
         trusted_stream,
     )?;
+    let (summary_name, tape_name) = match variant {
+        Variant::Input => ("trace-summary.json", "advice-tape.bin"),
+        Variant::LargeInput => (
+            "trace-summary-large-input.json",
+            "advice-tape-large-input.bin",
+        ),
+        Variant::Advice => ("trace-summary-advice.json", "advice-tape-advice.bin"),
+        Variant::Trusted => ("trace-summary-trusted.json", "advice-tape-trusted.bin"),
+    };
+    let tape_path = PathBuf::from(input_path).with_file_name(tape_name);
+    let tape = tape.into_bytes();
+    std::fs::write(&tape_path, &tape).context("writing the advice tape")?;
+    println!("advice tape → {}", tape_path.display());
+    let tape = tracer::AdviceTape::from_bytes(tape);
 
     // program_size for the emulator's memory layout — mirror jolt's Program::execute.
     let memory_config = memory_config(&elf, variant);
 
-    // Execute-only streaming pass: counts trace rows (real + virtual/inline
-    // expansions — the prover-relevant "cycles") without materializing anything.
-    // Cycle markers print via tracing::info as the guest hits them.
     println!("tracing (execute-only streaming count)...");
     let start = Instant::now();
     let (trace_rows, device, _advice) = tracer::execute(
@@ -358,6 +393,7 @@ pub fn run(
     let summary = serde_json::json!({
         "input": input_path,
         "variant": variant.func(),
+        "payload_capacity_bytes": variant.payload_capacity(),
         "elf_bytes": elf.len(),
         "trace_rows_total": trace_rows,
         "gas_used": result.gas_used,
@@ -367,11 +403,6 @@ pub fn run(
         "effective_mhz": mhz,
         "guest_panicked": device.panic,
     });
-    let summary_name = match variant {
-        Variant::Input => "trace-summary.json",
-        Variant::Advice => "trace-summary-advice.json",
-        Variant::Trusted => "trace-summary-trusted.json",
-    };
     let summary_path = std::path::Path::new(input_path).with_file_name(summary_name);
     std::fs::write(&summary_path, serde_json::to_string_pretty(&summary)?)?;
     println!("summary → {}", summary_path.display());
@@ -382,6 +413,14 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    const VARIANTS: [Variant; 4] = [
+        Variant::Input,
+        Variant::LargeInput,
+        Variant::Advice,
+        Variant::Trusted,
+    ];
 
     /// The JEF self-align prefix is computed against one region start but the
     /// same input.bin is mapped at a different region per variant. That only
@@ -389,9 +428,94 @@ mod tests {
     /// MemoryLayout drift.
     #[test]
     fn all_stream_starts_are_8_aligned() {
-        for variant in [Variant::Input, Variant::Advice, Variant::Trusted] {
+        for variant in VARIANTS {
             assert_eq!(stream_start(variant) % 8, 0);
         }
         assert_eq!(digest_stream_start() % 8, 0);
+    }
+
+    /// The guest is built outside this workspace and `#[jolt::provable]` takes
+    /// integer literals only, so this test is all that ties the guest's sizes to
+    /// the constants above. On a mismatch the emulator maps each stream at an
+    /// address the guest does not read it from.
+    #[test]
+    fn guest_attributes_declare_the_host_memory_config() -> Result<()> {
+        let guest = include_str!("../../guest/src/lib.rs");
+        let size = regex_lite::Regex::new(r"(?m)^\s*(\w+) = (\d+)")?;
+        let unset = MemoryConfig::default();
+        for variant in VARIANTS {
+            let func = variant.func();
+            let (before, _) = guest
+                .split_once(&format!("fn {func}("))
+                .with_context(|| format!("the guest has no `{func}`"))?;
+            let (_, attribute) = before
+                .rsplit_once("#[jolt::provable(")
+                .with_context(|| format!("`{func}` is not provable"))?;
+            let declared: HashMap<&str, u64> = size
+                .captures_iter(attribute)
+                .map(|size| {
+                    let (_, [key, value]) = size.extract();
+                    Ok((key, value.parse()?))
+                })
+                .collect::<Result<_>>()?;
+            let host = memory_config_for_program(0, variant);
+            for (key, host, unset) in [
+                ("max_input_size", host.max_input_size, unset.max_input_size),
+                (
+                    "max_output_size",
+                    host.max_output_size,
+                    unset.max_output_size,
+                ),
+                (
+                    "max_trusted_advice_size",
+                    host.max_trusted_advice_size,
+                    unset.max_trusted_advice_size,
+                ),
+                (
+                    "max_untrusted_advice_size",
+                    host.max_untrusted_advice_size,
+                    unset.max_untrusted_advice_size,
+                ),
+                ("heap_size", host.heap_size, unset.heap_size),
+                ("stack_size", host.stack_size, unset.stack_size),
+            ] {
+                assert_eq!(
+                    declared.get(key).copied().unwrap_or(unset),
+                    host,
+                    "{func}: {key}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_stream_one_byte_over_its_region_is_rejected() -> Result<()> {
+        for (variant, limit) in [
+            (Variant::Input, DEFAULT_INPUT_SIZE),
+            (Variant::LargeInput, LARGE_INPUT_SIZE),
+        ] {
+            let limit = limit as usize;
+            variant.check_stream_len(limit)?;
+            let Err(error) = variant.check_stream_len(limit + 1) else {
+                bail!("`{}` accepts a stream above its region", variant.func());
+            };
+            assert!(error.to_string().contains("--large-input"), "{error}");
+        }
+        Ok(())
+    }
+
+    /// The limit bounds the stream the guest receives: the payload behind its
+    /// postcard length prefix, 4 bytes for lengths in 2^21..2^28.
+    #[test]
+    fn the_stream_limit_counts_the_length_prefix() -> Result<()> {
+        let limit = DEFAULT_INPUT_SIZE as usize;
+        let payload = vec![0u8; limit - 3];
+        assert_eq!(
+            guest_stream(&payload[..limit - 4], Variant::Input)?.len(),
+            limit
+        );
+        assert!(guest_stream(&payload, Variant::Input).is_err());
+        Ok(())
     }
 }

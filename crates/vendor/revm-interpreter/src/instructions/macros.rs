@@ -220,7 +220,17 @@ macro_rules! as_u64_saturated {
 #[collapse_debuginfo(yes)]
 macro_rules! as_usize_saturated {
     ($v:expr) => {
-        usize::try_from($v).unwrap_or(usize::MAX)
+        match ($v).as_limbs() {
+            limbs => {
+                if $crate::primitives::hints_util::unlikely(
+                    (limbs[1] | limbs[2] | limbs[3]) != 0 || limbs[0] > usize::MAX as u64,
+                ) {
+                    usize::MAX
+                } else {
+                    limbs[0] as usize
+                }
+            }
+        }
     };
 }
 
@@ -265,4 +275,47 @@ macro_rules! as_usize_or_fail_ret {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod saturation_tests {
+    use primitives::U256;
+
+    #[test]
+    fn saturated_pointer_size_matches_checked_conversion() {
+        for limb in 0..4 {
+            for value in [0, 1, u32::MAX as u64, (u32::MAX as u64) + 1, u64::MAX] {
+                let mut words = [0; 4];
+                words[limb] = value;
+                let word = U256::from_limbs(words);
+                assert_eq!(
+                    as_usize_saturated!(word),
+                    usize::try_from(word).unwrap_or(usize::MAX)
+                );
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..256 {
+            let words = core::array::from_fn(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            });
+            let mut word = U256::from_limbs(words);
+            assert_eq!(
+                as_usize_saturated!(&mut word),
+                usize::try_from(word).unwrap_or(usize::MAX)
+            );
+        }
+        let mut evaluations = 0;
+        assert_eq!(
+            as_usize_saturated!({
+                evaluations += 1;
+                U256::from(17)
+            }),
+            17
+        );
+        assert_eq!(evaluations, 1);
+    }
 }

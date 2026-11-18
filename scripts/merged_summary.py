@@ -10,7 +10,8 @@ Usage:
       [--banked banked-hashes.txt] [--profiles DIR] --out summary.json [--md out.md]
 
 `--results` holds `<name>.trace-summary.json` captured from `jeth trace` (names:
-`widened-<first block>`, `<block>`, `N<n>`); `--native` holds `native-<name>.log`
+`widened-<first block>`, `<block>`, `N<n>`; the merged `N<n>` runs need `--large-input`,
+which writes `trace-summary-large-input.json`); `--native` holds `native-<name>.log`
 from `jeth run-native`; `--profiles` may hold `<name>.agg.json` from
 `aggregate_markers.py agg` plus `compare-*.json` from `aggregate_markers.py compare`.
 """
@@ -61,6 +62,7 @@ def run_record(name: str, results: str, native: str, banked: dict | None) -> dic
     nat = native_info(Path(native) / f"native-{name.replace('widened-', '')}.log")
     rec = {
         "name": name,
+        "variant": summ["variant"],
         "trace_rows_total": summ["trace_rows_total"],
         "gas_used": summ["gas_used"],
         "cycles_per_gas": summ["trace_rows_total"] / summ["gas_used"],
@@ -146,7 +148,7 @@ def fidelity(merged_dir: str, n: int) -> dict:
         "source_txs": tot.get("txs"),
         "dropped": tot.get("dropped"),
         "status_changed": tot.get("status_changed"),
-        "gas_changed_status_unchanged": tot.get("gas_changed"),
+        "gas_changed": tot.get("gas_changed"),
         "unchanged": tot.get("unchanged"),
         "input_bin_bytes": meta["input_bin_bytes"],
         "block_rlp_bytes": meta["block_rlp_bytes"],
@@ -232,7 +234,6 @@ def main() -> None:
                     "delta": m - ssum,
                 }
 
-            # execution + glue = validation - reveal - post_root
             def exec_glue(j: dict[str, int]) -> int:
                 return j.get("validation", 0) - j.get("witness_reveal", 0) - j.get("post_root", 0)
 
@@ -272,8 +273,6 @@ def main() -> None:
         "generated": "jeth measurement lane — multi-block synthetic inputs (2026-09-18)",
         "toolchain": {
             "jolt_cli": "/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt (jolt-amber-nolane @ a0d7b74baa)",
-            "variant": "validate_block (self-verifying, committed input, no trusted digests)",
-            "guest_input_region": "128 MiB (was 32 MiB)",
         },
         "step0": {
             "unchanged_tree_rows": baseline["trace_rows_total"],
@@ -379,13 +378,13 @@ def render_md(s: dict) -> str:
                 f"| {ph} | {fmt(v['singles_sum'])} | {fmt(v['merged'])} | {v['delta']:+,} | {100 * v['delta'] / v['singles_sum']:+.1f}% |"
             )
     lines.append(
-        "\n| N | source txs | kept | dropped | status_changed | gas_changed (status same) | gas retained | input MB | state nodes (dedup) | codes (dedup) |\n|---|---:|---:|---:|---:|---:|---:|---:|---|---|"
+        "\n| N | source txs | kept | dropped | status_changed | gas_changed | gas retained | input MB | state nodes (dedup) | codes (dedup) |\n|---|---:|---:|---:|---:|---:|---:|---:|---|---|"
     )
     for r in s["merged"]:
         fd = r["fidelity"]
         w = fd["witness"]
         lines.append(
-            f"| {fd['n']} | {fd['source_txs']} | {fd['tx_count']} | {fd['dropped']} | {fd['status_changed']} | {fd['gas_changed_status_unchanged']} | {fd['gas_retained_pct']:.2f}% | {fd['input_bin_bytes'] / 1e6:.1f} | {w['state_nodes_before_dedup']:,} → {w['state_nodes']:,} | {w['codes_before_dedup']} → {w['codes']} |"
+            f"| {fd['n']} | {fd['source_txs']} | {fd['tx_count']} | {fd['dropped']} | {fd['status_changed']} | {fd['gas_changed']} | {fd['gas_retained_pct']:.2f}% | {fd['input_bin_bytes'] / 1e6:.1f} | {w['state_nodes_before_dedup']:,} → {w['state_nodes']:,} | {w['codes_before_dedup']} → {w['codes']} |"
         )
     return "\n".join(lines) + "\n"
 

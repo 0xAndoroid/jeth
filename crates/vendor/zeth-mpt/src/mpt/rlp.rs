@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! RLP node references and digest resolution: [`RlpNode`] (a node's cached
-//! encoding-or-digest), the reference `Encodable` walk, and hydration of
-//! digest stubs through a [`DigestResolver`].
 use super::{
     children::Slot,
     decode::{decode_node_zc_exact_into, le_words_32},
@@ -30,7 +27,6 @@ use core::{fmt, mem::MaybeUninit, num::NonZeroUsize};
 /// The length in bytes of an RLP-encoded digest, i.e. hash length + 1 byte for the RLP header.
 pub(super) const DIGEST_RLP_LENGTH: usize = 1 + B256::len_bytes();
 
-/// RLP header byte of a digest item (32-byte string).
 pub(super) const DIGEST_ITEM_PREFIX: u8 = EMPTY_STRING_CODE + B256::len_bytes() as u8;
 
 /// Digest→bytes resolution callback for trie hydration.
@@ -43,8 +39,6 @@ pub trait DigestResolver {
     fn resolve(&mut self, digest: &B256) -> Option<&Bytes>;
 }
 
-/// [`DigestResolver`] over a prebuilt digest → encoding map ([`Node::from_rlp`]
-/// and tests; production resolves through advice-indexed witness slots).
 pub(super) struct MapResolver<'a>(pub(super) &'a B256IndexMap<Bytes>);
 
 impl DigestResolver for MapResolver<'_> {
@@ -194,10 +188,6 @@ impl<M: Memoization> Node<M> {
             }
             Node::Branch(children, _) => {
                 for slot in children.iter_mut() {
-                    // Digest stubs are the bulk of the slots and most of them
-                    // miss (boundary siblings): they are probed here, without
-                    // a call per stub, and a hit decodes into a fresh heap
-                    // node that takes the slot.
                     if let Slot::Digest(digest) = slot {
                         #[cfg(feature = "premeasure")]
                         super::premeasure::count(&super::premeasure::PROBES);
@@ -313,7 +303,6 @@ impl RlpNode {
         }
     }
 
-    /// The reference to the node with `digest`: `0xa0 ++ digest`.
     #[inline(always)]
     pub(super) fn from_digest(digest: &B256) -> Self {
         Self::from_digest_words(le_words_32(digest.as_slice()))
@@ -489,9 +478,6 @@ where
 mod tests {
     use super::*;
 
-    /// `RlpNode::from_digest` is the RLP string item of the digest
-    /// (`0xa0 ++ digest`), and `from_rlp` switches from the inline encoding
-    /// to the digest reference exactly at 32 bytes.
     #[test]
     fn rlp_node_digest_and_inline_boundary() {
         let digest = B256::from_slice(&(0..32u8).map(|i| i.wrapping_mul(37)).collect::<Vec<_>>());

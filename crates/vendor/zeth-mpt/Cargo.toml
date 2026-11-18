@@ -21,6 +21,13 @@ license = "Apache-2.0"
 # the guest workspace), like crates/vendor/revm-interpreter.
 [workspace]
 
+# Mirrors the entries of crates/guest's [patch.crates-io] that this crate's graph contains,
+# so the riscv64 CI job tests it against the crates the guest links.
+[patch.crates-io]
+foldhash = { path = "../foldhash" }
+alloy-primitives = { path = "../alloy-primitives" }
+hashbrown = { path = "../hashbrown" }
+
 [dependencies]
 alloy-trie = { version = "0.9", default-features = false, features = ["ethereum"] }
 alloy-rlp = { version = "0.3.8", default-features = false }

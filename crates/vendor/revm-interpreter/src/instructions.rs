@@ -12,6 +12,8 @@ pub mod block_info;
 pub mod contract;
 /// Control flow instructions (JUMP, JUMPI, REVERT, etc.).
 pub mod control;
+#[cfg(feature = "push-jump-fusion")]
+pub(crate) mod fusion;
 /// Host environment interactions (SLOAD, SSTORE, LOG, etc.).
 pub mod host;
 /// Signed 256-bit integer operations.
@@ -162,7 +164,6 @@ pub const fn static_gas(opcode: u8, spec: SpecId) -> u64 {
         TLOAD | TSTORE => 100,
         LOG0..=LOG4 => gas::LOG,
 
-        // EIP-150 / EIP-1884 / EIP-2929 repricings.
         SLOAD => {
             if spec.is_enabled_in(BERLIN) {
                 gas::WARM_STORAGE_READ_COST
@@ -324,6 +325,12 @@ const fn instruction_table_impl<WIRE: InterpreterTypes, H: Host>() -> [Instructi
     table[PUSH0 as usize] = Instruction::new(stack::push0);
     table[PUSH1 as usize] = Instruction::new(stack::push::<1, _, _>);
     table[PUSH2 as usize] = Instruction::new(stack::push::<2, _, _>);
+    #[cfg(feature = "push-jump-fusion")]
+    {
+        table[PUSH2 as usize] = Instruction::new(fusion::push2::<_, _>);
+        table[ISZERO as usize] = Instruction::new(fusion::test_jump::<false, _, _>);
+        table[EQ as usize] = Instruction::new(fusion::test_jump::<true, _, _>);
+    }
     table[PUSH3 as usize] = Instruction::new(stack::push::<3, _, _>);
     table[PUSH4 as usize] = Instruction::new(stack::push::<4, _, _>);
     table[PUSH5 as usize] = Instruction::new(stack::push::<5, _, _>);
@@ -637,7 +644,6 @@ mod tests {
         }
     }
 
-    /// Runs `op` alone with `gas_limit` and returns the halt result, if any.
     fn step_result(op: u8, spec: SpecId, gas_limit: u64) -> Option<InstructionResult> {
         let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(&[op, 0, 0]));
         let mut interpreter = Interpreter::<EthInterpreter>::new(
@@ -658,8 +664,6 @@ mod tests {
             .and_then(|a| a.instruction_result())
     }
 
-    /// Every instruction charges exactly `static_gas` before doing anything else: one gas
-    /// short is out-of-gas, exactly enough is never out-of-gas.
     #[test]
     fn instructions_charge_static_gas_first() {
         for spec in all_specs() {

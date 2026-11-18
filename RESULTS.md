@@ -242,7 +242,7 @@ changing the proof statement. Measured against block 25698189 post-campaign-2:
 |---|---|---|
 | RLP/MPT structure advice (node boundaries, field offsets) | **not exploitable** | verifying a claimed RLP header at an offset = reading the same header bytes the parser reads; the actual decode cost was alignment overhead (fixed by word-RMW) + per-child recursion, not scanning. Zero-copy + override supersede. |
 | Trie-traversal / storage-slot position advice | **not exploitable** | a Merkle lookup's verification IS the root-anchored walk; `get` is already ~free post-reveal, and reveal work is witness-bounded. Advising positions saves the compare-free walk but still pays node decode + hash — the actual costs. |
-| Verify-by-multiply for U256 division | **not worth it** | Jolt's hardware DIV/REM is already advice-backed (division virtual sequence). Out-of-line `div_rem` = 1.27M rows (0.1%), mostly MULMOD's 512÷256 reduction; advice (q,r) + 256×256 mul check ≈ half of ~1M. Skip. |
+| Verify-by-multiply for U256 division | **not worth it**; superseded for MULMOD by #29 | Jolt's hardware DIV/REM is already advice-backed (division virtual sequence). Out-of-line `div_rem` = 1.27M rows (0.1%), mostly MULMOD's 512÷256 reduction; advice (q,r) + 256×256 mul check ≈ half of ~1M. Skip. **Superseded:** #29 advises MULMOD's quotient alone and takes the remainder from the checked difference of two 256×256 products (`crates/core/src/bigint.rs`); its rows are in that PR's Cycles table (→ Cycle-count harness). |
 | Advice-carried jump tables (R7) | **exploitable — next up** | `analyze_legacy` = 39.7M rows (3.1%). Sound WITHOUT in-guest verification: a wrong table bit either never influences execution or diverges a consensus-checked output (receipts/gas/state root) → panic → no proof. Needs the two-pass harness in trace.rs (compute_advice ELF + tape plumbing); est −35–40M, ~1 day incl. harness. |
 | keccak via advice | **impossible by construction** | verification = recomputation for a hash. The trusted-digests variant is the honest version of this trade (verifier-attested digests), already shipped. |
 
@@ -318,7 +318,8 @@ not measurements.
   `crates/vendor/revm-interpreter` (typed `Stack::exchange`). The ZeroOS allocator patch
   (`crates/alloc-o1`, O(1) size-class) was upstreamed as
   [jolt#1746](https://github.com/a16z/jolt/pull/1746) and dropped; the crate stays as reference.
-- **Guest:** no_std RV64IMAC, 32 MiB input / 1.5 GiB heap / 32 MiB stack; JEF v1
+- **Guest:** no_std RV64IMAC, 1.5 GiB heap / 32 MiB stack, committed-input region
+  per README → Committed-input limit; JEF v1
   input views over block RLP, pubkeys, and witness; word-wise memcpy/memset/memcmp overrides;
   no-op critical-section provider.
 - **Witnesses:** free hosted geth `debug_executionWitness` (QuickNode docs-demo; BlockPI
@@ -337,9 +338,59 @@ cargo run --release -p jeth-host -- trace --input data/<N>/input.bin [--trusted-
 cargo run --release -p jeth-host -- profile --input data/<N>/input.bin --rows [--callers-of SYM]
 ```
 
+An input above the default committed-input limit (a `jeth merge` output) needs `--large-input`
+on `trace`, `profile`, `txprofile` and `opcodes` (README → Committed-input limit).
+
 One-time: install the Jolt CLI at the `a16z/jolt` rev pinned in the root `Cargo.toml`
 (`cargo install --locked --git https://github.com/a16z/jolt --rev <rev> jolt`),
 or point `JOLT_PATH` at a `jolt` binary built from that rev.
+
+### Cycle-count harness
+
+`just cycles` (`jeth cycles run`) counts expanded cycles for a tree over a frozen block set: the
+ten consecutive mainnet blocks 26227668–26227677 (277,426,425 gas). The count per block is the
+`trace_rows_total` of `jeth trace`: the rows `tracer::execute` returns for the proven pass of the
+committed-input `validate_block` guest with its default features (`keccak-census`,
+`keccak-cache` and `push-jump-fusion` on), after virtual-sequence and inline expansion, unpadded.
+The advice pass is not counted.
+
+```bash
+just cycles                               # this tree → target/cycles/cycles.{json,md}
+just cycles --tree <dir> --out <dir>      # any tree whose CLI has `repack` and `trace`
+just jeth cycles compare <base>/cycles.json <head>/cycles.json
+```
+
+- **Inputs.** The run downloads each block's `block.rlp` and `witness.json` from the
+  `cycles-blocks-v1` release of `--repo` into `data/cycles/cycles-blocks-v1/`, checks every
+  file's sha256 and every header (number, hash, state root, receipts root, gas used) against
+  `fixtures/cycles-blocks.json`, and uses no RPC. The measured tree's own `jeth repack` derives
+  `input.bin`, so a change to the input encoding is measured with its own encoder.
+- **Checks.** A block fails when the guest panics or returns a block hash or gas other than the
+  pinned ones. In a tree that has the `crates/native-advice` package (README → Native advice
+  generation), a block also fails when the tape that recorder writes for its `input.bin` differs
+  from `advice-tape.bin`, the `compute_advice` pass's tape, which `jeth trace` writes beside
+  `trace-summary.json`. The run still reports the other blocks, then exits nonzero.
+- **One checkout path per comparison.** Absolute totals are specific to the build paths
+  (checkout, cargo home, toolchain); only counts taken at the same paths are comparable.
+  Observed, mechanism not established (the guest ELF embeds absolute source paths): on one
+  Linux host (CherryPika), dac77ea counts 14 more rows in every block at one of three checkout
+  paths than at the other two, and at those two it counts 38 rows per block more than the
+  October 19 census of the same blocks on another Linux host (4,240,923,967 rows at 61f87a4,
+  which counts the same as dac77ea when both are built at one path). Measure both
+  revisions in one checkout, one after the other, with the harness binary copied out of
+  `target/`, as `cycles.yml` does; `guest_elf_sha256` is then comparable as well.
+
+`.github/workflows/cycles.yml` runs the harness on every pull request (the merge commit, then
+its base) and on every push to main, and writes the table to the job summary and the `cycles`
+artifact. It only reports; nothing gates on it.
+
+- To gate on a threshold, give `jeth cycles compare` a flag that exits nonzero above a chosen
+  total Δ %, and add the `cycles` job to the `needs` of the `ci` job in `ci.yml`.
+- To post the table as a sticky pull-request comment, add a second workflow triggered by
+  `workflow_run` on `Cycles` that downloads the `cycles` artifact and posts its markdown with
+  `pull-requests: write`. That workflow must not check out or run pull-request code, and must
+  treat the artifact as untrusted text. `cycles.yml` keeps its read-only token because it runs
+  the pull request's code.
 
 ## Notes & caveats
 
@@ -1865,7 +1916,7 @@ The `XLEN = 64` `debug_assert`s the reviewer flagged live in those table
 decompositions and go with them.
 
 **Jolt pin.** Branch `jolt-amber-nolane` @ `a0d7b74baa`, pushed to the private
-mirror `git@github.com:0xAndoroid/jolt-private.git`; read-only worktree
+mirror `jolt-private`; read-only worktree
 `/Volumes/Dev/worktrees/jolt/jolt-amber-nolane`, CLI
 `/Volumes/Dev/cargo-target/jolt-cli-amber-nolane/release/jolt`. It is
 a16z/jolt `main` @ `f09bbc1e34` (4 commits past amber's base `628713fd46`,
@@ -2049,12 +2100,12 @@ single proof padded to the next power of two; `max_trace_length` default 2^24, p
 200M-gas block is 143 default segments or 3–5 at the ceiling (continuations + aggregation); 600M gas extrapolates beyond N=19 (549M).
 Unpadded @10M/s: 240 / 437 / 635 s. A further −10.5% at 200M gas (≤10.7 c/g) drops the pad to 2^31 and halves the single proof.
 
-### Fidelity of the synthetic blocks (`merge-meta.json`; PR #6 body has the post-2848739 counts)
+### Fidelity of the synthetic blocks (`merge-meta.json` written before PR #6 commit `2848739` made `gas_changed` count status-changed txs too; the PR body has N=2 and N=6 recounted)
 | N | source txs | kept | dropped | status_changed | gas_changed (status unchanged) | gas retained | witness codes Σ→union | header rewrites |
 |---|---:|---:|---:|---:|---:|---:|---|---|
-| 6 | 1831 | 1819 | 12 | 28 | 24 (52 counted independently) | 97.22% | 260→240 | gas_limit, gas_used, base_fee, excess_blob_gas |
-| 13 | 3698 | 3652 | 46 | 81 | 100 | 95.99% | 550→481 | same four parent-header fields |
-| 19 | 5366 | 5277 | 89 | 137 | 168 | 93.71% | 871→719 | same four parent-header fields |
+| 6 | 1831 | 1819 | 12 | 28 | 24 (52 counted independently) | 97.22% | 260→240 | gas_limit, gas_used, base_fee, excess_blob_gas, blob_gas_used |
+| 13 | 3698 | 3652 | 46 | 81 | 100 | 95.99% | 550→481 | same five parent-header fields |
+| 19 | 5366 | 5277 | 89 | 137 | 168 | 93.71% | 871→719 | same five parent-header fields |
 
 Later-block txs run in block 1's context (timestamp, base fee, BLOCKHASH of merged-away blocks = 0); drops = blob cap / nonce cascade / state outside the witness union (`dropped_txs`). Merged gas is 94–99% of the constituents', so Σ-vs-merged row deltas carry a −0.8% (N=2) … −6.3% (N=19) gas effect.
 
@@ -2064,8 +2115,11 @@ cd ~/dev/jeth.feat-merge-blocks-measure && export CARGO_TARGET_DIR=/Volumes/Dev/
   JETH_GUEST_TARGET_DIR=/Volumes/Dev/cargo-target/jeth-glamsterdam-guest     # isolated guest ELF dirs (other lanes rebuild the shared ones)
 cargo build -q --release -p jeth-host --features secp-inline; J=$CARGO_TARGET_DIR/release/jeth; IN=/Volumes/Dev/jeth-inputs
 $J trace --input $IN/25905781/input.bin        # 601,659,690 rows; builds the ELF pair (trace-summary.json lands next to the input)
-for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done   # merged: $IN/merged/25905781-N$n
-$J profile --input $IN/merged/25905781-N6/input.bin --rows --split-markers --json N6.json           # + 25905781..86 likewise
+for b in $(seq -f %.0f 25905782 25905799); do $J trace --input $IN/$b/input.bin --skip-build; done
+# Merged inputs take the 128 MiB guest (--large-input): its own ELF pair, summary in trace-summary-large-input.json.
+$J trace --input $IN/merged/25905781-N2/input.bin --large-input
+for n in $(seq 3 19); do $J trace --input $IN/merged/25905781-N$n/input.bin --large-input --skip-build; done
+$J profile --input $IN/merged/25905781-N6/input.bin --large-input --rows --split-markers --json N6.json   # + 25905781..86 likewise, without --large-input
 uv run python scripts/aggregate_markers.py agg N6.json --trace-log <its trace log> --out N6.agg.json   # then: compare N6.agg.json 25905781.agg.json ...
 uv run python scripts/merged_summary.py --results DIR --native DIR --merged-dir $IN/merged --baseline-json <unchanged-tree summary> --trace-logs DIR --profiles DIR --out summary.json
 ```
@@ -2086,7 +2140,7 @@ against the software path) before merging.
 | p256 (MULQ 264, FAKE_GLV_ADV 29) | P256VERIFY (0x100), `crates/core/src/p256.rs` | 3,784,035 → 501,756 per verify | **539.1 → 71.5** |
 | sha2 (SHA256INIT 1864 + SHA256 1900) | SHA256 (0x02) | 554,560 → 255,650 (8 KiB) · 78,673 → 38,595 (1 KiB) · 9,751 → 7,004 (32 B) | 170.6 → 78.6 · 139.7 → 68.6 · 51.1 → 36.7 |
 | blake2 (BLAKE2 1067, fixed 12 rounds) | BLAKE2F (0x09), `rounds == 12 && t[1] == 0` only | 9,853 → 7,814 (r12) · r1000 unchanged | 75.2 → 59.7 · 232.4 |
-| bigint (BIGINT256_MUL 141) | MULMOD 512-bit product (vendored interpreter, `jeth_mul_mod` hook) | 1,239 → 1,005 (op alone 65.2 → 52.9 c/g); N128 1,015 → 788; N3 947 → 718 | — |
+| bigint (BIGINT256_MUL 141) | MULMOD 512-bit product (vendored interpreter, `jeth_mul_mod` hook). Since #29 the hook is in `crates/core/src/bigint.rs` and checks a quotient hint with two such products when the modulus is at least 2^192, is not 2^256−1 and is above at least one operand; ruint computes the other cases | 1,239 → 1,005 (op alone 65.2 → 52.9 c/g); N128 1,015 → 788; N3 947 → 718, all for the product-only hook (#29: that PR's Cycles table) | — |
 | bigint | MODEXP, odd moduli of 9..=32 significant bytes, `crates/core/src/bigint.rs` Montgomery ladder | 32-32-32 479,810 → 207,620 · 24-32-24 338,167 → 202,788 · 16-32-16 220,236 → 200,067 · 32-e1-32 19,192 → 11,741 | 115.2 → ~49.8 |
 
 Not routed, measured: MUL (95 rows compiled vs 141 inline), EXP, ADDMOD,

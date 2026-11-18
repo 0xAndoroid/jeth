@@ -1,0 +1,114 @@
+name: Cycles
+
+# Reports expanded-cycle counts over the frozen block set (RESULTS.md → Cycle-count
+# harness). It only reports: no job here is part of the `ci` aggregate in ci.yml.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: cycles-${{ github.ref }}
+  cancel-in-progress: true
+
+# Pull requests run their own harness and guest code here, so the token stays
+# read-only and the workflow uses no secrets; fork pull requests run unchanged.
+permissions:
+  contents: read
+
+jobs:
+  cycles:
+    name: expanded cycles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - run: |
+          echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/cycles" >> "$GITHUB_ENV"
+      # Depth 2 reaches the merge commit's first parent, the base the merge ref was built on.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: "1.95"
+          targets: riscv64imac-unknown-none-elf
+          components: rust-src
+      - name: Resolve the Jolt rev each side pins
+        id: jolt
+        run: |
+          rev() { sed -nE 's/^tracer = .*rev = "([0-9a-f]+)".*/\1/p'; }
+          head=$(rev < Cargo.toml)
+          base=
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            base=$(git show HEAD^1:Cargo.toml | rev)
+          fi
+          key=$head
+          [ -z "$base" ] || [ "$base" = "$head" ] || key=$head-$base
+          {
+            echo "head=$head"
+            echo "base=$base"
+            echo "key=$key"
+          } >> "$GITHUB_OUTPUT"
+      # The key holds one rev unless the pull request changes the pin, so pull
+      # requests reuse the cache that pushes to main save.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/jolt-cli
+          key: jolt-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.jolt.outputs.key }}
+      - name: Install the Jolt CLI at each pinned rev
+        env:
+          REVS: ${{ steps.jolt.outputs.head }} ${{ steps.jolt.outputs.base }}
+        run: |
+          for rev in $REVS; do
+            [ -x "$HOME/jolt-cli/$rev/bin/jolt" ] ||
+              cargo install --locked --git https://github.com/a16z/jolt --rev "$rev" --root "$HOME/jolt-cli/$rev" jolt
+          done
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The harness binary is copied out of target/ so that it survives the switch
+      # to the base commit, which may predate the harness.
+      - name: Measure this commit
+        env:
+          JOLT_REV: ${{ steps.jolt.outputs.head }}
+        run: |
+          cargo build --locked --release -p jeth-host
+          cp target/release/jeth "$RUNNER_TEMP/jeth-cycles"
+          JOLT_PATH="$HOME/jolt-cli/$JOLT_REV/bin/jolt" "$RUNNER_TEMP/jeth-cycles" cycles run \
+            --tree . --repo "$GITHUB_REPOSITORY" --jobs "$(nproc)" --out "$OUT/head"
+      # Both sides build at the same path, one after the other: the checkout path
+      # alone changes the guest ELF, which embeds absolute source paths, and can
+      # change the row count.
+      - name: Measure the base commit
+        if: github.event_name == 'pull_request'
+        env:
+          JOLT_REV: ${{ steps.jolt.outputs.base }}
+        run: |
+          git checkout -q --force --detach HEAD^1
+          JOLT_PATH="$HOME/jolt-cli/$JOLT_REV/bin/jolt" "$RUNNER_TEMP/jeth-cycles" cycles run \
+            --tree . --repo "$GITHUB_REPOSITORY" --jobs "$(nproc)" --out "$OUT/base"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f "$OUT/base/cycles.json" ] && [ -f "$OUT/head/cycles.json" ]; then
+            "$RUNNER_TEMP/jeth-cycles" cycles compare "$OUT/base/cycles.json" "$OUT/head/cycles.json" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$OUT/head/cycles.md" ]; then
+            cat "$OUT/head/cycles.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "cycles wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cycles
+          path: |
+            ${{ runner.temp }}/cycles/*/cycles.json
+            ${{ runner.temp }}/cycles/*/cycles.md
+            ${{ runner.temp }}/cycles/*/*/trace.log
+          if-no-files-found: ignore

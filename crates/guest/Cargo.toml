@@ -3,21 +3,42 @@ name = "jeth-guest"
 version = "0.1.0"
 edition = "2021"
 
-# Standalone package (NOT part of the jeth workspace): built exclusively via the
-# `jolt` CLI for riscv64imac-unknown-none-elf with `--features guest`. Keeping it
-# out of the workspace isolates guest-only feature choices (alloy native-keccak)
-# from native host builds.
+# Root of its own workspace (NOT part of the jeth workspace): this package is built
+# exclusively via the `jolt` CLI for riscv64imac-unknown-none-elf with `--features
+# guest`. Keeping it out of the jeth workspace isolates guest-only feature choices
+# (alloy native-keccak) from that workspace's native host builds.
+#
+# The one other member, crates/native-advice, records advice natively and must run
+# the `[patch]` tables and the lockfile of the guest. Select one member per command
+# (`-p` or `--manifest-path`): Cargo unifies features over the packages a command
+# builds, so a `--workspace` build would give the recorder the guest's features.
 [workspace]
+members = ["../native-advice"]
 
 [features]
+bn254-pairing-residue = ["jeth-core/bn254-pairing-residue"]
+# KZG pairing check from an advice-tape witness (see jeth-core/kzg-residue).
+kzg-residue = ["jeth-core/kzg-residue"]
+# Jump fusion in the vendored interpreter's run loop: `PUSH2 JUMP`,
+# `PUSH2 JUMPI`, `ISZERO PUSH2 JUMPI` and `EQ PUSH2 JUMPI` each run as one
+# dispatch when the whole sequence succeeds. On by default;
+# `--no-default-features` drops it (name `keccak-census` and `keccak-cache` in
+# `--features` to keep the other two defaults).
+push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
 # Bounded cache of guest-computed trie-hash prefixes; advice is checked.
 keccak-prefix-cache = ["jeth-core/keccak-prefix-cache"]
-default = ["keccak-census"]
+default = ["keccak-census", "keccak-cache", "push-jump-fusion"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the
-# normal `jeth trace` output (the `perms=` count is a campaign gate). Costs
-# 21 rows per keccak call; `--no-default-features` drops it.
+# normal `jeth trace` output (the `perms=` count is a campaign gate). Only
+# hashed calls count, at about 22 to 24 rows each: a `keccak-cache` hit is
+# not counted. `--no-default-features` drops it.
 keccak-census = []
+# Bounded cache for repeated 32-/64-byte Keccak inputs. Misses add work. On by
+# default in the proven and the `compute_advice` build; `--no-default-features`
+# drops it (name `keccak-census` and `push-jump-fusion` in `--features` to keep
+# the other two defaults).
+keccak-cache = ["dep:fixed-cache"]
 # Per-transaction cycle markers (drives `jeth txprofile`).
 pertx = ["jeth-core/pertx-markers"]
 # Defer bytecode analysis to first execution (A/B measurement for R2).
@@ -27,14 +48,16 @@ lazy = ["jeth-core/lazy-analysis"]
 compute_advice = ["jeth-core/compute_advice"]
 
 [dependencies]
+fixed-cache = { version = "0.1.11", default-features = false, optional = true }
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a" }
 jolt-inlines-keccak256 = { git = "https://github.com/a16z/jolt", rev = "8e536f199735ac8187156aa589ed1387722a079a", default-features = false }
 
 jeth-core = { path = "../core", features = ["secp-inline", "sha2-inline", "blake2-inline", "blake2f-inline", "p256-inline", "bigint-inline", "bn254-inline", "bls12-381-inline", "guest-instrument"] }
-# Direct dependency only to reach the vendored crate's `bigint-inline` feature:
-# EVM MULMOD through the `jeth_mul_mod` hook in lib.rs (always on, like the
-# jeth-core inline features above).
-revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline"] }
+# Direct dependency only to reach the vendored crate's features (always on, like
+# the jeth-core inline features above). `bigint-inline`: EVM MULMOD through the
+# `jeth_mul_mod` hook in jeth-core's `bigint.rs`. `jolt-byte-swap`: `bswap64`
+# through Jolt's VirtualRev8W instruction.
+revm-interpreter = { version = "35.0.1", default-features = false, features = ["bigint-inline", "jolt-byte-swap"] }
 
 # `native-keccak` routes every alloy keccak256 call (trie hashing, tx hashing, EVM
 # KECCAK256 opcode, address derivation) to our `native_keccak256` shim → Jolt inline.
@@ -44,14 +67,17 @@ alloy-primitives = { version = "1.5", default-features = false, features = ["nat
 # bare metal; the Jolt guest is single-hart with no interrupts → no-op impl.
 critical-section = "1.2"
 
-# Word-wise Stack::exchange (SWAP1-16 measured at 16.9% of trace rows via the
-# untyped byte-swap codegen). One-function patch.
-#
 # alloy-eip7702: EIP-7702 authority recovery routed through the Jolt secp256k1
 # inline via the guest's jeth_ecrecover_prehash hook (software k256 measured at
 # ~1.5M rows/authorization — 16% of block 25698070; the inline is ~230k).
 [patch.crates-io]
+# Mirrored in crates/vendor/{hashbrown,alloy-primitives,revm-interpreter,zeth-mpt}/Cargo.toml,
+# each holding the entries its standalone graph contains: change them with this table.
+
+# Word-aligned journal tags/payloads reduce guest sub-word accesses.
+revm-context-interface = { path = "../vendor/revm-context-interface" }
 revm-interpreter = { path = "../vendor/revm-interpreter" }
+revm-bytecode = { path = "../vendor/revm-bytecode" }
 alloy-eip7702 = { path = "../vendor/alloy-eip7702" }
 # Fixed foldhash seeds (design law L5): hashbrown iteration order must be
 # identical across the compute_advice/proven ELF pair — upstream seeds from
@@ -81,8 +107,15 @@ zeth-mpt = { path = "../vendor/zeth-mpt" }
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
+
+# For crates/native-advice, a native binary: `release` above is tuned for the guest
+# ELF, and its fat LTO and single codegen unit slow the recorder's build.
+[profile.recorder]
+inherits = "release"
+lto = false
+codegen-units = 16
 
 [lib]
 test = false

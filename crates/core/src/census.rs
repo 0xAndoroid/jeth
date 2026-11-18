@@ -120,11 +120,8 @@ pub struct KeyStats {
     pub tx_loads: u64,
     /// Keys loaded by at least two transactions.
     pub repeated: u64,
-    /// `tx_loads` restricted to repeated keys.
     pub repeated_tx_loads: u64,
-    /// Opcode accesses naming the key.
     pub op_accesses: u64,
-    /// `op_accesses` restricted to repeated keys.
     pub repeated_op_accesses: u64,
     /// Keys whose value changed in some transaction (slots only).
     pub written: u64,
@@ -214,13 +211,10 @@ impl Database for CountingDb<'_> {
     }
 }
 
-/// Opcode census: state-touching instructions keyed by the state they name.
 struct Census {
     tx: Rc<Cell<usize>>,
     ops: OpCounts,
-    /// SLOAD/SSTORE per (executing contract, slot).
     slot_ops: HashMap<(Address, U256), Touch>,
-    /// BALANCE/EXTCODE*/SELFBALANCE/CALL-family per named address.
     address_ops: AddressMap<Touch>,
     code_frames: B256Map<Touch>,
     initcode_frames: u64,
@@ -372,7 +366,6 @@ pub fn run(
         .with_bundle_update()
         .build();
 
-    // Pre/post-execution system calls are attributed to a pseudo transaction.
     let tx_cursor = Rc::new(Cell::new(usize::MAX));
     let mut census = Census::new(tx_cursor.clone());
     let evm_env = evm_config
@@ -499,7 +492,6 @@ pub fn run(
     })
 }
 
-/// Fold `(loads of one key, opcode accesses naming it)` pairs into [`KeyStats`].
 fn key_stats(keys: impl Iterator<Item = (Touch, u64)>) -> KeyStats {
     let mut stats = KeyStats::default();
     for (touch, ops) in keys {

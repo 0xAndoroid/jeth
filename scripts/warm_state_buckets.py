@@ -41,7 +41,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-HASH_RE = re.compile(r"\[[0-9a-f]{16}\]")
+HASH_RE = re.compile(r"\[[0-9a-f]{1,16}\]")
 GROUPS = ("reveal", "tx", "post_root", "outside")
 BUCKET_NAMES = {
     "a": "(a) witness verification",
@@ -52,7 +52,6 @@ BUCKET_NAMES = {
     "f": "(f) other",
 }
 
-# Sub-label sets used by the first-touch / repeat split (section 3 of the journal).
 FIRST_TOUCH_SUBS = {
     "keccak: exec first-touch node authentication",
     "storage(): byte-walk (per DB miss)",
@@ -165,8 +164,13 @@ RULES: list[tuple[str, str, str, str]] = [
         "f",
         "alloc",
     ),
-    ("text", r"^memcpy  ::", "f", "memcpy (no caller data)"),
-    ("text", r"^memcmp  ::", "f", "memcmp (no caller data)"),
+    (
+        "text",
+        r"^memcpy  ::|^__jeth_aligned_copy  ::|^__jeth_copy_fallback  ::",
+        "f",
+        "memcpy (no caller data)",
+    ),
+    ("text", r"^memcmp  ::|^jeth_guest::mem::memcmp_generic", "f", "memcmp (no caller data)"),
     ("text", r"^native_keccak256  ::", "f", "keccak (no caller data)"),
     ("text", r"^memset  ::", "f", "memset"),
     ("text", r"^memmove  ::|compiler_builtins", "f", "memmove/builtins"),
@@ -304,6 +308,12 @@ RULES: list[tuple[str, str, str, str]] = [
         "c",
         "control ops (JUMP/JUMPI/JUMPDEST)",
     ),
+    (
+        "text",
+        r"^revm_interpreter::instructions::fusion::",
+        "c",
+        "PUSH2/ISZERO/EQ ops (jump fusion)",
+    ),
     ("text", r"^revm_interpreter::instructions::system::keccak256", "c", "KECCAK256 op glue"),
     (
         "text",
@@ -369,7 +379,6 @@ COMPILED = [(f, re.compile(rx), b, s) for f, rx, b, s in RULES]
 def classify(sym: str, group: str) -> tuple[str, str]:
     s = strip(sym)
     text, impl = parse_sym(sym)
-    # Marker-group overrides for shared / phase-bound symbols.
     if group == "post_root":
         if re.search(r"bump_alloc|core::fmt", text):
             return "f", "alloc / instrumentation"
@@ -499,7 +508,6 @@ def attribute(
                 continue
         b, sub = classify(sym, g)
         acc[(b, sub, g)] += rows
-    # storage(): move the modelled fixed per-call cost from (a) to (b).
     if storage_calls:
         fixed = min(360.0 * storage_calls, acc[("a", "storage(): byte-walk (per DB miss)", "tx")])
         acc[("a", "storage(): byte-walk (per DB miss)", "tx")] -= fixed
@@ -565,7 +573,6 @@ def print_buckets(
 
 
 def base_sub(sub: str) -> str:
-    """`memcpy via X` / `memcmp via X` -> X (shared-symbol rows follow their caller)."""
     for pre in ("memcpy via ", "memcmp via "):
         if sub.startswith(pre):
             return sub[len(pre) :]
@@ -692,7 +699,6 @@ def cmd_pertx(args: argparse.Namespace) -> None:
         f"first-touch {fmt(sum(r['first_touch'] for r in rows_out))}, repeat {fmt(sum(r['repeat'] for r in rows_out))}"
     )
     if args.repeat_to:
-        # Same-(to, selector) chains in block order: is the later tx cheaper?
         by_key: dict[tuple[str, str], list[dict]] = defaultdict(list)
         for r in rows_out:
             by_key[(r["to"], r["selector"])].append(r)

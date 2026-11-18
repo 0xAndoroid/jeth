@@ -1,5 +1,3 @@
-//! Transaction sender recovery with an EIP-2 gate and deferred recovery equations.
-
 use crate::UncompressedPublicKey;
 use alloc::vec::Vec;
 use alloy_primitives::Address;
@@ -86,11 +84,9 @@ pub(crate) fn inline_verify_pubkey(
     }
 
     // Point limbs: [x0..x3, y0..y3], little-endian u64 limbs.
-    let x = U256::from_be_slice(&vk[1..33]);
-    let y = U256::from_be_slice(&vk[33..65]);
     let mut q_limbs = [0u64; 8];
-    q_limbs[..4].copy_from_slice(x.as_limbs());
-    q_limbs[4..].copy_from_slice(y.as_limbs());
+    q_limbs[..4].copy_from_slice(U256::from_be_slice(&vk[1..33]).as_limbs());
+    q_limbs[4..].copy_from_slice(U256::from_be_slice(&vk[33..65]).as_limbs());
     let q = Secp256k1Point::from_u64_arr(&q_limbs)
         .map_err(|_| StatelessValidationError::SignerRecovery)?;
 
@@ -109,7 +105,6 @@ pub(crate) fn inline_verify_pubkey(
     jolt_inlines_secp256k1::ecdsa_verify(z, r, s, q)
         .map_err(|_| StatelessValidationError::SignerRecovery)?;
 
-    // Sender = keccak256(uncompressed point without the 0x04 tag)[12..].
     let digest = keccak256(&vk[1..]);
     Ok(Address::from_slice(&digest[12..]))
 }

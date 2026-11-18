@@ -54,7 +54,6 @@ pub(crate) fn verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
     use super::*;
     use alloc::vec::Vec;
     use alloy_primitives::hex;
@@ -246,13 +245,11 @@ mod tests {
     #[test]
     fn message_reduction_matches_software() {
         let (key, pk) = keypair(U256::from(7));
-        // z = 1 signed; msg = n + 1 reduces to it.
         let one = U256::from(1).to_be_bytes::<32>();
         let sig = sign(&key, one);
         assert!(compare(one, sig, pk));
         assert!(compare((N + U256::from(1)).to_be_bytes::<32>(), sig, pk));
         assert!(!compare((N + U256::from(2)).to_be_bytes::<32>(), sig, pk));
-        // msg = 2^256 − 1 reduces to 2^256 − 1 − n.
         let top = U256::MAX - N;
         let sig = sign(&key, top.to_be_bytes::<32>());
         assert!(compare(U256::MAX.to_be_bytes::<32>(), sig, pk));
@@ -261,7 +258,6 @@ mod tests {
             sig,
             pk
         ));
-        // msg = n − 1 is already reduced.
         let sig = sign(&key, (N - U256::from(1)).to_be_bytes::<32>());
         assert!(compare((N - U256::from(1)).to_be_bytes::<32>(), sig, pk));
     }

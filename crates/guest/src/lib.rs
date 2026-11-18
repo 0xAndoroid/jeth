@@ -1,13 +1,15 @@
 //! jeth guest: statelessly validate one Ethereum mainnet block inside Jolt.
 //!
-//! Sizing rationale (PLAN.md D6): input ~10–15 MB observed for single mainnet
-//! blocks, up to 90 MB for `jeth merge` multi-block synthetic inputs (19 blocks);
-//! decoded witness + sparse trie + revm state for a ~29M-gas block needs
-//! high-hundreds-MB heap. The I/O region lives below RAM_START and is padded to a
-//! power of two (128 MiB input → 256 MiB region), so widening it moves only
-//! `input_start`; program/stack/heap are unchanged and all guest addresses stay
-//! < 4 GiB (cycle-marker pointers truncate to u32).
-//! KEEP IN SYNC with `GUEST_MEMORY` in `crates/host/src/trace.rs`.
+//! Sizing rationale (PLAN.md D6): `validate_block`'s committed-input region is
+//! sized for one mainnet block; the largest single-block input observed is
+//! 13,627,820 bytes (block 25512816, Jul–Sep 2026 top-50 set, 60M gas limit).
+//! `validate_block_128m` reserves 128 MiB for `jeth merge` multi-block synthetic
+//! inputs (90 MB at 19 blocks). The I/O region lives below RAM_START and is
+//! padded to a power of two (128 MiB input → 256 MiB region), so the input size
+//! moves only the I/O addresses; program/stack/heap are unchanged and all guest
+//! addresses stay < 4 GiB (cycle-marker pointers truncate to u32).
+//! KEEP IN SYNC with the size constants in `crates/host/src/trace.rs`; its test
+//! `guest_attributes_declare_the_host_memory_config` compares the two files.
 
 #![cfg_attr(feature = "guest", no_std)]
 
@@ -18,12 +20,13 @@ extern crate alloc;
 // crates/guest/native-tests/Cargo.toml`), which includes these files by path.
 #[cfg(feature = "guest")]
 mod keccak;
+#[cfg(all(feature = "guest", feature = "keccak-cache"))]
+mod keccak_cache;
 #[cfg(feature = "guest")]
 mod mem;
 
 use jeth_core::{BlockInput, ValidationResult};
 
-/// Print keccak counters with a phase label (census builds only).
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
 fn keccak_stats(label: &str) {
     unsafe {
@@ -40,7 +43,6 @@ fn keccak_stats(label: &str) {
 #[cfg(not(all(feature = "guest", feature = "keccak-census")))]
 fn keccak_stats(_label: &str) {}
 
-/// Shared body: read JEF (measured), verify signatures, validate statelessly.
 fn run_validation(bytes: &[u8]) -> ValidationResult {
     // Advice-tape alignment sentinel: panics immediately on a missing tape or
     // mismatched compute/proven ELF pair (~6 rows).
@@ -76,12 +78,25 @@ fn run_validation(bytes: &[u8]) -> ValidationResult {
 
 /// Standard path: JEF arrives as committed input, borrowed from the input region.
 #[jolt::provable(
-    max_input_size = 134217728,  // 128 MiB (multi-block synthetic inputs reach 90 MB at 19 blocks)
-    max_output_size = 4096,      // 4 KiB
-    heap_size = 1610612736,      // 1.5 GiB (keeps addr space < 4 GiB)
-    stack_size = 33554432        // 32 MiB
+    max_input_size = 16777216,   // `DEFAULT_INPUT_SIZE` in crates/host/src/trace.rs
+    max_output_size = 4096,
+    heap_size = 1610612736,
+    stack_size = 33554432
 )]
 fn validate_block(input: &[u8]) -> ValidationResult {
+    run_validation(input)
+}
+
+/// The same validation with a 128 MiB committed-input region, for inputs above
+/// `validate_block`'s limit. The host builds it only on `--large-input`, never
+/// by input size.
+#[jolt::provable(
+    max_input_size = 134217728,
+    max_output_size = 4096,
+    heap_size = 1610612736,
+    stack_size = 33554432
+)]
+fn validate_block_128m(input: &[u8]) -> ValidationResult {
     run_validation(input)
 }
 
@@ -93,7 +108,7 @@ fn validate_block(input: &[u8]) -> ValidationResult {
 #[jolt::provable(
     max_input_size = 4096,
     max_output_size = 4096,
-    max_trusted_advice_size = 134217728, // 128 MiB
+    max_trusted_advice_size = 134217728,
     heap_size = 1610612736,
     stack_size = 33554432
 )]
@@ -111,9 +126,9 @@ fn validate_block_advice(input: jolt::TrustedAdvice<&[u8]>) -> ValidationResult 
 /// Blob layout: u32 LE state-digest count, then that many 32-byte digests,
 /// then 32-byte code hashes for every witness code entry.
 #[jolt::provable(
-    max_input_size = 134217728,         // 128 MiB
+    max_input_size = 134217728,
     max_output_size = 4096,
-    max_trusted_advice_size = 4194304,  // 4 MiB (52k digests ≈ 1.7 MB observed)
+    max_trusted_advice_size = 4194304,
     heap_size = 1610612736,
     stack_size = 33554432
 )]
@@ -148,7 +163,8 @@ fn validate_block_trusted(input: &[u8], digests: jolt::TrustedAdvice<&[u8]>) -> 
 
 /// Keccak accounting (census builds only): calls, input bytes, Keccak-f
 /// permutations (rate 136), and calls whose input pointer is not 8-aligned
-/// (they take the shift/or gather path in `keccak.rs`).
+/// (they take the shift/or gather path in `keccak.rs`). Only hashed calls
+/// count: a `keccak-cache` hit returns before these counters.
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
 pub static mut KECCAK_CALLS: u64 = 0;
 #[cfg(all(feature = "guest", feature = "keccak-census"))]
@@ -160,7 +176,9 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 
 /// alloy-primitives (feature "native-keccak") declares this extern and calls it
 /// for every keccak256. Routes to the Jolt Keccak-f[1600] inlines (opcode 0x0B);
-/// the word-wise sponge driver lives in `keccak.rs`.
+/// the word-wise sponge driver lives in `keccak.rs`. With `keccak-cache`, a 32-
+/// or 64-byte input is looked up in `keccak_cache.rs` first and hashed only on
+/// a miss.
 ///
 /// `#[inline(never)]`: keeps the shim one out-of-line body. Its misaligned
 /// digest store is a five-word read-modify-write of the caller's `[u8; 32]`
@@ -171,6 +189,41 @@ pub static mut KECCAK_UNALIGNED: u64 = 0;
 #[no_mangle]
 #[inline(never)]
 pub unsafe extern "C" fn native_keccak256(bytes: *const u8, len: usize, output: *mut u8) {
+    #[cfg(feature = "keccak-cache")]
+    if len == 32 || len == 64 {
+        // SAFETY: inherited from this native-keccak entry point's input contract.
+        let input = core::slice::from_raw_parts(bytes, len);
+        let digest = keccak_cache::compute(
+            input,
+            // A miss has to be hashed inside the `native_keccak256` symbol:
+            // `jeth profile --callers-of native_keccak256` and
+            // `scripts/warm_state_buckets.py` count Keccak rows by that name alone.
+            #[inline(always)]
+            |input| {
+                let mut result = [0u64; 4];
+                let out = result.as_mut_ptr().cast();
+                // A constant length in each arm: the miss path is then small and inlines into
+                // this function. Given `input.len()` it carries the blocks of all 136 short
+                // lengths of `keccak.rs` (about 34 KB) and is kept out of line, in two
+                // `keccak_cache::compute_with` functions. The guard above admits no other
+                // length.
+                match input.len() {
+                    32 => keccak_uncached(input.as_ptr(), 32, out),
+                    64 => keccak_uncached(input.as_ptr(), 64, out),
+                    _ => unreachable!(),
+                }
+                result
+            },
+        );
+        keccak::store_digest(digest.as_ptr(), output);
+        return;
+    }
+    keccak_uncached(bytes, len, output);
+}
+
+#[cfg(feature = "guest")]
+#[inline(always)]
+unsafe fn keccak_uncached(bytes: *const u8, len: usize, output: *mut u8) {
     #[cfg(feature = "keccak-census")]
     {
         KECCAK_CALLS += 1;
@@ -225,21 +278,6 @@ pub unsafe extern "C" fn jeth_ecrecover_prehash(
         }
         None => 0,
     }
-}
-
-/// Hook for the vendored revm-interpreter's MULMOD: `(a * b) % m` through the
-/// Jolt BIGINT256_MUL inline, remainder written over `m` (the top-of-stack
-/// word). Zero when `m` is zero. Unconditional because Cargo.toml enables the
-/// interpreter's `bigint-inline` feature (which emits the extern declaration)
-/// in every configuration of this crate.
-#[no_mangle]
-pub unsafe extern "C" fn jeth_mul_mod(a: *const u64, b: *const u64, m: *mut u64) {
-    use alloy_primitives::U256;
-    jeth_core::bigint::mul_mod(
-        &*(a as *const U256),
-        &*(b as *const U256),
-        &mut *(m as *mut U256),
-    );
 }
 
 /// `once_cell`'s critical-section backend (via reth-primitives-traits) needs a

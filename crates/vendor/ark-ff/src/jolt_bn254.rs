@@ -10,7 +10,6 @@ use jeth_inlines_bn254::{BN254_MINUS_ONE, BN254_MODULUS};
 
 const Q: BigInt<4> = BigInt(BN254_MODULUS);
 
-/// `limbs == q`; false for every other modulus and every other limb count.
 pub(crate) const fn is_modulus(limbs: &[u64]) -> bool {
     if limbs.len() != BN254_MODULUS.len() {
         return false;

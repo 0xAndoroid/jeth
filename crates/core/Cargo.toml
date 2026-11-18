@@ -3,22 +3,25 @@ name = "jeth-core"
 version.workspace = true
 edition.workspace = true
 
-[[example]]
-name = "native-advice"
-required-features = ["native-advice", "secp-inline", "code-library", "bigint-inline"]
-
 [features]
+bn254-pairing-residue = ["secp-inline"]
+# KZG pairing check from a root witness that the guest reads from the advice tape and verifies,
+# in place of the final exponentiation (src/kzg/residue.rs). The compute-advice pass writes
+# flag 0, so a guest traced with the feature reads one more advice word per check and still runs
+# the final exponentiation. Only a native recording (`native-advice`) writes the witness, and no
+# `jeth` command builds the recorder with this feature.
+kzg-residue = ["secp-inline"]
 # Bounded cache of guest-computed trie-hash prefixes; advice is checked.
 keccak-prefix-cache = ["zeth-mpt/keccak-prefix-cache"]
 std = []
 # Record untrusted advice while executing the validation logic natively.
-native-advice = ["std", "zeth-mpt/native-advice", "jolt-inlines-secp256k1?/host"]
+native-advice = ["std", "zeth-mpt/native-advice", "jolt-inlines-secp256k1?/host", "jolt-inlines-bigint?/host"]
 # Host-only state-touch census (`jeth touches`): counting DB wrapper + opcode
 # inspector around the same validation loop. Never enabled by the guest.
 census = ["std"]
 code-library = []
 # Deferred tx, precompile, and authorization recovery using the secp256k1 inlines.
-secp-inline = ["dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
+secp-inline = ["dep:jolt-inlines-sdk", "dep:jolt-inlines-secp256k1", "alloy-consensus/crypto-backend"]
 # SHA256 (0x02) precompile on the Jolt SHA-256 inline (guest builds only; the native build keeps
 # revm's sha2 crate so run-native stays the independent reference).
 sha2-inline = ["secp-inline", "dep:jolt-inlines-sha2"]
@@ -28,8 +31,8 @@ blake2-inline = ["secp-inline", "dep:jolt-inlines-blake2"]
 blake2f-inline = ["blake2-inline", "dep:jeth-inlines-blake2f"]
 # RIP-7212 P256VERIFY through the Jolt P-256 inline (guest builds; native stays on revm's p256 path).
 p256-inline = ["secp-inline", "dep:jolt-inlines-p256"]
-# EVM MULMOD (the guest hooks `bigint.rs` into revm-interpreter) and MODEXP for odd moduli of
-# 9..=32 significant bytes on the BIGINT256_MUL inline (guest builds only, like the above).
+# EVM MULMOD checks quotient advice using BIGINT256_MUL, with ruint fallbacks; MODEXP for odd
+# moduli of 9..=32 significant bytes runs on the BIGINT256_MUL inline.
 bigint-inline = ["secp-inline", "dep:jolt-inlines-bigint"]
 # bn254 Fq multiplication (ecadd/ecmul/pairing precompiles) through the BN254_* inlines: the
 # vendored ark-ff dispatches its Montgomery arithmetic to them in riscv64 builds.
@@ -56,6 +59,7 @@ compute_advice = ["zeth-mpt/compute_advice"]
 stateless.workspace = true
 tries.workspace = true
 zeth-mpt.workspace = true
+jolt-inlines-sdk = { workspace = true, optional = true, features = ["elliptic-curve"] }
 jolt-inlines-secp256k1 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
 jolt-inlines-blake2 = { workspace = true, optional = true }
@@ -80,11 +84,12 @@ reth-primitives-traits.workspace = true
 revm-database-interface.workspace = true
 revm-state.workspace = true
 
-# bn254 G1 GLV scalar multiplication for the ecmul precompile (src/bn254.rs):
-# the registry 0.5 crates revm-precompile's arkworks backend already compiles.
+# The registry 0.5 arkworks crates that revm-precompile's arkworks backend already compiles.
 ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
 
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -105,6 +110,7 @@ jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "8e53
 sha3 = { version = "0.12", default-features = false }
 
 [dev-dependencies]
+num-bigint = "0.4"
 jolt-inlines-secp256k1 = { workspace = true, features = ["host"] }
 jeth-inlines-blake2f.workspace = true
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }

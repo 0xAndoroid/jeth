@@ -12,13 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Zero-copy node decoder: nodes decode straight into their final slots,
-//! leaf values are views into the witness bytes, and list payloads are
-//! scanned in place instead of through alloy's `PayloadView`.
 use super::{
     children::{Children, Slot},
     memoize::Memoization,
-    node::{Digest, Node},
+    node::{packed_key, Digest, Node},
     rlp::{DIGEST_ITEM_PREFIX, DIGEST_RLP_LENGTH},
 };
 use alloc::boxed::Box;
@@ -74,7 +71,8 @@ impl<M: Memoization> Node<M> {
 /// (`Box::new_uninit`), deleting the by-value move chain (return → `?` →
 /// `Box::new`, each a whole-node copy).
 ///
-/// List payloads are scanned in place instead of through
+/// Plain branches (only empty or digest children) are decoded in one pass.
+/// Other list payloads are scanned in place instead of through
 /// `Header::decode_raw`'s `PayloadView` `Vec` (allocation + 3 grows + 17
 /// pushes per branch): pass 1 ([`count_items`]) validates every item header
 /// in order and yields the item count exactly like `decode_raw`, pass 2
@@ -110,18 +108,19 @@ fn decode_node_zc_into<M: Memoization>(
             _ => Err(alloy_rlp::Error::UnexpectedLength),
         };
     }
+    if decode_plain_branch(payload, out) {
+        return Ok(());
+    }
     match count_items(payload)? {
         // branch node: 17-item node [ v0 ... v15, value ]
         17 => {
-            // Write the empty branch first and decode the children into
-            // its slots, so the 640-byte `Children` is never moved.
             let node = out.write(Node::Branch(Children::default(), M::default()));
             let Node::Branch(children, _) = &mut *node else {
                 unreachable!()
             };
             let filled = decode_branch_children(source, payload, children);
             if filled.is_err() {
-                *node = Node::Null; // drops the partial branch
+                *node = Node::Null;
             }
             filled
         }
@@ -151,6 +150,42 @@ fn decode_node_zc_into<M: Memoization>(
             }
         }
         _ => Err(alloy_rlp::Error::Custom("unexpected list length")),
+    }
+}
+
+/// A failed attempt leaves `out` untouched or holding `Node::Null`;
+/// this path never allocates children or owns resources other than the node.
+#[inline]
+fn decode_plain_branch<M: Memoization>(mut p: &[u8], out: &mut MaybeUninit<Node<M>>) -> bool {
+    // Every digest replaces a one-byte empty item with 33 bytes. A valid
+    // branch has at least two nonempty children.
+    if p.len() < 17 + 2 * 32 || p.len() % 32 != 17 {
+        return false;
+    }
+    let node = out.write(Node::Branch(Children::default(), M::default()));
+    let Node::Branch(children, _) = node else {
+        unreachable!()
+    };
+    let mut nonempty = 0;
+    for slot in children.iter_mut() {
+        match p.first() {
+            Some(&EMPTY_STRING_CODE) => p = &p[1..],
+            Some(&DIGEST_ITEM_PREFIX) if p.len() >= DIGEST_RLP_LENGTH => {
+                slot.fill_digest(digest_item(&p[..DIGEST_RLP_LENGTH]));
+                p = &p[DIGEST_RLP_LENGTH..];
+                nonempty += 1;
+            }
+            _ => {
+                *node = Node::Null;
+                return false;
+            }
+        }
+    }
+    if p == [EMPTY_STRING_CODE] && nonempty >= 2 {
+        true
+    } else {
+        *node = Node::Null;
+        false
     }
 }
 
@@ -194,10 +229,17 @@ pub fn decode_header(buf: &mut &[u8]) -> alloy_rlp::Result<Header> {
             if len_bytes[0] == 0 {
                 return Err(alloy_rlp::Error::LeadingZero);
             }
-            let mut len = 0u64;
-            for &x in len_bytes {
-                len = (len << 8) | x as u64;
-            }
+            let len = match len_bytes {
+                [a] => *a as u64,
+                [a, b] => ((*a as u64) << 8) | *b as u64,
+                _ => {
+                    let mut len = 0u64;
+                    for &x in len_bytes {
+                        len = (len << 8) | x as u64;
+                    }
+                    len
+                }
+            };
             let payload_length =
                 usize::try_from(len).map_err(|_| alloy_rlp::Error::Custom("Input too big"))?;
             if payload_length < 56 {
@@ -445,13 +487,18 @@ fn decode_path(buf: &mut &[u8]) -> alloy_rlp::Result<(Nibbles, bool)> {
     };
     // Strip the HP prefix: for odd length, the first nibble of the key is in the low nibble
     // of the first byte; for even length, skip the first byte entirely.
-    let nibbles = if odd_len {
+    let nibbles = if compact.len() <= 32 {
+        // Gather the packed path and discard its HP prefix in whole words.
+        // The even form discards the entire first byte, including the lax
+        // padding nibble; the odd form keeps that nibble as path data.
+        packed_key(compact).slice_unchecked(if odd_len { 1 } else { 2 }, compact.len() * 2)
+    } else if odd_len {
         let first = compact[0] & 0x0f;
         let mut n = Nibbles::from_nibbles_unchecked([first]);
         n.extend(&Nibbles::unpack(&compact[1..]));
         n
     } else {
-        Nibbles::unpack(&compact[1..])
+        packed_key(&compact[1..])
     };
     Ok((nibbles, is_leaf))
 }
@@ -461,6 +508,40 @@ mod tests {
     use super::{super::memoize::Cache, *};
     use alloc::{vec, vec::Vec};
     use alloy_rlp::{Decodable, PayloadView};
+
+    #[test]
+    fn compact_paths_match_explicit_nibbles() {
+        for len in 1usize..=33 {
+            for flag in 0..4u8 {
+                let odd = flag & 1 != 0;
+                if len == 33 && odd {
+                    continue; // More than 64 path nibbles.
+                }
+                let mut compact: Vec<u8> = (0..len)
+                    .map(|i| (i as u8).wrapping_mul(53).wrapping_add(7))
+                    .collect();
+                compact[0] = (flag << 4) | 9;
+                let mut expected = Vec::new();
+                if odd {
+                    expected.push(9);
+                }
+                for &byte in &compact[1..] {
+                    expected.push(byte >> 4);
+                    expected.push(byte & 15);
+                }
+                let encoded = alloy_rlp::encode(compact.as_slice());
+                for alignment in 0..8 {
+                    let mut storage = vec![0u8; alignment];
+                    storage.extend_from_slice(&encoded);
+                    let mut input = &storage[alignment..];
+                    let (actual, leaf) = decode_path(&mut input).unwrap();
+                    assert!(input.is_empty());
+                    assert_eq!(leaf, flag >= 2);
+                    assert_eq!(actual, Nibbles::from_nibbles_unchecked(&expected));
+                }
+            }
+        }
+    }
 
     /// Reference decoder (upstream zeth-mpt's `Decodable` impl, scanning
     /// through `Header::decode_raw` into allocated values): the oracle the
@@ -521,9 +602,79 @@ mod tests {
         }
     }
 
-    /// `item_len` agrees with `Header::decode` (length or error) on every
-    /// 1-byte item, every 33-byte item prefix, truncated digest items and
-    /// long-form headers.
+    fn check_decoder_parity(bytes: Vec<u8>) {
+        let source = Bytes::from(bytes);
+        let expected = alloy_rlp::decode_exact::<Node<Cache>>(&source);
+        let mut slot = MaybeUninit::<Node<Cache>>::uninit();
+        let got = decode_node_zc_exact_into(&source, &mut slot);
+        match (expected, got) {
+            // SAFETY: `Ok(())` ⇒ the decoder wrote a fully initialized `Node` into `slot`.
+            (Ok(node), Ok(())) => assert_eq!(unsafe { slot.assume_init() }, node, "{source}"),
+            (Err(expected), Err(got)) => assert_eq!(expected, got, "{source}"),
+            (expected, got) => panic!("{source}: expected {expected:?}, got {got:?}"),
+        }
+    }
+
+    fn plain_branch_payload(mask: u16) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for index in 0..16 {
+            if mask & (1 << index) == 0 {
+                payload.push(EMPTY_STRING_CODE);
+            } else {
+                payload.push(DIGEST_ITEM_PREFIX);
+                payload.extend((0..32).map(|byte| (index * 17 + byte) as u8));
+            }
+        }
+        payload.push(EMPTY_STRING_CODE);
+        payload
+    }
+
+    fn encode_list_payload(payload: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        Header {
+            list: true,
+            payload_length: payload.len(),
+        }
+        .encode(&mut encoded);
+        encoded.extend_from_slice(payload);
+        encoded
+    }
+
+    #[test]
+    fn single_pass_branch_matches_reference_at_boundary_child_counts() {
+        for mask in (0..=u16::MAX).filter(|mask| !(3..15).contains(&mask.count_ones())) {
+            check_decoder_parity(encode_list_payload(&plain_branch_payload(mask)));
+        }
+    }
+
+    #[test]
+    fn single_pass_branch_rejects_or_falls_back_like_reference() {
+        for mask in [0x0003, 0x8001, 0x5555, 0xffff] {
+            let payload = plain_branch_payload(mask);
+            for length in 0..payload.len() {
+                check_decoder_parity(encode_list_payload(&payload[..length]));
+            }
+            let mut offset = 0;
+            for index in 0..17 {
+                for tag in 0..=u8::MAX {
+                    let mut changed = payload.clone();
+                    changed[offset] = tag;
+                    check_decoder_parity(encode_list_payload(&changed));
+                }
+                offset += if index < 16 && mask & (1 << index) != 0 {
+                    33
+                } else {
+                    1
+                };
+            }
+            // 32 bytes, not one: a payload length other than 17 mod 32 returns at
+            // `decode_plain_branch`'s length precheck, before its value check.
+            let mut extended = payload.clone();
+            extended.extend_from_slice(&[EMPTY_STRING_CODE; 32]);
+            check_decoder_parity(encode_list_payload(&extended));
+        }
+    }
+
     #[test]
     fn item_len_matches_header_decode() {
         fn via_header(p: &[u8]) -> alloy_rlp::Result<usize> {
@@ -554,8 +705,6 @@ mod tests {
         }
     }
 
-    /// The zero-copy decoder agrees with the `Decodable` impl (which scans
-    /// through `Header::decode_raw`) on nodes, errors and trailing bytes.
     #[test]
     fn zc_decode_matches_decodable_impl() {
         fn digest_item(seed: u8) -> Vec<u8> {
@@ -659,10 +808,6 @@ mod tests {
         }
     }
 
-    /// `decode_header` agrees with `Header::decode` (header or error, and the
-    /// buffer advance) for every first byte over a range of tails: short and
-    /// long lengths with and without their payload, leading zeros,
-    /// non-canonical sizes, truncated length fields.
     #[test]
     fn decode_header_matches_alloy() {
         let tails: Vec<Vec<u8>> = vec![
@@ -696,7 +841,6 @@ mod tests {
         }
     }
 
-    /// Word gather is byte-exact for every source alignment.
     #[test]
     fn le_words_32_matches_from_le_bytes() {
         let bytes: Vec<u8> = (0..48u8)
@@ -712,8 +856,6 @@ mod tests {
         }
     }
 
-    /// The digest fast path yields the general decoder's node for every
-    /// source alignment.
     #[test]
     fn digest_fast_path_matches_generic_decode() {
         let mut digest = [0u8; 32];

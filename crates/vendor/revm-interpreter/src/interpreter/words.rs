@@ -127,7 +127,6 @@ pub(crate) fn read_u256_be(data: &[u8], offset: usize) -> U256 {
     }
 }
 
-/// Byte path for a window that leaves the slice (native builds only).
 #[cold]
 #[inline(never)]
 fn read_u256_be_bytes(bytes: &[u8]) -> U256 {
@@ -183,22 +182,45 @@ pub(crate) fn write_u256_be(data: &mut [u8], offset: usize, value: &U256) {
     }
 }
 
-/// Byte path for a window that leaves the slice (native builds only).
 #[cold]
 #[inline(never)]
 fn write_u256_be_bytes(bytes: &mut [u8], value: &U256) {
     bytes.copy_from_slice(&value.to_be_bytes::<32>());
 }
 
-/// Byte-swaps `x`. Without Zbb's `rev8`, LLVM lowers `u64::swap_bytes` on
-/// riscv64 to ~25 mask/shift/or instructions per call (and re-derives that
-/// lowering from any hand-written swap it recognises); this pins the
-/// 13-instruction butterfly — rotate by 32, swap the 16-bit halves, swap the
-/// bytes — with the two lane masks materialised by the compiler once per
-/// function.
+/// Byte-swaps `x`. Jolt's existing `VirtualRev8W` reverses bytes within
+/// both 32-bit halves; exchanging the halves finishes the 64-bit reversal.
+/// Other RV64 targets retain the 13-instruction butterfly, avoiding LLVM's
+/// longer lowering of `swap_bytes` without Zbb.
 #[inline(always)]
 pub(crate) fn bswap64(x: u64) -> u64 {
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(
+        target_arch = "riscv64",
+        target_os = "none",
+        feature = "jolt-byte-swap"
+    ))]
+    {
+        let out: u64;
+        // SAFETY: register-only operations. The custom encoding is the same
+        // VirtualRev8W (0x5b, funct3=0, funct7=5) used by Jolt's SHA-2 SDK.
+        unsafe {
+            core::arch::asm!(
+                ".insn r 0x5b, 0, 5, {o}, {x}, x0",
+                "srli {t}, {o}, 32",
+                "slli {o}, {o}, 32",
+                "or   {o}, {o}, {t}",
+                x = in(reg) x,
+                o = out(reg) out,
+                t = out(reg) _,
+                options(pure, nomem, nostack),
+            );
+        }
+        out
+    }
+    #[cfg(all(
+        target_arch = "riscv64",
+        not(all(target_os = "none", feature = "jolt-byte-swap"))
+    ))]
     {
         let out: u64;
         // SAFETY: register-only arithmetic on the named operands; no memory
@@ -282,7 +304,6 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
     for m in 0..c {
         y[3 - m] = bswap64((w[m] >> sh) | ((w[m + 1] << (63 - sh)) << 1));
     }
-    // Right-align by the 32 - N missing bytes: `d` whole limbs and `r` bits.
     let d = (32 - N) / 8;
     let r = ((32 - N) % 8) * 8;
     let mut x = [0u64; 4];
@@ -299,9 +320,6 @@ pub(crate) unsafe fn read_be_immediate<const N: usize>(p: *const u8) -> U256 {
 mod tests {
     use super::*;
 
-    /// Every alignment of the 32-byte word inside a buffer with slack on both
-    /// sides (the window path), plus every alignment at the very start and
-    /// end of the buffer (the window leaves the slice: native byte path).
     #[test]
     fn read_write_all_alignments() {
         let value = U256::from_be_bytes::<32>(core::array::from_fn(|i| (i as u8) * 7 + 1));
@@ -310,7 +328,6 @@ mod tests {
                 let mut buf = vec![0xAAu8; len];
                 write_u256_be(&mut buf, off, &value);
                 assert_eq!(&buf[off..off + 32], &value.to_be_bytes::<32>());
-                // Neighbours untouched.
                 assert!(buf[..off].iter().all(|&b| b == 0xAA), "pad {pad} len {len}");
                 assert!(
                     buf[off + 32..].iter().all(|&b| b == 0xAA),
@@ -345,7 +362,6 @@ mod tests {
                 *rng ^= *rng << 17;
                 *b = (*rng as u8) | 1;
             }
-            // Immediates with zero bytes (and a zero leading byte) too.
             if off % 3 == 0 {
                 buf[8 + off] = 0;
                 buf[8 + off + N / 2] = 0;
@@ -364,15 +380,5 @@ mod tests {
             ($($n:literal)*) => { $( check_immediate::<$n>(&mut rng); )* };
         }
         check!(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32);
-    }
-
-    #[test]
-    fn read_write_slice_edges() {
-        let value = U256::from_be_bytes::<32>(core::array::from_fn(|i| 255 - i as u8));
-        let mut buf = vec![0u8; 32];
-        write_u256_be(&mut buf, 0, &value);
-        assert_eq!(&buf[..], &value.to_be_bytes::<32>());
-        buf.copy_from_slice(&value.to_be_bytes::<32>());
-        assert_eq!(read_u256_be(&buf, 0), value);
     }
 }

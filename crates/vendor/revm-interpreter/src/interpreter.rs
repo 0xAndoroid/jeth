@@ -47,6 +47,10 @@ pub struct Interpreter<WIRE: InterpreterTypes = EthInterpreter> {
     pub runtime_flag: WIRE::RuntimeFlag,
     /// Extended functionality and customizations.
     pub extend: WIRE::Extend,
+    #[cfg(feature = "push-jump-fusion")]
+    #[cfg_attr(feature = "serde", serde(skip))]
+    // Word-sized 0/1 flag avoids sub-word guest loads in each PUSH2.
+    pub(crate) fuse_push_jumps: u64,
 }
 
 impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
@@ -111,6 +115,8 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
             input,
             runtime_flag: RuntimeFlags { is_static, spec_id },
             extend: Default::default(),
+            #[cfg(feature = "push-jump-fusion")]
+            fuse_push_jumps: 0,
         }
     }
 
@@ -136,7 +142,13 @@ impl<EXT: Default> Interpreter<EthInterpreter<EXT>> {
             input: input_ref,
             runtime_flag,
             extend,
+            #[cfg(feature = "push-jump-fusion")]
+            fuse_push_jumps,
         } = self;
+        #[cfg(feature = "push-jump-fusion")]
+        {
+            *fuse_push_jumps = 0;
+        }
         *bytecode_ref = bytecode;
         *gas = Gas::new_with_regular_gas_and_reservoir(gas_limit, reservoir_remaining_gas);
         if stack.data().capacity() == 0 {
@@ -308,6 +320,10 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         instruction_table: &InstructionTable<IW, H>,
         host: &mut H,
     ) {
+        #[cfg(feature = "push-jump-fusion")]
+        {
+            self.fuse_push_jumps = 0;
+        }
         let ip = self.bytecode.ip();
         // SAFETY: In analysis we are doing padding of bytecode so that we are sure that last
         // byte instruction is STOP so we are safe to just increment program_counter bcs on last instruction
@@ -349,6 +365,10 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
         instruction_table: &InstructionTable<IW, H>,
         host: &mut H,
     ) -> InterpreterAction {
+        #[cfg(feature = "push-jump-fusion")]
+        {
+            self.fuse_push_jumps = u64::from(crate::instructions::fusion::matches(instruction_table));
+        }
         let mut ip = self.bytecode.ip();
         loop {
             // SAFETY: analysed bytecode is padded with STOP, so `ip` stays inside it (see `step`).
@@ -359,10 +379,13 @@ impl<IW: InterpreterTypes> Interpreter<IW> {
                 host,
             };
             ip = instruction.execute(next, context);
-            // Null: the instruction halted or yielded and set the action.
             if ip.is_null() {
                 break;
             }
+        }
+        #[cfg(feature = "push-jump-fusion")]
+        {
+            self.fuse_push_jumps = 0;
         }
         self.take_next_action()
     }

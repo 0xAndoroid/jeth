@@ -1,4 +1,3 @@
-#![expect(clippy::unwrap_used, reason = "tests fail by panicking")]
 use ark_ff::{Field, Fp2Config, MontConfig};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineSpec,
@@ -122,8 +121,6 @@ fn read(harness: &mut InlineTestHarness, reg: u8, words: usize) -> Vec<u64> {
         .collect()
 }
 
-/// The output may overwrite either input (rd == rs1, rd == rs2) and both inputs may be the same
-/// buffer (rs1 == rs2).
 #[test]
 fn aliasing() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(11);
@@ -173,9 +170,6 @@ fn aliasing() {
     }
 }
 
-/// Every row writes a virtual register or stores through rd; loads use rs1/rs2 as base and all
-/// precede the stores; no advice or assert rows; the trailing resets cover exactly the registers
-/// the body wrote.
 #[test]
 fn sequence_structure() {
     for funct3 in [MULP_FUNCT3, SOPP2_FUNCT3, FP2MUL_FUNCT3] {

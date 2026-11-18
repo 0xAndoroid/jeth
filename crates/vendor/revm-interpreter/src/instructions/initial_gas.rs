@@ -140,8 +140,6 @@ mod tests {
         *s
     }
 
-    /// Random bytes with a `zero_ppm`-per-million chance of 0 per byte, so the
-    /// mix of zero and non-zero lanes (and full words of each) is covered.
     fn random_calldata(rng: &mut u64, len: usize, zero_ppm: u64) -> Vec<u8> {
         (0..len)
             .map(|_| {
@@ -179,8 +177,6 @@ mod tests {
         SpecId::AMSTERDAM,
     ];
 
-    /// Every length 0..=64 at every alignment of the slice start, against the
-    /// upstream byte filter, with three zero densities.
     #[test]
     fn tokens_match_byte_filter_for_short_inputs_at_every_alignment() {
         let mut rng = 0x9e37_79b9_7f4a_7c15u64;
@@ -201,8 +197,6 @@ mod tests {
         }
     }
 
-    /// Long inputs cross many 31-word folds; include the all-zero and all-non-zero
-    /// extremes (255 non-zero lanes per fold would overflow the byte sum).
     #[test]
     fn tokens_match_byte_filter_for_long_inputs() {
         let mut rng = 0x2545_f491_4f6c_dd1du64;
@@ -221,8 +215,6 @@ mod tests {
         }
     }
 
-    /// The shadowing `initial_tx_gas` is `GasParams::initial_tx_gas` for every
-    /// spec, both tx kinds, and random access-list / auth-list sizes.
     #[test]
     fn initial_tx_gas_matches_gas_params() {
         let mut rng = 0xd1b5_4a32_d192_ed03u64;

@@ -17,9 +17,9 @@ from pathlib import Path
 # (family, subkey) classification rules, first match wins. Order matters.
 RULES: list[tuple[str, str, str]] = [
     (r"native_keccak256", "keccak256 inline", "keccak-f + absorb"),
-    (r"^memcpy$", "memcpy/memset/memcmp", "memcpy"),
+    (r"^memcpy$|^__jeth_aligned_copy$|^__jeth_copy_fallback$", "memcpy/memset/memcmp", "memcpy"),
     (r"^memset$", "memcpy/memset/memcmp", "memset"),
-    (r"^memcmp$", "memcpy/memset/memcmp", "memcmp"),
+    (r"^memcmp$|^jeth_guest::mem::memcmp_generic", "memcpy/memset/memcmp", "memcmp"),
     (r"jeth_core.*recover::inline_verify", "tx sig-verify (secp inline)", "ecdsa_verify"),
     (r"jeth_core.*recover::", "tx sig-verify (secp inline)", "recover misc"),
     (r"jeth_core.*crypto::", "ecrecover precompile (secp inline)", "jolt crypto"),
@@ -64,6 +64,7 @@ RULES: list[tuple[str, str, str]] = [
     (r"instructions::arithmetic", "interpreter: arithmetic/bitwise", "arithmetic"),
     (r"instructions::bitwise", "interpreter: arithmetic/bitwise", "bitwise"),
     (r"instructions::control", "interpreter: control (JUMP/JUMPI)", "control"),
+    (r"instructions::fusion", "interpreter: PUSH2/ISZERO/EQ (jump fusion)", "fusion"),
     (r"instructions::system::keccak256", "interpreter: KECCAK256 op glue", "keccak op"),
     (r"instructions::system", "interpreter: system (CALLDATA/RETURN)", "system"),
     (
@@ -122,7 +123,6 @@ ROOT_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[[0-9a-f]+\]::([A-Za-z0-9_:]*)")
 def root_path(sym: str) -> str:
     """Symbol -> `crate::ungeneric::path` of the defining item."""
     if sym.startswith("core[") or "drop_in_place" in sym:
-        # drop_in_place::<T>: classify by the dropped type T instead.
         inner = ROOT_RE.findall(sym)
         for crate, path in inner:
             if crate not in ("core", "alloc"):

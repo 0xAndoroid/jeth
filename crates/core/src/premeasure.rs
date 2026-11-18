@@ -36,5 +36,4 @@ pub static STATE_BUILD: SnapCell = SnapCell::new();
 pub static EXEC_END: SnapCell = SnapCell::new();
 /// After all storage tries are hashed, before the state trie hash.
 pub static PRE_STATE_HASH: SnapCell = SnapCell::new();
-/// After the post-state root is computed.
 pub static POST_ROOT: SnapCell = SnapCell::new();

@@ -64,7 +64,6 @@ pub(crate) use {advice_assert_eq, advice_u64};
 #[cfg(all(feature = "native-advice", not(target_arch = "riscv64")))]
 pub mod native {
     //! Collect the native execution's untrusted advice in guest FIFO order.
-    //! Outside a recording scope, native execution remains tape-free.
     extern crate std;
     use alloc::vec::Vec;
     use core::cell::RefCell;
@@ -88,7 +87,7 @@ pub mod native {
     }
 
     /// Record one execution on this thread. Reject nesting and discard partial
-    /// advice if the closure unwinds. The proven guest must check every word.
+    /// advice if the closure unwinds.
     pub fn record<T>(run: impl FnOnce() -> T) -> Result<(T, Vec<u8>), &'static str> {
         TAPE.with_borrow_mut(|slot| {
             if slot.is_some() {
@@ -141,10 +140,6 @@ pub mod native {
     }
 
     #[cfg(test)]
-    #[expect(
-        clippy::expect_used,
-        reason = "test failures should identify the recording operation"
-    )]
     mod tests {
         use super::{record, std, write_word};
 
@@ -217,7 +212,6 @@ pub mod native {
 
         #[cfg(feature = "keccak-prefix-cache")]
         #[test]
-        #[expect(clippy::panic, reason = "exercise prefix-plan cleanup after unwinding")]
         fn prefix_plans_are_isolated_across_threads_nesting_and_unwinding() {
             fn hash() {
                 let words = [9u64; 17];
@@ -285,10 +279,6 @@ pub mod native {
         }
 
         #[test]
-        #[expect(
-            clippy::panic,
-            reason = "exercise cleanup when the recorded closure unwinds"
-        )]
         fn unwinding_discards_partial_advice() {
             let result = std::panic::catch_unwind(|| {
                 let _ = record(|| {
@@ -299,6 +289,21 @@ pub mod native {
             assert!(result.is_err());
             let ((), tape) = record(|| write_word(7)).expect("record after unwind");
             assert_eq!(tape, 7u64.to_le_bytes());
+        }
+
+        #[test]
+        fn advice_smoke_records_the_sentinel_word() {
+            let ((), tape) = record(crate::advice::advice_smoke).expect("record");
+            assert_eq!(tape, [0x31, 0x76, 0x64, 0x61, 0x68, 0x74, 0x65, 0x6a]);
+        }
+
+        #[test]
+        fn trie_hashing_records_the_node_payload_length() {
+            let mut trie = zeth_mpt::CachedTrie::default();
+            trie.insert([0xab], [1, 2, 3]);
+            let (_, tape) = record(|| trie.hash()).expect("record");
+            // RLP payload of the one leaf: path `82 20 ab`, value `83 01 02 03`.
+            assert_eq!(tape, [7, 0, 0, 0, 0, 0, 0, 0]);
         }
     }
 }
@@ -354,7 +359,7 @@ mod hooks {
 /// rows). Turns "forgot to thread the tape / mismatched ELF pair" into an
 /// instant, unambiguous panic instead of a misaligned-tape heisenbug later.
 pub fn advice_smoke() {
-    const SENTINEL: u64 = 0x6a65_7468_6164_7631; // "jethadv1"
+    const SENTINEL: u64 = 0x6a65_7468_6164_7631;
     let v = advice_u64!(SENTINEL);
     advice_assert_eq!(v, SENTINEL);
 }

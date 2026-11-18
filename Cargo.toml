@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-# NOTE: crates/guest is deliberately NOT a workspace member — it is a standalone
-# package (own [workspace] table) built exclusively through the `jolt` CLI for
-# riscv64imac. This keeps guest feature resolution (native-keccak etc.) isolated
-# from native host builds.
-members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254", "crates/inlines/bls12-381"]
+# NOTE: crates/guest is deliberately NOT a workspace member — it is the root of its
+# own workspace, built exclusively through the `jolt` CLI for riscv64imac. This
+# keeps guest feature resolution (native-keccak etc.) isolated from this
+# workspace's native host builds.
+members = ["crates/core", "crates/host", "crates/inlines/blake2f", "crates/inlines/bn254", "crates/inlines/bls12-381", "crates/vendor/revm-bytecode"]
 
 [workspace.package]
 version = "0.1.0"
@@ -83,7 +83,10 @@ zeth-mpt = { path = "crates/vendor/zeth-mpt" }
 # code. Applies to every registry dependent (revm-precompile, ark-ec, ark-bn254, ark-bls12-381,
 # jeth-core); the a16z fork used by the jolt crates is a different source and is untouched.
 [patch.crates-io]
+# Word-aligned journal tags/payloads reduce guest sub-word accesses.
+revm-context-interface = { path = "crates/vendor/revm-context-interface" }
 ark-ff = { path = "crates/vendor/ark-ff" }
+revm-bytecode = { path = "crates/vendor/revm-bytecode" }
 
 [workspace.lints.rust]
 # Guest pointer APIs and aligned reads require unsafe; explicit blocks mark each operation.
