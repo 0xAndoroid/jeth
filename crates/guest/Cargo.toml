@@ -25,6 +25,8 @@ kzg-residue = ["jeth-core/kzg-residue"]
 # `--no-default-features` drops it (name `keccak-census` and `keccak-cache` in
 # `--features` to keep the other two defaults).
 push-jump-fusion = ["revm-interpreter/push-jump-fusion"]
+# Bounded cache of guest-computed trie-hash prefixes; advice is checked.
+keccak-prefix-cache = ["jeth-core/keccak-prefix-cache"]
 default = ["keccak-census", "keccak-cache", "push-jump-fusion"]
 guest = ["jeth-core/code-library"]
 # Keccak census: per-call counters + `keccak[phase]` println lines in the

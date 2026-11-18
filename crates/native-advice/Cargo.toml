@@ -10,6 +10,10 @@ edition = "2021"
 publish = false
 workspace = "../guest"
 
+[features]
+# Plan checked Keccak prefix reuse for a guest built with the same feature.
+keccak-prefix-cache = ["jeth-core/keccak-prefix-cache"]
+
 [dependencies]
 jeth-core = { path = "../core", features = ["native-advice", "secp-inline", "code-library", "bigint-inline"] }
 # Direct dependency only to reach the vendored crate's feature, as in crates/guest.

@@ -88,6 +88,10 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo nextest run --workspace --locked --no-fail-fast
+      - name: checked Keccak prefixes and native hint planning
+        run: |
+          cargo nextest run --locked --no-fail-fast -p jeth-core --lib --features native-advice,code-library,keccak-prefix-cache
+          cargo nextest run --locked --no-fail-fast --manifest-path crates/guest/native-tests/Cargo.toml --features keccak-prefix-cache
       - if: always()
         run: echo "test wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 
@@ -207,6 +211,11 @@ jobs:
             --target riscv64gc-unknown-linux-musl \
             --manifest-path crates/vendor/revm-interpreter/Cargo.toml \
             --features push-jump-fusion
+      - name: checked Keccak prefix tests (riscv64gc-unknown-linux-musl)
+        run: |
+          cargo nextest run --locked --lib --no-fail-fast --release \
+            --target riscv64gc-unknown-linux-musl \
+            --manifest-path crates/guest/native-tests/Cargo.toml --features keccak-prefix-cache
       - if: always()
         run: echo "riscv64 wall $(( $(date +%s) - JOB_START ))s" >> "$GITHUB_STEP_SUMMARY"
 

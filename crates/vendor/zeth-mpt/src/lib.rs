@@ -28,3 +28,46 @@ pub use mpt::orphan;
 #[cfg(feature = "premeasure")]
 pub use mpt::premeasure;
 pub use mpt::{decode_header, le_words_32, CachedTrie, DigestResolver, Trie, EMPTY_ROOT_HASH};
+
+/// Keccak of an RLP node whose hash is computed in the proven execution.
+/// With the optional guest cache, the guest checks reused prefix bytes and
+/// continues from a state it computed earlier. Native hashing is unchanged.
+#[inline]
+pub fn hash_node_rlp(rlp: &[u8]) -> alloy_primitives::B256 {
+    #[cfg(all(
+        target_arch = "riscv64",
+        target_os = "none",
+        feature = "keccak-prefix-cache"
+    ))]
+    {
+        extern "C" {
+            fn jeth_mpt_keccak256(bytes: *const u8, len: usize, output: *mut u8);
+        }
+        let mut digest = alloy_primitives::B256::ZERO;
+        // SAFETY: the guest shim reads the live input slice and writes exactly
+        // the 32 bytes of this separate digest buffer.
+        unsafe {
+            jeth_mpt_keccak256(rlp.as_ptr(), rlp.len(), digest.as_mut_ptr());
+        }
+        digest
+    }
+    #[cfg(not(all(
+        target_arch = "riscv64",
+        target_os = "none",
+        feature = "keccak-prefix-cache"
+    )))]
+    {
+        #[cfg(all(
+            not(target_arch = "riscv64"),
+            feature = "keccak-prefix-cache",
+            not(test)
+        ))]
+        unsafe {
+            extern "C" {
+                fn jeth_record_mpt_prefix(bytes: *const u8, len: usize);
+            }
+            jeth_record_mpt_prefix(rlp.as_ptr(), rlp.len());
+        }
+        alloy_primitives::keccak256(rlp)
+    }
+}
