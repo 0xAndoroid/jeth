@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> This repository has moved to [a16z/jeth](https://github.com/a16z/jeth). This copy is archived and no longer updated.
+
 # jeth
 
 Jolt proving Ethereum: stateless execution of a full, recent Ethereum mainnet block inside a Jolt RISC-V guest (pre-state witness → execute all txs → assert post-state root against the header), traced — not proved — to measure RISC-V cycle count and cycles/gas.
